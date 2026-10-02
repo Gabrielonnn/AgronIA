@@ -1,0 +1,18 @@
+@import "tailwindcss";
+
+@theme {
+  --color-agron-bg: #FFFFFF;
+  --color-agron-bg-alt: #F9FAFB;
+  --color-agron-green: #10B981;
+  --color-agron-green-dark: #047857;
+  --color-agron-green-light: #D1FAE5;
+  --color-agron-alert: #F97316;
+  --color-agron-danger: #EF4444;
+  --font-sans: 'Inter', sans-serif;
+}
+
+@layer base {
+  body {
+    @apply bg-agron-bg-alt text-gray-900 font-sans antialiased;
+  }
+}
