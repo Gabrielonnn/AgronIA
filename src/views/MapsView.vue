@@ -5,7 +5,7 @@ import Card from '../components/ui/Card.vue'
 import Button from '../components/ui/Button.vue'
 import { Save, Download } from 'lucide-vue-next'
 
-const geojsonData = ref(null)
+const geojsonData = ref<any>(null)
 
 const handleGeoJsonUpdate = (data: any) => {
   geojsonData.value = data

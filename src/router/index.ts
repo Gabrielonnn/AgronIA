@@ -44,7 +44,7 @@ const router = createRouter({
   ]
 })
 
-router.beforeEach(async (to, from, next) => {
+router.beforeEach(async (to, _from, next) => {
   const store = useMainStore()
   // Esperar a que se cargue el estado inicial si es necesario
   if (store.loading) {

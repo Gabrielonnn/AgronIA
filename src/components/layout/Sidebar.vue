@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { ref } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { Home, Map, PieChart, Database, Settings, LogOut, MonitorPlay } from 'lucide-vue-next'
 import { useMainStore } from '../../stores'
