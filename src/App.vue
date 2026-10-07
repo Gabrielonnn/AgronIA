@@ -19,7 +19,11 @@ onMounted(() => {
   <div v-else class="min-h-screen bg-agron-bg-alt flex">
     <Sidebar v-if="!route.meta.public" />
     <main class="flex-1 h-screen overflow-y-auto" :class="{ 'p-6': !route.meta.public }">
-      <RouterView />
+      <RouterView v-slot="{ Component }">
+        <transition name="page" mode="out-in">
+          <component :is="Component" />
+        </transition>
+      </RouterView>
     </main>
   </div>
 </template>

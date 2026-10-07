@@ -14,8 +14,8 @@ interface StressCenter {
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 const containerRef = ref<HTMLDivElement | null>(null)
 const currentMode = ref<'rgb' | 'ndvi' | 'thermal'>('rgb')
-const droneState = ref<'IDLE' | 'SCANNING' | 'FLYING' | 'ACTION' | 'RETURNING'>('IDLE')
-const currentAction = ref<'NONE' | 'WATER' | 'FUMIGATE'>('NONE')
+const droneState = ref<'IDLE' | 'SCANNING' | 'FLYING' | 'ACTION' | 'RETURNING' | 'CENTINELAS'>('IDLE')
+const currentAction = ref<'NONE' | 'WATER' | 'FUMIGATE' | 'CENTINELAS'>('NONE')
 
 // Datos de interacción
 const hoveredPlant = ref<PlantData | null>(null)
@@ -53,6 +53,11 @@ let activeTargetIndex = 0
 let dronePath: THREE.Vector3[] = []
 let currentPathIndex = 0
 
+// Enjambre de Centinelas
+let centinelaGroup: THREE.Group | null = null
+let centinelaPropellers: THREE.Mesh[] = []
+let centinelaFrameCounter = 0
+
 const DRONE_BASE = new THREE.Vector3(-15, 0.5, 15)
 const FLIGHT_HEIGHT = 8
 const PARTICLE_COUNT = 500
@@ -60,10 +65,41 @@ const particlePositions = new Float32Array(PARTICLE_COUNT * 3)
 const particleVelocities = new Float32Array(PARTICLE_COUNT * 3)
 
 const modes = [
-  { id: 'rgb', name: 'RGB', icon: '', color: 'bg-green-500' },
-  { id: 'ndvi', name: 'Multiespectral', icon: '', color: 'bg-red-500' },
-  { id: 'thermal', name: 'Térmico', icon: '', color: 'bg-orange-500' }
+  { id: 'rgb', name: 'RGB', color: 'bg-green-500' },
+  { id: 'ndvi', name: 'Multiespectral', color: 'bg-red-500' },
+  { id: 'thermal', name: 'Térmico', color: 'bg-orange-500' }
 ]
+
+// Telemetría en tiempo real derivada de la simulación
+const telemetry = ref({
+  avgHealth: 0,
+  avgHumidity: 0,
+  avgPestIndex: 0,
+  avgNDVI: 0,
+  avgTemp: 0,
+  plantCount: 0,
+  stressZones: 0
+})
+
+const updateTelemetry = () => {
+  if (!allPlants || allPlants.length === 0) return
+  const count = allPlants.length
+  let sumHealth = 0, sumNDVI = 0, sumTemp = 0
+  for (const p of allPlants) {
+    sumHealth += p.health
+    sumNDVI += p.ndvi
+    sumTemp += p.temp
+  }
+  telemetry.value = {
+    avgHealth: parseFloat(((sumHealth / count) * 100).toFixed(1)),
+    avgHumidity: parseFloat((((sumHealth / count) * 0.8 + 0.1) * 100).toFixed(1)),
+    avgPestIndex: parseFloat((Math.max(0, 1 - (sumNDVI / count)) * 100 * 0.5).toFixed(1)),
+    avgNDVI: parseFloat((sumNDVI / count).toFixed(2)),
+    avgTemp: parseFloat((sumTemp / count).toFixed(1)),
+    plantCount: count,
+    stressZones: stressCenters.length
+  }
+}
 
 // Funciones geométricas
 const createLeafGeometry = () => {
@@ -224,9 +260,37 @@ const regenerateFieldHealth = () => {
     plant.status = getStatusName(plant.health)
   })
   updateMaterials(currentMode.value)
+  updateTelemetry()
 }
 
-const handleAction = (action: 'ANALYZE' | 'WATER' | 'FUMIGATE') => {
+const handleAction = (action: 'ANALYZE' | 'WATER' | 'FUMIGATE' | 'CENTINELAS') => {
+  if (action === 'CENTINELAS') {
+    if (droneState.value === 'CENTINELAS') return // Ya está activo
+    droneState.value = 'CENTINELAS'
+    currentAction.value = 'CENTINELAS'
+    
+    // Si no existe el enjambre, crearlo
+    if (!centinelaGroup && scene.value) {
+      centinelaGroup = new THREE.Group()
+      for(let i=0; i<5; i++) {
+        const drone = createDrone()
+        drone.scale.set(0.5, 0.5, 0.5) // Más pequeños
+        const angle = (i / 5) * Math.PI * 2
+        drone.position.set(Math.cos(angle)*15, FLIGHT_HEIGHT, Math.sin(angle)*15)
+        centinelaGroup.add(drone)
+        
+        // Agregar hélices del enjambre al arreglo global centinelaPropellers
+        drone.children.forEach(c => {
+          if (c.geometry instanceof THREE.BoxGeometry && c.scale.x === 1) { // Hélices
+            centinelaPropellers.push(c as THREE.Mesh)
+          }
+        })
+      }
+      scene.value.add(centinelaGroup)
+    }
+    return
+  }
+
   if (action === 'ANALYZE') {
     droneState.value = 'SCANNING'
     generateRandomStressCenters()
@@ -390,7 +454,26 @@ const initThree = () => {
     }
 
     // Drone Animation Logic
-    if (droneState.value !== 'IDLE') {
+    if (droneState.value === 'CENTINELAS') {
+      centinelaFrameCounter++
+      centinelaPropellers.forEach((p, i) => p.rotation.y += (i % 2 === 0 ? 0.5 : -0.5))
+      if (centinelaGroup) {
+        centinelaGroup.rotation.y += 0.005 // Rotar lentamente alrededor del campo
+      }
+      
+      // Simular actualización en tiempo real frecuente
+      if (centinelaFrameCounter % 120 === 0) { // Cada ~2 segundos (a 60fps)
+        // Modificar ligeramente la intensidad de estrés para que se vea vivo
+        stressCenters.forEach(c => c.intensity = Math.max(0.2, Math.min(1.0, c.intensity + (Math.random()-0.5)*0.1)))
+        regenerateFieldHealth()
+        
+        // Actualizar los colores de los marcadores de sector en tiempo real
+        sectorMarkers.forEach(mesh => {
+           const center = mesh.userData as StressCenter
+           ;(mesh.material as THREE.MeshBasicMaterial).color.setHex(getSectorColor(center.type, center.intensity))
+        })
+      }
+    } else if (droneState.value !== 'IDLE') {
       propellers.forEach((p, i) => p.rotation.y += (i % 2 === 0 ? 0.5 : -0.5)) // Girar hélices
       const currentPos = droneGroup.position
       
@@ -553,21 +636,29 @@ onBeforeUnmount(() => {
           <span>Dron Autónomo</span>
           <span class="text-xs px-2 py-1 rounded-full" 
             :class="droneState === 'IDLE' ? 'bg-green-500/20 text-green-400' : 'bg-blue-500/20 text-blue-400 animate-pulse'">
-            {{ droneState === 'IDLE' ? 'En Base' : (droneState === 'SCANNING' ? 'Mapeando...' : 'En Misión') }}
+            {{ droneState === 'IDLE' ? 'En Base' : (droneState === 'SCANNING' ? 'Mapeando...' : (droneState === 'CENTINELAS' ? 'Centinelas...' : 'En Misión')) }}
           </span>
         </h3>
         
         <div class="space-y-2">
-          <button @click="handleAction('ANALYZE')" :disabled="droneState !== 'IDLE'" class="w-full bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed border border-white/10 p-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2">
-            🔍 Analizar Campo
+          <button @click="handleAction('ANALYZE')" :disabled="droneState !== 'IDLE' && droneState !== 'CENTINELAS'" class="w-full bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed border border-white/10 p-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+            Analizar Campo
+          </button>
+          
+          <button @click="handleAction('CENTINELAS')" :disabled="droneState === 'CENTINELAS' || (droneState !== 'IDLE' && droneState !== 'CENTINELAS')" class="w-full bg-purple-500 hover:bg-purple-600 disabled:bg-purple-900 disabled:text-gray-400 disabled:cursor-not-allowed text-white border border-white/10 p-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 mt-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            Modo Centinelas
           </button>
           
           <div class="grid grid-cols-2 gap-2 mt-2">
-            <button @click="handleAction('WATER')" :disabled="droneState !== 'IDLE'" class="bg-blue-500 hover:bg-blue-600 disabled:bg-blue-900 disabled:text-gray-400 disabled:cursor-not-allowed text-white p-2 rounded-lg text-sm font-medium transition-colors">
-              💧 Regar
+            <button @click="handleAction('WATER')" :disabled="droneState !== 'IDLE' && droneState !== 'CENTINELAS'" class="bg-blue-500 hover:bg-blue-600 disabled:bg-blue-900 disabled:text-gray-400 disabled:cursor-not-allowed text-white p-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-1.5">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1M4.22 4.22l.71.71m14.14 14.14l.71.71M1 12h1m20 0h1M4.22 19.78l.71-.71M18.07 5.93l.71-.71M12 6a6 6 0 100 12 6 6 0 000-12z"/></svg>
+              Regar
             </button>
-            <button @click="handleAction('FUMIGATE')" :disabled="droneState !== 'IDLE'" class="bg-emerald-500 hover:bg-emerald-600 disabled:bg-emerald-900 disabled:text-gray-400 disabled:cursor-not-allowed text-white p-2 rounded-lg text-sm font-medium transition-colors">
-              🧪 Fumigar
+            <button @click="handleAction('FUMIGATE')" :disabled="droneState !== 'IDLE' && droneState !== 'CENTINELAS'" class="bg-emerald-500 hover:bg-emerald-600 disabled:bg-emerald-900 disabled:text-gray-400 disabled:cursor-not-allowed text-white p-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-1.5">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+              Fumigar
             </button>
           </div>
         </div>
@@ -611,6 +702,59 @@ onBeforeUnmount(() => {
             <span class="block mb-1 text-gray-300 font-medium">Plaga (Requiere Fumigación)</span>
             <div class="h-2 w-full bg-gradient-to-r from-[#c084fc] to-[#7e22ce] rounded-full"></div>
             <div class="flex justify-between mt-1 text-gray-400"><span>Leve</span><span>Crítica</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Panel de Telemetría en Tiempo Real -->
+      <div class="absolute bottom-6 right-6 bg-black/85 backdrop-blur-md border border-white/10 rounded-xl p-4 text-white shadow-2xl z-10 w-64">
+        <h3 class="font-bold text-sm mb-3 border-b border-white/20 pb-2 flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full bg-agron-green animate-pulse"></span>
+          Telemetría — Tiempo Real
+        </h3>
+        <div class="space-y-2.5 text-xs">
+          <div class="flex justify-between items-center">
+            <span class="text-gray-400">Plantas monitoreadas</span>
+            <span class="font-bold text-white">{{ telemetry.plantCount }}</span>
+          </div>
+          <div>
+            <div class="flex justify-between mb-1">
+              <span class="text-gray-400">Salud promedio</span>
+              <span class="font-bold" :class="telemetry.avgHealth > 60 ? 'text-green-400' : telemetry.avgHealth > 40 ? 'text-yellow-400' : 'text-red-400'">{{ telemetry.avgHealth }}%</span>
+            </div>
+            <div class="w-full bg-white/10 rounded-full h-1">
+              <div class="h-1 rounded-full transition-all duration-500" :class="telemetry.avgHealth > 60 ? 'bg-green-400' : telemetry.avgHealth > 40 ? 'bg-yellow-400' : 'bg-red-400'" :style="`width: ${telemetry.avgHealth}%`"></div>
+            </div>
+          </div>
+          <div>
+            <div class="flex justify-between mb-1">
+              <span class="text-gray-400">Humedad suelo</span>
+              <span class="font-bold text-blue-400">{{ telemetry.avgHumidity }}%</span>
+            </div>
+            <div class="w-full bg-white/10 rounded-full h-1">
+              <div class="h-1 rounded-full bg-blue-400 transition-all duration-500" :style="`width: ${telemetry.avgHumidity}%`"></div>
+            </div>
+          </div>
+          <div>
+            <div class="flex justify-between mb-1">
+              <span class="text-gray-400">Índice de plagas</span>
+              <span class="font-bold" :class="telemetry.avgPestIndex > 30 ? 'text-red-400' : telemetry.avgPestIndex > 15 ? 'text-orange-400' : 'text-green-400'">{{ telemetry.avgPestIndex }}%</span>
+            </div>
+            <div class="w-full bg-white/10 rounded-full h-1">
+              <div class="h-1 rounded-full transition-all duration-500" :class="telemetry.avgPestIndex > 30 ? 'bg-red-400' : telemetry.avgPestIndex > 15 ? 'bg-orange-400' : 'bg-green-400'" :style="`width: ${telemetry.avgPestIndex}%`"></div>
+            </div>
+          </div>
+          <div class="flex justify-between items-center">
+            <span class="text-gray-400">NDVI promedio</span>
+            <span class="font-bold text-green-400">{{ telemetry.avgNDVI }}</span>
+          </div>
+          <div class="flex justify-between items-center">
+            <span class="text-gray-400">Temperatura prom.</span>
+            <span class="font-bold" :class="telemetry.avgTemp > 32 ? 'text-red-400' : 'text-orange-300'">{{ telemetry.avgTemp }} °C</span>
+          </div>
+          <div class="flex justify-between items-center border-t border-white/10 pt-2">
+            <span class="text-gray-400">Zonas de estrés</span>
+            <span class="font-bold" :class="telemetry.stressZones > 0 ? 'text-yellow-400' : 'text-green-400'">{{ telemetry.stressZones }}</span>
           </div>
         </div>
       </div>
@@ -677,7 +821,7 @@ onBeforeUnmount(() => {
           <div class="bg-gray-50 rounded p-2 border border-gray-200">
             <span class="text-xs text-gray-500 block mb-1">Recomendación Autónoma:</span>
             <span class="text-xs font-bold block" :class="hoveredSector.type === 'DROUGHT' ? 'text-blue-500' : 'text-emerald-500'">
-              {{ hoveredSector.type === 'DROUGHT' ? '💧 Requiere Irrigación' : '🧪 Requiere Fumigación' }}
+              {{ hoveredSector.type === 'DROUGHT' ? 'Requiere Irrigación' : 'Requiere Fumigación' }}
             </span>
           </div>
         </div>

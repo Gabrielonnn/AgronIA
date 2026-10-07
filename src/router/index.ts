@@ -40,6 +40,21 @@ const router = createRouter({
       path: '/simulacion',
       name: 'simulation',
       component: () => import('../views/SimulationView.vue')
+    },
+    {
+      path: '/configuracion',
+      name: 'settings',
+      component: () => import('../views/SettingsView.vue')
+    },
+    {
+      path: '/usuarios',
+      name: 'users',
+      component: () => import('../views/UsersView.vue')
+    },
+    {
+      path: '/parcelas',
+      name: 'parcels',
+      component: () => import('../views/ParcelsView.vue')
     }
   ]
 })
