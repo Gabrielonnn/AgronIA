@@ -7,13 +7,12 @@ import {
 } from 'echarts/components'
 import VChart from 'vue-echarts'
 import { ref, onMounted, onBeforeUnmount } from 'vue'
-import { useMainStore } from '../stores'
 import { Satellite, Droplets, Bug, Wind, ArrowRight, TrendingUp } from 'lucide-vue-next'
 import { RouterLink } from 'vue-router'
 
 use([CanvasRenderer, LineChart, BarChart, GaugeChart, TitleComponent, TooltipComponent, LegendComponent, GridComponent])
 
-const store = useMainStore()
+
 
 // Telemetría en tiempo real (simulada)
 const humidity = ref(62)

@@ -8,7 +8,7 @@ import {
 import VChart from 'vue-echarts'
 import Card from '../components/ui/Card.vue'
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { Droplets, Bug, Thermometer, Wind, TrendingUp, AlertTriangle, CheckCircle, Info } from 'lucide-vue-next'
+import { Droplets, Bug, Thermometer, TrendingUp, AlertTriangle, CheckCircle, Info } from 'lucide-vue-next'
 
 use([CanvasRenderer, LineChart, PieChart, BarChart, GaugeChart, TitleComponent, TooltipComponent, LegendComponent, GridComponent])
 

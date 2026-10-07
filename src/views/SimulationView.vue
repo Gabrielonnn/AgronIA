@@ -281,8 +281,9 @@ const handleAction = (action: 'ANALYZE' | 'WATER' | 'FUMIGATE' | 'CENTINELAS') =
         
         // Agregar hélices del enjambre al arreglo global centinelaPropellers
         drone.children.forEach(c => {
-          if (c.geometry instanceof THREE.BoxGeometry && c.scale.x === 1) { // Hélices
-            centinelaPropellers.push(c as THREE.Mesh)
+          const mesh = c as THREE.Mesh
+          if (mesh.isMesh && mesh.geometry instanceof THREE.BoxGeometry && mesh.scale.x === 1) { // Hélices
+            centinelaPropellers.push(mesh)
           }
         })
       }
@@ -646,7 +647,7 @@ onBeforeUnmount(() => {
             Analizar Campo
           </button>
           
-          <button @click="handleAction('CENTINELAS')" :disabled="droneState === 'CENTINELAS' || (droneState !== 'IDLE' && droneState !== 'CENTINELAS')" class="w-full bg-purple-500 hover:bg-purple-600 disabled:bg-purple-900 disabled:text-gray-400 disabled:cursor-not-allowed text-white border border-white/10 p-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 mt-2">
+          <button @click="handleAction('CENTINELAS')" :disabled="droneState === 'CENTINELAS' || droneState !== 'IDLE'" class="w-full bg-purple-500 hover:bg-purple-600 disabled:bg-purple-900 disabled:text-gray-400 disabled:cursor-not-allowed text-white border border-white/10 p-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 mt-2">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
             Modo Centinelas
           </button>

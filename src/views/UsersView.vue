@@ -2,7 +2,7 @@
 import { ref } from 'vue'
 import Card from '../components/ui/Card.vue'
 import Button from '../components/ui/Button.vue'
-import { Users, UserPlus, Trash2, ShieldCheck } from 'lucide-vue-next'
+import { Users, UserPlus, Trash2 } from 'lucide-vue-next'
 
 type Role = 'cliente' | 'administrador' | 'tecnico'
 

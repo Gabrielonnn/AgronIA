@@ -26,7 +26,6 @@ const tabs = [
 // ============================================================
 const displayName = ref('Agricultor AgronIA')
 const accountEmail = ref(store.user?.email || 'demo@agronia.com')
-const currentPassword = ref('')
 const newPassword = ref('')
 const showPassword = ref(false)
 const saveAccountMsg = ref('')
