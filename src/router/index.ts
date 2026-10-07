@@ -46,6 +46,24 @@ const router = createRouter({
       name: 'simulation',
       component: () => import('../views/SimulationView.vue'),
       meta: { requiresAuth: true }
+    },
+    {
+      path: '/configuracion',
+      name: 'settings',
+      component: () => import('../views/SettingsView.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
+      path: '/usuarios',
+      name: 'users',
+      component: () => import('../views/UsersView.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
+      path: '/parcelas',
+      name: 'parcels',
+      component: () => import('../views/ParcelsView.vue'),
+      meta: { requiresAuth: true }
     }
   ]
 })

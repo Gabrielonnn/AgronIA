@@ -4,23 +4,85 @@ import L from 'leaflet'
 import '@geoman-io/leaflet-geoman-free'
 import 'leaflet/dist/leaflet.css'
 import '@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css'
+import { Crosshair, LocateFixed, MapPin } from 'lucide-vue-next'
+
+// Coordenadas por defecto: Culiacán, Sinaloa
+const CULIACAN_COORDS: [number, number] = [24.7994, -107.3939]
+const DEFAULT_ZOOM = 13
 
 const mapContainer = ref<HTMLElement | null>(null)
+const locationStatus = ref<'idle' | 'requesting' | 'success' | 'denied'>('idle')
+const userLat = ref<number | null>(null)
+const userLng = ref<number | null>(null)
+
 let map: L.Map | null = null
+let userMarker: L.Marker | null = null
 
 const emit = defineEmits<{
   (e: 'update:geojson', data: any): void
 }>()
 
+const centerOnCuliacan = () => {
+  if (map) {
+    map.setView(CULIACAN_COORDS, DEFAULT_ZOOM, { animate: true })
+  }
+}
+
+const requestLocationPermission = () => {
+  if (!navigator.geolocation) {
+    locationStatus.value = 'denied'
+    return
+  }
+
+  locationStatus.value = 'requesting'
+  navigator.geolocation.getCurrentPosition(
+    (position) => {
+      userLat.value = parseFloat(position.coords.latitude.toFixed(5))
+      userLng.value = parseFloat(position.coords.longitude.toFixed(5))
+      locationStatus.value = 'success'
+
+      if (map) {
+        // Quitar marcador anterior
+        if (userMarker) map.removeLayer(userMarker)
+
+        // Icono de ubicación del usuario
+        const userIcon = L.divIcon({
+          className: '',
+          html: `<div style="
+            width: 20px; height: 20px; 
+            background: #10B981; 
+            border: 3px solid white; 
+            border-radius: 50%;
+            box-shadow: 0 0 0 4px #10B98160;
+          "></div>`,
+          iconSize: [20, 20],
+          iconAnchor: [10, 10]
+        })
+
+        userMarker = L.marker([position.coords.latitude, position.coords.longitude], { icon: userIcon })
+          .addTo(map)
+          .bindPopup(`<b>Tu ubicación</b><br>${userLat.value}°, ${userLng.value}°`)
+          .openPopup()
+
+        map.setView([position.coords.latitude, position.coords.longitude], 15, { animate: true })
+      }
+    },
+    (_error) => {
+      locationStatus.value = 'denied'
+    },
+    { enableHighAccuracy: true, timeout: 10000 }
+  )
+}
+
 onMounted(() => {
   if (!mapContainer.value) return
 
-  // Inicializar mapa centrado en una ubicación agrícola de ejemplo
-  map = L.map(mapContainer.value).setView([20.659698, -103.349609], 13)
+  // Inicializar mapa centrado en Culiacán, Sinaloa
+  map = L.map(mapContainer.value).setView(CULIACAN_COORDS, DEFAULT_ZOOM)
 
-  // Capa satelital gratuita (Esri World Imagery)
+  // Capa satelital (Esri World Imagery)
   L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-    attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EAP, and the GIS User Community',
+    attribution: 'Tiles &copy; Esri',
     maxZoom: 19
   }).addTo(map)
 
@@ -42,8 +104,7 @@ onMounted(() => {
   // Escuchar eventos de dibujo para extraer GeoJSON
   map.on('pm:create', updateGeoJson)
   map.on('pm:remove', updateGeoJson)
-  
-  // Para ediciones, iterar sobre capas
+
   map.on('pm:globaleditmodetoggled', (e) => {
     if (!e.enabled && map) {
       map.eachLayer((layer: any) => {
@@ -54,31 +115,76 @@ onMounted(() => {
       })
     }
   })
+
+  // Solicitar permisos de ubicación automáticamente al abrir
+  requestLocationPermission()
 })
 
 const updateGeoJson = () => {
   if (!map) return
   const featureGroup = L.featureGroup()
   map.eachLayer((layer: any) => {
-    // Si la capa tiene feature o toGeoJSON (es una capa de dibujo)
     if (layer instanceof L.Path || layer instanceof L.Marker) {
       featureGroup.addLayer(layer)
     }
   })
-  
   const geojson = featureGroup.toGeoJSON()
   emit('update:geojson', geojson)
 }
 
 onUnmounted(() => {
-  if (map) {
-    map.remove()
-  }
+  if (map) map.remove()
 })
 </script>
 
 <template>
-  <div ref="mapContainer" class="w-full h-full rounded-xl overflow-hidden shadow-sm z-0 relative"></div>
+  <div class="w-full h-full rounded-xl overflow-hidden shadow-sm z-0 relative">
+    <div ref="mapContainer" class="w-full h-full"></div>
+
+    <!-- Panel de ubicación (top-right) -->
+    <div class="absolute top-3 right-3 z-[1000] flex flex-col gap-2">
+      <!-- Botón: Centrar en Culiacán -->
+      <button
+        @click="centerOnCuliacan"
+        class="flex items-center gap-2 bg-agron-green-dark hover:bg-agron-green text-white text-xs font-semibold px-3 py-2 rounded-lg shadow-lg transition-colors"
+        title="Centrar vista en Culiacán"
+      >
+        <MapPin class="w-4 h-4" />
+        Culiacán
+      </button>
+
+      <!-- Botón: Mi ubicación -->
+      <button
+        @click="requestLocationPermission"
+        :disabled="locationStatus === 'requesting'"
+        class="flex items-center gap-2 text-white text-xs font-semibold px-3 py-2 rounded-lg shadow-lg transition-colors"
+        :class="{
+          'bg-blue-600 hover:bg-blue-700': locationStatus === 'idle' || locationStatus === 'success',
+          'bg-gray-500 cursor-not-allowed': locationStatus === 'requesting',
+          'bg-red-600 hover:bg-red-700': locationStatus === 'denied'
+        }"
+        title="Usar mi ubicación"
+      >
+        <LocateFixed class="w-4 h-4" :class="locationStatus === 'requesting' ? 'animate-spin' : ''" />
+        {{ locationStatus === 'requesting' ? 'Buscando...' : locationStatus === 'denied' ? 'Sin permiso' : locationStatus === 'success' ? 'Ubicado' : 'Mi Ubicación' }}
+      </button>
+
+      <!-- Coordenadas del usuario si se obtuvo ubicación -->
+      <div v-if="locationStatus === 'success' && userLat && userLng"
+        class="bg-black/70 backdrop-blur-sm text-white text-xs px-3 py-1.5 rounded-lg font-mono">
+        <div class="flex items-center gap-1.5">
+          <Crosshair class="w-3 h-3 text-agron-green" />
+          {{ userLat }}°, {{ userLng }}°
+        </div>
+      </div>
+
+      <!-- Mensaje si se denegó el permiso -->
+      <div v-if="locationStatus === 'denied'"
+        class="bg-red-900/80 backdrop-blur-sm text-red-200 text-xs px-3 py-1.5 rounded-lg max-w-[160px]">
+        Permiso de ubicación denegado. Habilítalo en la configuración del navegador.
+      </div>
+    </div>
+  </div>
 </template>
 
 <style>

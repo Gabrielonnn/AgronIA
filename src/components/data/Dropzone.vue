@@ -5,6 +5,7 @@ import Papa from 'papaparse'
 
 const emit = defineEmits<{
   (e: 'data-loaded', data: any[]): void
+  (e: 'file-named', name: string): void
 }>()
 
 const isDragging = ref(false)
@@ -48,6 +49,7 @@ const handleFile = (file: File) => {
       skipEmptyLines: true,
       complete: (results) => {
         emit('data-loaded', results.data)
+        emit('file-named', file.name)
       },
       error: (err) => {
         console.error('Error parseando CSV:', err)

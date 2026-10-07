@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterView, useRoute } from 'vue-router'
-import { Leaf } from 'lucide-vue-next'
+import { Leaf, Menu, X } from 'lucide-vue-next'
 import { useMainStore } from './stores'
 import Sidebar from './components/layout/Sidebar.vue'
 
@@ -9,6 +9,7 @@ const route = useRoute()
 const store = useMainStore()
 const showIntro = ref(true)
 let introTimer: number | undefined
+const mobileMenuOpen = ref(false)
 
 onMounted(() => {
   store.checkAuth()
@@ -16,6 +17,10 @@ onMounted(() => {
   introTimer = window.setTimeout(() => {
     showIntro.value = false
   }, duration)
+})
+
+watch(() => route.path, () => {
+  mobileMenuOpen.value = false
 })
 
 onUnmounted(() => {
@@ -27,7 +32,7 @@ onUnmounted(() => {
   <div v-if="store.loading" class="min-h-screen flex items-center justify-center bg-agron-bg-alt">
     <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-agron-green"></div>
   </div>
-  <div v-else class="min-h-screen bg-agron-bg-alt flex">
+  <div v-else class="min-h-screen bg-agron-bg-alt flex flex-col md:flex-row relative overflow-hidden">
     <Transition name="app-intro">
       <div v-if="showIntro" class="app-intro" role="status" aria-live="polite">
         <div class="app-intro-field"></div>
@@ -69,12 +74,47 @@ onUnmounted(() => {
         </div>
       </div>
     </Transition>
-    <Sidebar v-if="!route.meta.public" />
-    <main
-      class="app-main flex-1 h-screen overflow-y-auto"
-      :class="[{ 'p-6': !route.meta.public }, { 'app-main-reveal': !showIntro }]"
+    <div v-if="!route.meta.public" class="md:hidden flex items-center justify-between bg-white border-b border-gray-200 px-4 py-3 z-30 relative shadow-sm">
+      <div class="flex items-center gap-2">
+        <div class="w-8 h-8 rounded-lg bg-agron-green flex items-center justify-center shadow-sm">
+          <span class="text-white font-bold text-lg leading-none">A</span>
+        </div>
+        <span class="text-lg font-bold text-gray-900 tracking-tight leading-tight">AgronIA</span>
+      </div>
+      <button
+        type="button"
+        aria-label="Abrir o cerrar menú"
+        :aria-expanded="mobileMenuOpen"
+        class="text-gray-600 hover:text-agron-green transition-colors p-1 bg-gray-100 rounded-md"
+        @click="mobileMenuOpen = !mobileMenuOpen"
+      >
+        <Menu v-if="!mobileMenuOpen" class="w-6 h-6" />
+        <X v-else class="w-6 h-6" />
+      </button>
+    </div>
+    <Transition name="fade">
+      <div
+        v-if="mobileMenuOpen && !route.meta.public"
+        class="md:hidden fixed inset-0 bg-black/60 z-40 backdrop-blur-sm"
+        @click="mobileMenuOpen = false"
+      ></div>
+    </Transition>
+    <div
+      v-if="!route.meta.public"
+      :class="mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'"
+      class="fixed inset-y-0 left-0 z-50 transition-transform duration-300 md:relative md:translate-x-0 shadow-2xl md:shadow-none"
     >
-      <RouterView />
+      <Sidebar />
+    </div>
+    <main
+      class="app-main flex-1 h-[calc(100vh-61px)] md:h-screen overflow-y-auto w-full"
+      :class="[{ 'p-4 md:p-6': !route.meta.public }, { 'app-main-reveal': !showIntro }]"
+    >
+      <RouterView v-slot="{ Component }">
+        <Transition name="page" mode="out-in">
+          <component :is="Component" />
+        </Transition>
+      </RouterView>
     </main>
   </div>
 </template>
