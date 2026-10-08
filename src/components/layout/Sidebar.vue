@@ -56,7 +56,7 @@ const roleColor = computed(() => {
 </script>
 
 <template>
-  <aside class="w-64 bg-white border-r border-gray-200 h-screen flex flex-col">
+  <aside class="app-sidebar w-64 bg-white border-r border-gray-200 h-screen flex flex-col">
     <!-- Logo -->
     <div class="h-16 flex items-center px-6 border-b border-gray-100">
       <div class="flex items-center gap-2">
