@@ -18,14 +18,24 @@ ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS status text DEFAULT 'pendie
 -- Habilitar RLS (Seguridad a Nivel de Fila)
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 
+-- Eliminar políticas si ya existen para poder recrearlas sin error
+DROP POLICY IF EXISTS "Permitir ver perfiles a todos los autenticados" ON public.profiles;
+DROP POLICY IF EXISTS "Permitir actualizar perfiles a admins" ON public.profiles;
+DROP POLICY IF EXISTS "Permitir eliminar perfiles a admins" ON public.profiles;
+
 -- Crear políticas para la tabla de perfiles
 -- Cualquier usuario autenticado puede ver los perfiles (o podrías restringirlo solo a administradores)
 CREATE POLICY "Permitir ver perfiles a todos los autenticados" ON public.profiles
   FOR SELECT USING (auth.role() = 'authenticated');
 
--- Solo administradores pueden actualizar perfiles (roles, activos)
+-- Solo administradores pueden actualizar y eliminar perfiles
 CREATE POLICY "Permitir actualizar perfiles a admins" ON public.profiles
   FOR UPDATE USING (
+    (SELECT role FROM public.profiles WHERE id = auth.uid()) = 'administrador'
+  );
+
+CREATE POLICY "Permitir eliminar perfiles a admins" ON public.profiles
+  FOR DELETE USING (
     (SELECT role FROM public.profiles WHERE id = auth.uid()) = 'administrador'
   );
 
@@ -65,6 +75,10 @@ CREATE TABLE IF NOT EXISTS public.user_logs (
 
 -- Habilitar RLS para logs
 ALTER TABLE public.user_logs ENABLE ROW LEVEL SECURITY;
+
+-- Eliminar políticas si ya existen para los logs
+DROP POLICY IF EXISTS "Ver logs" ON public.user_logs;
+DROP POLICY IF EXISTS "Insertar logs" ON public.user_logs;
 
 -- Política: los administradores pueden ver todos los logs, los clientes solo los suyos
 CREATE POLICY "Ver logs" ON public.user_logs

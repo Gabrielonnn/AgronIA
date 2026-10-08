@@ -16,6 +16,7 @@ const successMessage = ref('')
 const showPassword = ref(false)
 const capsLockOn = ref(false)
 const progress = ref(0)
+const registerSuccess = ref(false)
 
 const passwordStrength = computed(() => {
   const value = password.value
@@ -114,9 +115,9 @@ const handleRegister = async () => {
       error.value = translateError(authError.message)
       progress.value = 0
     } else {
-      successMessage.value = 'Registro exitoso. Puedes iniciar sesión ahora.'
+      registerSuccess.value = true
       progress.value = 100
-      setTimeout(() => router.push('/login'), 2000)
+      setTimeout(() => router.push('/login'), 3500)
     }
   } catch (err: any) {
     error.value = err instanceof Error
@@ -197,6 +198,23 @@ const translateError = (msg: string): string => {
         :style="particle.style"
       ></span>
     </div>
+
+    <Transition name="login-success">
+      <div v-if="registerSuccess" class="login-success-overlay" role="status" aria-live="polite">
+        <div class="success-orbit success-orbit-one" style="border-color: rgba(245, 138, 0, 0.2)"></div>
+        <div class="success-orbit success-orbit-two" style="border-color: rgba(245, 138, 0, 0.1)"></div>
+        <div class="success-content">
+          <div class="success-icon" style="background: linear-gradient(135deg, #f58a00, #ffc400); box-shadow: 0 0 30px rgba(245, 138, 0, 0.4)">
+            <CheckCircle2 :size="42" :stroke-width="1.8" />
+            <Sparkles class="success-sparkle" :size="20" />
+          </div>
+          <p class="success-eyebrow" style="color: #f58a00">Solicitud Recibida</p>
+          <h2>Esperando Confirmación</h2>
+          <p>Un administrador revisará tu solicitud pronto...</p>
+          <div class="success-progress"><span style="background: linear-gradient(90deg, #f58a00, #ffc400)"></span></div>
+        </div>
+      </div>
+    </Transition>
 
     <div class="login-card">
       <div class="logo-wrapper">

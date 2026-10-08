@@ -10,7 +10,17 @@ const store = useMainStore()
 const menuSearch = ref('')
 const menuSearchInput = ref<HTMLInputElement | null>(null)
 
-const menuItems = [
+const userEmail = computed(() => store.user?.email || 'demo@agronia.com')
+const userRole = computed(() => {
+  const profileRole = store.user?.profile?.role
+  const metadataRole = store.user?.user_metadata?.role
+  if (profileRole === 'administrador' || metadataRole === 'administrador' || userEmail.value === 'jenone0424@gmail.com') return 'Administrador'
+  if (profileRole === 'tecnico' || metadataRole === 'tecnico') return 'Técnico'
+  const role = profileRole || metadataRole || 'cliente'
+  return role.charAt(0).toUpperCase() + role.slice(1)
+})
+
+const menuItems = computed(() => [
   { name: 'Inicio', path: '/', icon: Home, group: 'OPERACIÓN', accent: 'green' },
   { name: 'Mapas', path: '/mapas', icon: Map, group: 'OPERACIÓN', accent: 'blue' },
   { name: 'Dashboards', path: '/dashboards', icon: PieChart, group: 'OPERACIÓN', accent: 'violet' },
@@ -19,14 +29,14 @@ const menuItems = [
   { name: 'Usuarios', path: '/usuarios', icon: Users, group: 'GESTIÓN', accent: 'pink' },
   { name: 'Parcelas', path: '/parcelas', icon: MapPin, group: 'GESTIÓN', accent: 'orange' },
   { name: 'Configuración', path: '/configuracion', icon: Settings, group: 'GESTIÓN', accent: 'slate' },
-]
+].filter(item => item.path !== '/usuarios' || userRole.value === 'Administrador'))
 
 const isActive = (path: string) => route.path === path
 const menuGroups = computed(() => {
   const query = menuSearch.value.trim().toLocaleLowerCase()
   return ['OPERACIÓN', 'GESTIÓN'].map(name => ({
     name,
-    items: menuItems.filter(item =>
+    items: menuItems.value.filter(item =>
       item.group === name && (!query || item.name.toLocaleLowerCase().includes(query))
     )
   })).filter(group => group.items.length > 0)
@@ -64,8 +74,6 @@ const userInitials = computed(() => {
   return name.trim().split(/[\s@._-]+/).filter(Boolean).slice(0, 2).map((part: string) => part[0]).join('').toUpperCase()
 })
 
-const userEmail = computed(() => store.user?.email || 'demo@agronia.com')
-
 const userDisplayName = computed(() => {
   const metadata = store.user?.user_metadata
   const profile = store.user?.profile
@@ -74,14 +82,6 @@ const userDisplayName = computed(() => {
     || profile?.full_name
     || profile?.name
     || userEmail.value
-})
-
-// Rol del usuario desde Supabase
-const userRole = computed(() => {
-  const metadata = store.user?.user_metadata
-  if (metadata?.role === 'administrador' || userEmail.value === 'jenone0424@gmail.com') return 'Administrador'
-  if (metadata?.role === 'tecnico') return 'Técnico'
-  return metadata?.role ? metadata.role.charAt(0).toUpperCase() + metadata.role.slice(1) : 'Cliente'
 })
 
 const roleColor = computed(() => {
