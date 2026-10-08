@@ -11,7 +11,7 @@ const pinia = createPinia()
 app.use(pinia)
 app.use(router)
 
-// 🚀 Inicializa el store ANTES de montar
+// Inicializa el store ANTES de montar
 const store = useMainStore(pinia)
 store.init().then(() => {
   app.mount('#app')

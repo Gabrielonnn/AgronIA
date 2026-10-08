@@ -35,6 +35,11 @@
 .page-leave-active {
   transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
 }
+.app-main > .page-leave-active {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
 .page-enter-from {
   opacity: 0;
   transform: translateY(15px) scale(0.98);

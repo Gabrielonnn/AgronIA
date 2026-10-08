@@ -107,12 +107,13 @@ onUnmounted(() => {
       <Sidebar />
     </div>
     <main
-      class="app-main flex-1 h-[calc(100vh-61px)] md:h-screen overflow-y-auto w-full"
+      class="app-main relative flex-1 h-[calc(100vh-61px)] md:h-screen overflow-y-auto w-full"
       :class="[{ 'p-4 md:p-6': !route.meta.public }, { 'app-main-reveal': !showIntro }]"
     >
       <RouterView v-slot="{ Component }">
-        <Transition name="page" mode="out-in">
-          <component :is="Component" />
+        <component v-if="route.meta.public" :is="Component" :key="route.path" />
+        <Transition v-else name="page" mode="in-out">
+          <component :is="Component" :key="route.path" />
         </Transition>
       </RouterView>
     </main>
