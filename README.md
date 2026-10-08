@@ -13,6 +13,12 @@ El inicio de sesión y el registro requieren un proyecto Supabase configurado. A
 
 La clave pública `publishable`/`anon` se utiliza en el cliente. **No uses ni compartas la `service_role` key** en variables `VITE_*`, en el navegador ni en el repositorio.
 
+## Telemetría de dron MAVLink
+
+En **Simulación → Conexión con dron**, puedes conectar por USB un controlador ArduPilot o PX4 que exponga telemetría serie MAVLink 1 o 2. El navegador debe admitir Web Serial (Chrome o Edge de escritorio) y la aplicación debe servirse en HTTPS o `localhost`. Conecta el controlador, pulsa **Conectar por USB**, elige el puerto del controlador y selecciona la misma velocidad en baudios configurada para ese enlace (habitualmente 57 600 o 115 200).
+
+La integración es **solo lectura**: valida el CRC MAVLink y recibe heartbeat, posición, GPS, velocidad, rumbo y batería cuando el autopiloto transmite esos mensajes. No envía paquetes de control, no arma el vehículo y no ejecuta misiones; las acciones de la escena 3D siguen siendo simuladas. Los mensajes MAVLink 2 firmados se omiten porque esta conexión no valida claves de firma. Para una prueba de banco, retira las hélices y verifica el puerto y la velocidad con el fabricante del controlador. En móviles, Safari y navegadores sin Web Serial, el panel informa que la conexión directa no está disponible.
+
 ## Comandos
 
 - `npm run dev`: servidor de desarrollo.

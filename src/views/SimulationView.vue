@@ -2,6 +2,7 @@
 import { ref, onMounted, onBeforeUnmount, shallowRef } from 'vue'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import DroneConnectionPanel from '../components/simulation/DroneConnectionPanel.vue'
 
 interface PlantData {
   id: string; x: number; z: number; health: number; ndvi: number; temp: number; status: string; stage: number
@@ -916,6 +917,8 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </div>
+
+    <DroneConnectionPanel />
     
     <!-- Tooltip Combinado (Planta + Sector) -->
     <div 
