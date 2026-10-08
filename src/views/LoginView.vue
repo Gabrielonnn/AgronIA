@@ -16,6 +16,7 @@ const showPassword = ref(false)
 const capsLockOn = ref(false)
 const progress = ref(0)
 const loginSuccess = ref(false)
+const loginPending = ref(false)
 
 const backgroundLeaves = Array.from({ length: 10 }, (_, index) => ({
   id: index,
@@ -107,8 +108,14 @@ const handleLogin = async () => {
       const { data: profile } = await supabase.from('profiles').select('*').eq('id', authData.user.id).single()
       if (profile && profile.status === 'pendiente') {
         await supabase.auth.signOut()
-        error.value = 'Tu cuenta está pendiente de aprobación por un administrador.'
-        progress.value = 0
+        progress.value = 100
+        loginPending.value = true
+        setTimeout(() => {
+          loginPending.value = false
+          progress.value = 0
+          email.value = ''
+          password.value = ''
+        }, 4000)
       } else if (profile && profile.status === 'rechazado') {
         await supabase.auth.signOut()
         error.value = 'Tu solicitud de registro ha sido rechazada.'
@@ -217,6 +224,23 @@ const translateError = (msg: string): string => {
           <h2>¡Qué bueno verte!</h2>
           <p>Preparando tu espacio de trabajo...</p>
           <div class="success-progress"><span></span></div>
+        </div>
+      </div>
+    </Transition>
+
+    <Transition name="login-success">
+      <div v-if="loginPending" class="login-success-overlay" role="status" aria-live="polite">
+        <div class="success-orbit success-orbit-one" style="border-color: rgba(245, 138, 0, 0.2)"></div>
+        <div class="success-orbit success-orbit-two" style="border-color: rgba(245, 138, 0, 0.1)"></div>
+        <div class="success-content">
+          <div class="success-icon" style="background: linear-gradient(135deg, #f58a00, #ffc400); box-shadow: 0 0 30px rgba(245, 138, 0, 0.4)">
+            <CheckCircle2 :size="42" :stroke-width="1.8" />
+            <Sparkles class="success-sparkle" :size="20" />
+          </div>
+          <p class="success-eyebrow" style="color: #f58a00">Cuenta en Revisión</p>
+          <h2>Esperando Confirmación</h2>
+          <p>Un administrador revisará tu solicitud pronto...</p>
+          <div class="success-progress"><span style="background: linear-gradient(90deg, #f58a00, #ffc400)"></span></div>
         </div>
       </div>
     </Transition>
