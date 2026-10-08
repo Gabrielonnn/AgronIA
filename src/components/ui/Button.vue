@@ -11,7 +11,7 @@ const props = withDefaults(defineProps<{
   disabled: false
 })
 
-const baseClasses = 'inline-flex items-center justify-center font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2'
+const baseClasses = 'app-action-button inline-flex items-center justify-center font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2'
 
 const variantClasses = computed(() => {
   switch (props.variant) {
