@@ -35,9 +35,15 @@ const saveAccount = () => {
   setTimeout(() => { saveAccountMsg.value = '' }, 3000)
 }
 
-// Nivel de acceso para info
-type Role = 'cliente' | 'administrador' | 'tecnico'
-const roleLabels: Record<Role, string> = {
+const userRole = computed(() => {
+  const profileRole = store.user?.profile?.role
+  const metadataRole = store.user?.user_metadata?.role
+  if (profileRole === 'administrador' || metadataRole === 'administrador' || store.user?.email === 'jenone0424@gmail.com') return 'administrador'
+  if (profileRole === 'tecnico' || metadataRole === 'tecnico') return 'tecnico'
+  return profileRole || metadataRole || 'cliente'
+})
+
+const roleLabels: Record<string, string> = {
   cliente: 'Cliente',
   administrador: 'Administrador',
   tecnico: 'Técnico',
@@ -130,18 +136,16 @@ const savePrefs = () => {
             </h3>
           </template>
           <div class="space-y-3">
-            <div v-for="role in (['cliente', 'administrador', 'tecnico'] as Role[])" :key="role"
-              class="flex items-start gap-4 p-4 rounded-xl border"
-              :class="role === 'administrador' ? 'border-agron-green bg-agron-green-light/50' : 'border-gray-100 bg-gray-50'">
+            <div class="flex items-start gap-4 p-4 rounded-xl border border-agron-green bg-agron-green-light/50">
               <div class="mt-0.5">
-                <ShieldCheck class="w-5 h-5" :class="role === 'administrador' ? 'text-agron-green' : 'text-gray-400'" />
+                <ShieldCheck class="w-5 h-5 text-agron-green" />
               </div>
               <div>
-                <h4 class="font-semibold text-gray-900 capitalize">{{ roleLabels[role] }}</h4>
+                <h4 class="font-semibold text-gray-900 capitalize">{{ roleLabels[userRole] || 'Cliente' }}</h4>
                 <p class="text-sm text-gray-500 mt-0.5">
-                  <template v-if="role === 'cliente'">Visualiza dashboards, mapas y datos de sus parcelas asignadas.</template>
-                  <template v-if="role === 'administrador'">Acceso total: gestión de usuarios, parcelas, simulación y configuración.</template>
-                  <template v-if="role === 'tecnico'">Puede ejecutar simulaciones, analizar campos y gestionar misiones de dron.</template>
+                  <template v-if="userRole === 'cliente'">Visualiza dashboards, mapas y datos de sus parcelas asignadas.</template>
+                  <template v-if="userRole === 'administrador'">Acceso total: gestión de usuarios, parcelas, simulación y configuración.</template>
+                  <template v-if="userRole === 'tecnico'">Puede ejecutar simulaciones, analizar campos y gestionar misiones de dron.</template>
                 </p>
               </div>
             </div>

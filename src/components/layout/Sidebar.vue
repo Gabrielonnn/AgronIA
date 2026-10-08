@@ -8,16 +8,21 @@ const route = useRoute()
 const router = useRouter()
 const store = useMainStore()
 
-const menuItems = [
-  { name: 'Inicio', path: '/', icon: Home },
-  { name: 'Mapas', path: '/mapas', icon: Map },
-  { name: 'Dashboards', path: '/dashboards', icon: PieChart },
-  { name: 'Datos', path: '/datos', icon: Database },
-  { name: 'Simulación', path: '/simulacion', icon: MonitorPlay },
-  { name: 'Usuarios', path: '/usuarios', icon: Users },
-  { name: 'Parcelas', path: '/parcelas', icon: MapPin },
-  { name: 'Configuración', path: '/configuracion', icon: Settings },
-]
+const menuItems = computed(() => {
+  const items = [
+    { name: 'Inicio', path: '/', icon: Home },
+    { name: 'Mapas', path: '/mapas', icon: Map },
+    { name: 'Dashboards', path: '/dashboards', icon: PieChart },
+    { name: 'Datos', path: '/datos', icon: Database },
+    { name: 'Simulación', path: '/simulacion', icon: MonitorPlay },
+    { name: 'Parcelas', path: '/parcelas', icon: MapPin },
+    { name: 'Configuración', path: '/configuracion', icon: Settings },
+  ]
+  if (userRole.value === 'Administrador') {
+    items.splice(5, 0, { name: 'Usuarios', path: '/usuarios', icon: Users })
+  }
+  return items
+})
 
 const isActive = (path: string) => route.path === path
 
@@ -34,12 +39,13 @@ const userInitials = computed(() => {
 
 const userEmail = computed(() => store.user?.email || 'demo@agronia.com')
 
-// Rol del usuario desde Supabase
 const userRole = computed(() => {
-  const metadata = store.user?.user_metadata
-  if (metadata?.role === 'administrador' || userEmail.value === 'jenone0424@gmail.com') return 'Administrador'
-  if (metadata?.role === 'tecnico') return 'Técnico'
-  return metadata?.role ? metadata.role.charAt(0).toUpperCase() + metadata.role.slice(1) : 'Cliente'
+  const profileRole = store.user?.profile?.role
+  const metadataRole = store.user?.user_metadata?.role
+  if (profileRole === 'administrador' || metadataRole === 'administrador' || userEmail.value === 'jenone0424@gmail.com') return 'Administrador'
+  if (profileRole === 'tecnico' || metadataRole === 'tecnico') return 'Técnico'
+  const role = profileRole || metadataRole || 'cliente'
+  return role.charAt(0).toUpperCase() + role.slice(1)
 })
 
 const roleColor = computed(() => {

@@ -54,8 +54,9 @@ const roleColors: Record<Role, string> = {
 }
 
 const isAdmin = computed(() => {
-  const metadata = store.user?.user_metadata
-  return metadata?.role === 'administrador' || store.user?.email === 'jenone0424@gmail.com'
+  const profileRole = store.user?.profile?.role
+  const metadataRole = store.user?.user_metadata?.role
+  return profileRole === 'administrador' || metadataRole === 'administrador' || store.user?.email === 'jenone0424@gmail.com'
 })
 
 const fetchUsers = async () => {

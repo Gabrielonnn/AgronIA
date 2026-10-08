@@ -1,8 +1,20 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
+import { useMainStore } from '../stores'
 import Card from '../components/ui/Card.vue'
 import Button from '../components/ui/Button.vue'
-import { Map, Plus, Trash2, Save } from 'lucide-vue-next'
+import { Map, Plus, Trash2, Save, Check } from 'lucide-vue-next'
+
+const store = useMainStore()
+
+const isAdmin = computed(() => {
+  const profileRole = store.user?.profile?.role
+  const metadataRole = store.user?.user_metadata?.role
+  return profileRole === 'administrador' || metadataRole === 'administrador' || store.user?.email === 'jenone0424@gmail.com'
+})
+
+const currentUserEmail = computed(() => store.user?.email || '')
+const currentUserName = computed(() => store.user?.user_metadata?.name || store.user?.profile?.full_name || 'Mi Cuenta')
 
 interface Parcela {
   id: number
@@ -12,12 +24,18 @@ interface Parcela {
   hectareas: number
   cultivo: string
   municipio: string
+  status: 'aprobada' | 'pendiente'
 }
 
-const parcelas = ref<Parcela[]>([
-  { id: 1, clientName: 'Carlos Mendoza', clientEmail: 'carlos@agronia.com', parcelaName: 'Parcela Norte', hectareas: 45, cultivo: 'Maíz', municipio: 'Culiacán' },
-  { id: 2, clientName: 'Ana López', clientEmail: 'ana@agronia.com', parcelaName: 'Parcela Sur', hectareas: 80, cultivo: 'Trigo', municipio: 'Navolato' },
+const allParcelas = ref<Parcela[]>([
+  { id: 1, clientName: 'Carlos Mendoza', clientEmail: 'carlos@agronia.com', parcelaName: 'Parcela Norte', hectareas: 45, cultivo: 'Maíz', municipio: 'Culiacán', status: 'aprobada' },
+  { id: 2, clientName: 'Ana López', clientEmail: 'ana@agronia.com', parcelaName: 'Parcela Sur', hectareas: 80, cultivo: 'Trigo', municipio: 'Navolato', status: 'aprobada' },
 ])
+
+const parcelas = computed(() => {
+  if (isAdmin.value) return allParcelas.value
+  return allParcelas.value.filter(p => p.clientEmail === currentUserEmail.value)
+})
 
 const showNewParcela = ref(false)
 const newParcela = ref({
@@ -29,16 +47,34 @@ const cultivoOptions = ['Maíz', 'Trigo', 'Frijol', 'Tomate', 'Chile', 'Garbanzo
 const municipioOptions = ['Culiacán', 'Navolato', 'Mocorito', 'Badiraguato', 'Cosalá', 'Elota', 'San Ignacio', 'Otro']
 
 const addParcela = () => {
-  if (!newParcela.value.clientName || !newParcela.value.parcelaName) return
-  parcelas.value.push({ id: Date.now(), ...newParcela.value })
+  if (!newParcela.value.parcelaName) return
+
+  if (!isAdmin.value) {
+    newParcela.value.clientEmail = currentUserEmail.value
+    newParcela.value.clientName = currentUserName.value
+  }
+
+  const status = isAdmin.value ? 'aprobada' : 'pendiente'
+
+  allParcelas.value.push({ id: Date.now(), ...newParcela.value, status })
   newParcela.value = { clientName: '', clientEmail: '', parcelaName: '', hectareas: 0, cultivo: '', municipio: '' }
   showNewParcela.value = false
-  addParcelaMsg.value = 'Parcela registrada exitosamente.'
-  setTimeout(() => { addParcelaMsg.value = '' }, 3000)
+  
+  if (isAdmin.value) {
+    addParcelaMsg.value = 'Parcela registrada exitosamente.'
+  } else {
+    addParcelaMsg.value = 'Solicitud de parcela enviada al administrador.'
+  }
+  setTimeout(() => { addParcelaMsg.value = '' }, 4000)
+}
+
+const approveParcela = (id: number) => {
+  const p = allParcelas.value.find(x => x.id === id)
+  if (p) p.status = 'aprobada'
 }
 
 const removeParcela = (id: number) => {
-  parcelas.value = parcelas.value.filter(p => p.id !== id)
+  allParcelas.value = allParcelas.value.filter(p => p.id !== id)
 }
 </script>
 
@@ -67,15 +103,15 @@ const removeParcela = (id: number) => {
           </h3>
         </template>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-2xl">
-          <div>
+          <div v-if="isAdmin">
             <label class="block text-sm font-medium text-gray-700 mb-1">Nombre del Cliente</label>
             <input v-model="newParcela.clientName" type="text" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-agron-green outline-none text-sm" placeholder="Nombre completo" />
           </div>
-          <div>
+          <div v-if="isAdmin">
             <label class="block text-sm font-medium text-gray-700 mb-1">Correo del Cliente</label>
             <input v-model="newParcela.clientEmail" type="email" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-agron-green outline-none text-sm" placeholder="correo@cliente.com" />
           </div>
-          <div>
+          <div :class="isAdmin ? '' : 'md:col-span-2'">
             <label class="block text-sm font-medium text-gray-700 mb-1">Nombre de la Parcela</label>
             <input v-model="newParcela.parcelaName" type="text" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-agron-green outline-none text-sm" placeholder="Ej: Parcela Norte" />
           </div>
@@ -97,9 +133,9 @@ const removeParcela = (id: number) => {
               <option v-for="m in municipioOptions" :key="m" :value="m">{{ m }}</option>
             </select>
           </div>
-          <div class="md:col-span-2 flex gap-3">
-            <Button variant="primary" size="sm" @click="addParcela" :disabled="!newParcela.clientName || !newParcela.parcelaName">
-              <Save class="w-4 h-4 mr-2" /> Registrar Parcela
+          <div class="md:col-span-2 flex gap-3 mt-2">
+            <Button variant="primary" size="sm" @click="addParcela" :disabled="!newParcela.parcelaName">
+              <Save class="w-4 h-4 mr-2" /> {{ isAdmin ? 'Registrar Parcela' : 'Solicitar Registro' }}
             </Button>
             <Button variant="outline" size="sm" @click="showNewParcela = false">Cancelar</Button>
           </div>
@@ -137,11 +173,17 @@ const removeParcela = (id: number) => {
                 <span class="bg-agron-green-light text-agron-green-dark text-xs font-semibold px-2.5 py-1 rounded-full">{{ p.cultivo }}</span>
               </td>
               <td class="py-3 pr-4 text-gray-600">{{ p.municipio }}</td>
-              <td class="py-3 pr-4 text-gray-600">{{ p.hectareas }} ha</td>
+              <td class="py-3 pr-4 text-gray-600">
+                {{ p.hectareas }} ha
+                <span v-if="p.status === 'pendiente'" class="ml-2 bg-yellow-100 text-yellow-700 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">Pendiente</span>
+              </td>
               <td class="py-3 text-right">
-                <button @click="removeParcela(p.id)" class="text-gray-400 hover:text-red-500 transition-colors">
-                  <Trash2 class="w-4 h-4" />
-                </button>
+                <div class="flex justify-end items-center gap-2">
+                  <button v-if="isAdmin && p.status === 'pendiente'" @click="approveParcela(p.id)" class="text-green-600 hover:bg-green-50 font-semibold text-xs border border-green-200 px-2 py-1 rounded transition-colors" title="Aprobar Solicitud">Aprobar</button>
+                  <button @click="removeParcela(p.id)" class="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors" title="Eliminar Parcela">
+                    <Trash2 class="w-4 h-4" />
+                  </button>
+                </div>
               </td>
             </tr>
             <tr v-if="parcelas.length === 0">
