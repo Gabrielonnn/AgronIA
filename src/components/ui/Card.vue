@@ -3,7 +3,7 @@
 </script>
 
 <template>
-  <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-md transition-shadow duration-300">
+  <div class="app-card bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-md transition-shadow duration-300">
     <div v-if="$slots.header" class="px-6 py-4 border-b border-gray-100">
       <slot name="header" />
     </div>
