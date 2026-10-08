@@ -3,7 +3,7 @@ import { ref, computed } from 'vue'
 import { useMainStore } from '../stores'
 import Card from '../components/ui/Card.vue'
 import Button from '../components/ui/Button.vue'
-import { Map, Plus, Trash2, Save, Check } from 'lucide-vue-next'
+import { Map, Plus, Trash2, Save } from 'lucide-vue-next'
 
 const store = useMainStore()
 
