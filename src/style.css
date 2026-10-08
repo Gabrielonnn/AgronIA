@@ -30,23 +30,30 @@
   }
 }
 
-/* Transiciones de enrutador (Emil Kowalski feeling) */
+/* Transiciones de navegación */
 .page-enter-active,
 .page-leave-active {
-  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  transition:
+    opacity 0.34s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.42s cubic-bezier(0.16, 1, 0.3, 1),
+    filter 0.34s ease;
+  will-change: opacity, transform;
 }
 .app-main > .page-leave-active {
   position: absolute;
   inset: 0;
+  width: 100%;
   pointer-events: none;
 }
 .page-enter-from {
   opacity: 0;
-  transform: translateY(15px) scale(0.98);
+  transform: translate3d(0, 18px, 0) scale(0.99);
+  filter: blur(4px);
 }
 .page-leave-to {
   opacity: 0;
-  transform: translateY(-15px) scale(0.98);
+  transform: translate3d(0, -10px, 0) scale(0.995);
+  filter: blur(2px);
 }
 
 .app-shell {
@@ -65,6 +72,7 @@
 }
 
 .app-sidebar {
+  animation: sidebar-arrive 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
   color: #e8eddf;
   background:
     radial-gradient(ellipse at 50% 0, rgba(120, 150, 76, 0.12), transparent 48%),
@@ -105,11 +113,36 @@
 
 .app-sidebar nav a {
   color: #aeb7a1;
+  position: relative;
+  transition:
+    color 0.2s ease,
+    background-color 0.2s ease,
+    box-shadow 0.25s ease,
+    transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  animation: menu-item-arrive 0.45s both;
+}
+
+.app-sidebar nav li:nth-child(1) a { animation-delay: 0.06s; }
+.app-sidebar nav li:nth-child(2) a { animation-delay: 0.1s; }
+.app-sidebar nav li:nth-child(3) a { animation-delay: 0.14s; }
+.app-sidebar nav li:nth-child(4) a { animation-delay: 0.18s; }
+.app-sidebar nav li:nth-child(5) a { animation-delay: 0.22s; }
+.app-sidebar nav li:nth-child(6) a { animation-delay: 0.26s; }
+.app-sidebar nav li:nth-child(7) a { animation-delay: 0.3s; }
+.app-sidebar nav li:nth-child(8) a { animation-delay: 0.34s; }
+
+.app-sidebar nav a svg {
+  transition: color 0.2s ease, transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .app-sidebar nav a:hover {
   color: #fff9e8;
   background: rgba(255, 196, 0, 0.07);
+  transform: translateX(3px);
+}
+
+.app-sidebar nav a:hover svg {
+  transform: scale(1.08);
 }
 
 .app-sidebar nav a.bg-agron-green-light {
@@ -122,8 +155,26 @@
   color: #ffc400;
 }
 
+.app-sidebar nav a[aria-current="page"] > span {
+  animation: active-menu-pulse 2s ease-in-out infinite;
+}
+
+.app-sidebar > div:first-child > div > div:first-child {
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s ease;
+}
+
+.app-sidebar > div:first-child > div:hover > div:first-child {
+  transform: rotate(-7deg) scale(1.06);
+  box-shadow: 0 10px 26px rgba(245, 138, 0, 0.3);
+}
+
 .app-sidebar > div:last-child > div {
   background: rgba(255, 255, 255, 0.035);
+  transition: background-color 0.25s ease, border-color 0.25s ease;
+}
+
+.app-sidebar > div:last-child > div:hover {
+  background: rgba(255, 196, 0, 0.065);
 }
 
 .app-sidebar > div:last-child > button {
@@ -133,6 +184,21 @@
 .app-sidebar > div:last-child > button:hover {
   color: #fca5a5;
   background: rgba(239, 68, 68, 0.1);
+}
+
+@keyframes sidebar-arrive {
+  from { opacity: 0; transform: translateX(-12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes menu-item-arrive {
+  from { opacity: 0; translate: -8px 0; }
+  to { opacity: 1; translate: 0 0; }
+}
+
+@keyframes active-menu-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 196, 0, 0.12); }
+  50% { box-shadow: 0 0 0 5px rgba(255, 196, 0, 0); }
 }
 
 .app-mobile-header {
@@ -294,6 +360,13 @@
   .app-workspace *,
   .app-sidebar * {
     scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .page-enter-active,
+  .page-leave-active {
     transition-duration: 0.01ms !important;
   }
 }
