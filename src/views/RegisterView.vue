@@ -92,6 +92,8 @@ const handleRegister = async () => {
   successMessage.value = ''
   progress.value = 15
 
+  progress.value = 15
+
   try {
     progress.value = 35
 

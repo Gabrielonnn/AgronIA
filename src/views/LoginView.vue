@@ -99,7 +99,7 @@ const handleLogin = async () => {
       return
     }
 
-    const { data, error: authError } = await supabase.auth.signInWithPassword({
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
       email: email.value,
       password: password.value
     })
@@ -109,13 +109,33 @@ const handleLogin = async () => {
     if (authError) {
       error.value = translateError(authError.message)
       progress.value = 0
-    } else if (!data.session) {
+    } else if (!authData.session) {
       error.value = 'No se pudo establecer una sesión. Verifica tu correo e inténtalo de nuevo.'
       progress.value = 0
     } else {
-      store.setUser(data.session.user)
-      progress.value = 100
-      await finishLogin()
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', authData.session.user.id)
+        .single()
+
+      if (profile && profile.status === 'pendiente') {
+        await supabase.auth.signOut()
+        error.value = 'Tu cuenta está pendiente de aprobación por un administrador.'
+        progress.value = 0
+      } else if (profile && profile.status === 'rechazado') {
+        await supabase.auth.signOut()
+        error.value = 'Tu solicitud de registro ha sido rechazada.'
+        progress.value = 0
+      } else if (profile && !profile.active) {
+        await supabase.auth.signOut()
+        error.value = 'Tu cuenta está desactivada. Contacta a un administrador.'
+        progress.value = 0
+      } else {
+        store.setUser(authData.session.user)
+        progress.value = 100
+        await finishLogin()
+      }
     }
   } catch (e: any) {
     loginSuccess.value = false
@@ -1414,5 +1434,4 @@ Agron<span class="accent">IA</span>
 }
 
 </style>
-
 

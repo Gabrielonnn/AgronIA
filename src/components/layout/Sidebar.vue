@@ -34,12 +34,12 @@ const userInitials = computed(() => {
 
 const userEmail = computed(() => store.user?.email || 'demo@agronia.com')
 
-// Rol demo basado en email (en producción vendría de Supabase)
+// Rol del usuario desde Supabase
 const userRole = computed(() => {
-  const email = userEmail.value
-  if (email.includes('admin')) return 'Administrador'
-  if (email.includes('tecnico') || email.includes('tech')) return 'Técnico'
-  return 'Cliente'
+  const metadata = store.user?.user_metadata
+  if (metadata?.role === 'administrador' || userEmail.value === 'jenone0424@gmail.com') return 'Administrador'
+  if (metadata?.role === 'tecnico') return 'Técnico'
+  return metadata?.role ? metadata.role.charAt(0).toUpperCase() + metadata.role.slice(1) : 'Cliente'
 })
 
 const roleColor = computed(() => {
