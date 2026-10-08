@@ -23,9 +23,14 @@ ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Permitir ver perfiles a todos los autenticados" ON public.profiles
   FOR SELECT USING (auth.role() = 'authenticated');
 
--- Solo administradores pueden actualizar perfiles (roles, activos)
+-- Solo administradores pueden actualizar y eliminar perfiles
 CREATE POLICY "Permitir actualizar perfiles a admins" ON public.profiles
   FOR UPDATE USING (
+    (SELECT role FROM public.profiles WHERE id = auth.uid()) = 'administrador'
+  );
+
+CREATE POLICY "Permitir eliminar perfiles a admins" ON public.profiles
+  FOR DELETE USING (
     (SELECT role FROM public.profiles WHERE id = auth.uid()) = 'administrador'
   );
 

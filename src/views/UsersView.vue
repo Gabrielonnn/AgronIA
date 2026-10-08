@@ -112,8 +112,12 @@ const addUser = async () => {
 
 const removeUser = async (id: string) => {
   if (!confirm('¿Seguro que deseas eliminar este perfil? Esto no borra la cuenta en auth, solo su acceso.')) return
-  await supabase!.from('profiles').delete().eq('id', id)
-  users.value = users.value.filter(u => u.id !== id)
+  const { error } = await supabase!.from('profiles').delete().eq('id', id)
+  if (!error) {
+    users.value = users.value.filter(u => u.id !== id)
+  } else {
+    alert('Error al eliminar usuario. Posiblemente faltan permisos de administrador en la base de datos.')
+  }
 }
 
 const toggleUserActive = async (user: UserProfile) => {
