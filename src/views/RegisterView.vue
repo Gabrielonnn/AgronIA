@@ -92,6 +92,8 @@ const handleRegister = async () => {
   successMessage.value = ''
   progress.value = 15
 
+  progress.value = 15
+
   try {
     progress.value = 35
 
@@ -109,7 +111,7 @@ const handleRegister = async () => {
     progress.value = 80
 
     if (authError) {
-      error.value = authError.message
+      error.value = translateError(authError.message)
       progress.value = 0
     } else {
       successMessage.value = 'Registro exitoso. Puedes iniciar sesión ahora.'

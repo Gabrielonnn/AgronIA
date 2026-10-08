@@ -22,13 +22,35 @@ export const useMainStore = defineStore('main', {
         return
       }
 
-      const { data: { session } } = await supabase.auth.getSession()
-      this.user = session?.user || null
+      const { data: { session } } = await supabase!.auth.getSession()
+      
+      if (session?.user) {
+        const { data: profile } = await supabase!.from('profiles').select('*').eq('id', session.user.id).single()
+        if (profile && profile.active) {
+          this.user = { ...session.user, profile }
+        } else {
+          await supabase!.auth.signOut()
+          this.user = null
+        }
+      } else {
+        this.user = null
+      }
       this.loading = false
       this.initialized = true
-
-      supabase.auth.onAuthStateChange((_event, session) => {
-        this.user = session?.user || null
+      
+      supabase!.auth.onAuthStateChange(async (event, session) => {
+        if (event === 'SIGNED_IN' && session?.user) {
+          const { data: profile } = await supabase!.from('profiles').select('*').eq('id', session.user.id).single()
+          if (profile && !profile.active) {
+            await supabase!.auth.signOut()
+            this.user = null
+            return
+          }
+          this.user = { ...session.user, profile }
+          await supabase!.from('user_logs').insert([{ user_id: this.user.id, action: 'LOGIN' }])
+        } else if (event === 'SIGNED_OUT') {
+          this.user = null
+        }
       })
     },
 
@@ -39,7 +61,7 @@ export const useMainStore = defineStore('main', {
         return
       }
 
-      const { data: { session } } = await supabase.auth.getSession()
+      const { data: { session } } = await supabase!.auth.getSession()
       this.user = session?.user || null
       this.loading = false
     },
@@ -50,7 +72,10 @@ export const useMainStore = defineStore('main', {
         return
       }
 
-      await supabase.auth.signOut()
+      if (this.user) {
+        await supabase!.from('user_logs').insert([{ user_id: this.user.id, action: 'LOGOUT' }])
+      }
+      await supabase!.auth.signOut()
       this.user = null
     }
   }
