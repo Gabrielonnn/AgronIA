@@ -108,45 +108,45 @@ const stats = [
 </script>
 
 <template>
-  <div class="space-y-8">
+  <div class="home-page space-y-8">
     <!-- Hero Banner -->
-    <div class="relative rounded-2xl overflow-hidden min-h-[320px] flex items-end shadow-xl">
-      <img src="https://images.unsplash.com/photo-1625246333195-78d9c38ad449?auto=format&fit=crop&q=80&w=1600" alt="Campos agrícolas de Sinaloa" class="absolute inset-0 w-full h-full object-cover" />
-      <div class="absolute inset-0 bg-gradient-to-t from-black/75 via-black/30 to-transparent"></div>
-      <div class="relative z-10 p-8 text-white w-full">
-        <span class="inline-flex items-center gap-1.5 bg-agron-green/90 text-white text-xs font-semibold px-3 py-1 rounded-full mb-3">
+    <section class="home-hero relative rounded-2xl overflow-hidden min-h-[320px] flex items-end shadow-xl">
+      <img src="https://images.unsplash.com/photo-1625246333195-78d9c38ad449?auto=format&fit=crop&q=80&w=1600" alt="Campos agrícolas de Sinaloa" class="home-hero-image absolute inset-0 w-full h-full object-cover" />
+      <div class="home-hero-overlay absolute inset-0"></div>
+      <div class="home-hero-content relative z-10 p-8 text-white w-full">
+        <span class="home-status inline-flex items-center gap-1.5 bg-agron-green/90 text-white text-xs font-semibold px-3 py-1 rounded-full mb-3">
           <span class="w-2 h-2 rounded-full bg-white animate-pulse"></span>
           Sistema Activo — Culiacán, Sinaloa
         </span>
-        <h1 class="text-4xl font-extrabold leading-tight mb-2">
+        <h1 class="home-title text-4xl font-extrabold leading-tight mb-2">
           Bienvenido a <span class="text-agron-green">AgronIA</span>
         </h1>
-        <p class="text-gray-200 text-lg max-w-xl">
+        <p class="home-description text-gray-200 text-lg max-w-xl">
           La plataforma satelital de agricultura de precisión para el agro sinaloense.
         </p>
-        <div class="flex gap-3 mt-5">
-          <RouterLink to="/mapas" class="inline-flex items-center gap-2 bg-agron-green hover:bg-agron-green-dark text-white font-semibold px-5 py-2.5 rounded-lg transition-colors text-sm">
+        <div class="home-actions flex gap-3 mt-5">
+          <RouterLink to="/mapas" class="home-action-primary inline-flex items-center gap-2 bg-agron-green hover:bg-agron-green-dark text-white font-semibold px-5 py-2.5 rounded-lg transition-colors text-sm">
             <Satellite class="w-4 h-4" /> Ver Mapa Satelital
           </RouterLink>
-          <RouterLink to="/simulacion" class="inline-flex items-center gap-2 bg-white/15 hover:bg-white/25 text-white font-semibold px-5 py-2.5 rounded-lg transition-colors text-sm backdrop-blur-sm border border-white/20">
+          <RouterLink to="/simulacion" class="home-action-secondary inline-flex items-center gap-2 bg-white/15 hover:bg-white/25 text-white font-semibold px-5 py-2.5 rounded-lg transition-colors text-sm backdrop-blur-sm border border-white/20">
             Ir a Simulación <ArrowRight class="w-4 h-4" />
           </RouterLink>
         </div>
       </div>
-    </div>
+    </section>
 
     <!-- Servicios ofrecidos (Movido arriba) -->
     <div>
-      <h2 class="text-xl font-bold text-gray-900 mb-4">Nuestros Servicios</h2>
+      <h2 class="home-section-title text-xl font-bold text-gray-900 mb-4">Nuestros Servicios</h2>
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div v-for="service in services" :key="service.title"
-          class="group relative rounded-xl overflow-hidden shadow-sm border border-gray-100 hover:shadow-md transition-shadow cursor-default">
+        class="home-service-card group relative rounded-xl overflow-hidden shadow-sm border border-gray-100 hover:shadow-md transition-shadow cursor-default">
           <div class="relative h-48 overflow-hidden">
             <img :src="service.img" :alt="service.title" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
             <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
             <span class="absolute top-3 right-3 bg-agron-green text-white text-xs font-bold px-2.5 py-1 rounded-full">{{ service.badge }}</span>
           </div>
-          <div class="p-5 bg-white">
+          <div class="home-service-copy p-5 bg-white">
             <h3 class="font-bold text-gray-900 text-lg mb-2">{{ service.title }}</h3>
             <p class="text-gray-500 text-sm leading-relaxed">{{ service.description }}</p>
           </div>
@@ -157,8 +157,8 @@ const stats = [
     <!-- Telemetría en tiempo real (Movido abajo) -->
     <div>
       <div class="flex items-center justify-between mb-3">
-        <h2 class="text-xl font-bold text-gray-900">Telemetría en Tiempo Real</h2>
-        <span class="flex items-center gap-1.5 text-xs text-agron-green font-medium">
+        <h2 class="home-section-title text-xl font-bold text-gray-900">Telemetría en Tiempo Real</h2>
+        <span class="home-live-label flex items-center gap-1.5 text-xs text-agron-green font-medium">
           <span class="w-2 h-2 rounded-full bg-agron-green animate-pulse"></span>
           Actualización cada 2s
         </span>
@@ -238,3 +238,148 @@ const stats = [
     </div>
   </div>
 </template>
+
+<style scoped>
+.home-page {
+  min-width: 0;
+  animation: home-enter 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.home-hero {
+  min-height: clamp(320px, 36vw, 440px);
+  isolation: isolate;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  box-shadow: 0 22px 54px rgba(0, 0, 0, 0.28), inset 0 1px rgba(255, 255, 255, 0.12);
+}
+
+.home-hero-image {
+  z-index: -2;
+  transform: scale(1.015);
+  animation: field-drift 24s ease-in-out infinite alternate;
+}
+
+.home-hero-overlay {
+  z-index: -1;
+  background:
+    linear-gradient(90deg, rgba(8, 22, 13, 0.88) 0%, rgba(8, 22, 13, 0.62) 48%, rgba(8, 22, 13, 0.08) 100%),
+    linear-gradient(0deg, rgba(7, 14, 9, 0.28), transparent 58%);
+}
+
+.home-hero-content {
+  padding: clamp(1.4rem, 4vw, 3.25rem);
+}
+
+.home-status {
+  padding: 0.55rem 0.9rem;
+  border: 1px solid rgba(160, 255, 208, 0.26);
+  background: rgba(9, 115, 83, 0.78);
+  box-shadow: 0 7px 24px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(10px);
+  animation: home-enter 0.6s 0.08s both;
+}
+
+.home-title {
+  max-width: 790px;
+  margin-top: 0.25rem;
+  font-size: clamp(2.2rem, 5vw, 4rem);
+  line-height: 1.02;
+  letter-spacing: -0.055em;
+  text-wrap: balance;
+  animation: home-enter 0.65s 0.14s both;
+}
+
+.home-title span {
+  color: #5fe0a1;
+  text-shadow: 0 0 28px rgba(47, 211, 133, 0.2);
+}
+
+.home-description {
+  max-width: 620px;
+  font-size: clamp(1rem, 1.6vw, 1.2rem);
+  line-height: 1.6;
+  text-wrap: pretty;
+  animation: home-enter 0.65s 0.2s both;
+}
+
+.home-actions { flex-wrap: wrap; animation: home-enter 0.65s 0.26s both; }
+
+.home-action-primary,
+.home-action-secondary {
+  min-height: 46px;
+  justify-content: center;
+  border-radius: 12px;
+  transition: transform 0.22s ease, box-shadow 0.22s ease, filter 0.22s ease, background 0.22s ease;
+}
+
+.home-action-primary {
+  background: linear-gradient(120deg, #14b87d, #07855e);
+  box-shadow: 0 10px 24px rgba(8, 151, 99, 0.3);
+}
+
+.home-action-primary:hover,
+.home-action-secondary:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.08);
+}
+
+.home-action-primary:hover { box-shadow: 0 14px 30px rgba(8, 151, 99, 0.42); }
+.home-action-secondary { background: rgba(255, 255, 255, 0.13); }
+
+.home-section-title {
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+
+.home-service-card {
+  border-color: rgba(196, 218, 147, 0.14);
+  background: linear-gradient(145deg, rgba(31, 38, 24, 0.92), rgba(21, 25, 18, 0.9));
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.14);
+  transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.28s ease, border-color 0.28s ease;
+}
+
+.home-service-card:hover {
+  transform: translateY(-5px);
+  border-color: rgba(255, 196, 0, 0.24);
+  box-shadow: 0 22px 42px rgba(0, 0, 0, 0.24);
+}
+
+.home-service-card > div:first-child { isolation: isolate; }
+.home-service-card img { transition: transform 0.65s cubic-bezier(0.16, 1, 0.3, 1), filter 0.4s ease; }
+.home-service-card:hover img { transform: scale(1.045); filter: saturate(1.08); }
+
+.home-service-copy { background: transparent; }
+.home-service-copy h3 { letter-spacing: -0.025em; }
+.home-live-label { white-space: nowrap; }
+
+@keyframes home-enter {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes field-drift {
+  from { transform: scale(1.015) translateX(0); }
+  to { transform: scale(1.075) translateX(-0.7%); }
+}
+
+@media (max-width: 640px) {
+  .home-hero { min-height: 360px; }
+  .home-hero-overlay {
+    background:
+      linear-gradient(90deg, rgba(8, 22, 13, 0.82), rgba(8, 22, 13, 0.26)),
+      linear-gradient(0deg, rgba(7, 14, 9, 0.44), transparent 80%);
+  }
+  .home-title { max-width: 14ch; }
+  .home-actions { display: grid; grid-template-columns: 1fr; }
+  .home-actions a { width: 100%; }
+  .home-live-label { font-size: 0.66rem; }
+}
+
+@media (max-width: 380px) {
+  .home-live-label { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-page, .home-hero-image, .home-status, .home-title, .home-description, .home-actions { animation: none; }
+  .home-service-card, .home-service-card img, .home-action-primary, .home-action-secondary { transition: none; }
+}
+</style>
