@@ -58,9 +58,14 @@
 
 .app-shell {
   background: #10150e;
+  min-width: 0;
 }
 
+.app-main { min-width: 0; }
+.app-main.app-public { height: 100vh; height: 100dvh; }
+
 .app-workspace {
+  min-width: 0;
   color: #e8eddf;
   background-color: #10150e;
   background-image:
@@ -72,27 +77,198 @@
 }
 
 .app-sidebar {
+  width: 218px;
+  min-width: 218px;
+  height: 100vh;
+  height: 100dvh;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
   animation: sidebar-arrive 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
   color: #e8eddf;
   background:
     radial-gradient(ellipse at 50% 0, rgba(120, 150, 76, 0.12), transparent 48%),
-    #171b13;
+    linear-gradient(155deg, #10201b 0%, #10231f 46%, #13241d 100%);
   border-color: rgba(255, 196, 0, 0.12);
-  box-shadow: 12px 0 40px rgba(0, 0, 0, 0.12);
+  box-shadow: 12px 0 40px rgba(0, 0, 0, 0.2);
 }
 
-.app-sidebar > div:first-child,
-.app-sidebar > div:last-child {
-  border-color: rgba(255, 196, 0, 0.12);
+.app-sidebar::before,
+.app-sidebar::after {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  content: "";
+  pointer-events: none;
 }
 
-.app-sidebar > div:first-child > div > div:first-child {
-  background: linear-gradient(135deg, #ffc400, #f58a00);
-  box-shadow: 0 8px 22px rgba(245, 138, 0, 0.2);
+.app-sidebar::before {
+  opacity: 0.68;
+  background:
+    repeating-radial-gradient(
+      ellipse at 16% 42%,
+      transparent 0 12px,
+      rgba(185, 205, 144, 0.15) 13px 14px,
+      transparent 15px 26px
+    ),
+    repeating-radial-gradient(
+      ellipse at 92% 83%,
+      transparent 0 16px,
+      rgba(185, 205, 144, 0.09) 17px 18px,
+      transparent 19px 33px
+    );
+  background-size: 150% 150%, 180% 180%;
+  animation: topo-drift 44s ease-in-out infinite alternate;
+  mask-image: linear-gradient(160deg, transparent 0%, #000 24%, #000 84%, transparent 100%);
 }
 
-.app-sidebar > div:first-child > div > div:first-child span {
-  color: #4c2b08;
+.app-sidebar::after {
+  background: linear-gradient(90deg, transparent 88%, rgba(255, 196, 0, 0.045));
+}
+
+.topo-brand {
+  position: relative;
+  height: 68px;
+  flex: 0 0 68px;
+  padding-inline: 18px;
+  border-color: rgba(211, 189, 103, 0.16);
+  background: rgba(4, 12, 10, 0.19);
+}
+
+.topo-brand-content { min-width: 0; }
+.topo-brand-copy { min-width: 0; }
+.topo-brand-name {
+  color: #efe7ca;
+  font-size: 1.05rem;
+  line-height: 1;
+}
+.topo-brand-copy > span:last-child {
+  margin-top: 4px;
+  color: #9da18b;
+  font-size: 0.58rem;
+}
+
+.topo-brand-mark {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  border-radius: 10px;
+  color: #43320d;
+  background: linear-gradient(145deg, #f7e6a5 0%, #d4b45d 100%);
+  box-shadow: 0 7px 20px rgba(212, 180, 93, 0.16);
+}
+
+.app-sidebar .topo-brand-mark span { color: #43320d; }
+.topo-menu-title { color: #a69b6d !important; }
+
+.app-sidebar nav {
+  padding-top: 16px;
+  padding-bottom: 16px;
+}
+
+.app-sidebar .topo-menu-title {
+  margin-bottom: 9px;
+  padding-inline: 14px;
+  font-size: 0.59rem;
+}
+
+.app-sidebar nav ul { padding-inline: 9px; }
+.app-sidebar nav ul { position: relative; }
+.app-sidebar nav a.topo-menu-link {
+  min-height: 38px;
+  margin-bottom: 2px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: #c1c4ae;
+  font-size: 0.79rem;
+}
+
+.app-sidebar nav a.topo-menu-link:hover {
+  color: #f4edda;
+  border-color: rgba(213, 185, 91, 0.13);
+  background: rgba(226, 192, 99, 0.075);
+  transform: translateX(3px);
+}
+
+.app-sidebar nav a.topo-menu-link[aria-current="page"] {
+  color: #f7df91;
+  border-color: rgba(238, 203, 113, 0.38);
+  background:
+    linear-gradient(100deg, rgba(153, 102, 40, 0.44), rgba(157, 127, 57, 0.23));
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 232, 157, 0.045),
+    0 7px 20px rgba(0, 0, 0, 0.1);
+}
+
+.app-sidebar nav a.topo-menu-link[aria-current="page"]::before {
+  position: absolute;
+  left: -1px;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  border-radius: 0 3px 3px 0;
+  background: #f1cc62;
+  box-shadow: 0 0 12px rgba(241, 204, 98, 0.58);
+  content: "";
+}
+
+.app-sidebar nav a.topo-menu-link[aria-current="page"] .topo-menu-icon { color: #f1cc62; }
+.app-sidebar .topo-menu-indicator {
+  background: #79d7a0;
+  box-shadow: 0 0 10px rgba(121, 215, 160, 0.7);
+}
+
+.topo-user-card {
+  gap: 9px;
+  margin-bottom: 9px;
+  padding: 9px;
+  border: 1px solid rgba(226, 213, 160, 0.12);
+  background: rgba(7, 15, 12, 0.36);
+}
+.topo-user-avatar {
+  width: 33px;
+  height: 33px;
+  color: #3c3215;
+  background: linear-gradient(145deg, #f4e6b2, #b8a46a);
+  box-shadow: 0 0 0 2px rgba(245, 225, 157, 0.11);
+}
+.app-sidebar .topo-user-name {
+  max-width: 100%;
+  margin: 0;
+  color: #ead48a;
+  font-size: 0.68rem;
+  line-height: 1.3;
+}
+.app-sidebar .topo-user-roleline {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  margin: 2px 0 0;
+  color: #c4c5ad;
+  font-size: 0.59rem;
+  line-height: 1.2;
+}
+.app-sidebar .topo-user-email {
+  overflow: hidden;
+  margin: 2px 0 0;
+  color: #929b85;
+  font-size: 0.57rem;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+}
+.app-sidebar .topo-role-icon { width: 11px; height: 11px; flex: 0 0 auto; color: #e0bd5a !important; }
+.app-sidebar .topo-logout {
+  min-height: 34px;
+  border: 1px solid transparent;
+  color: #c0c2ad;
+  transition: color 0.2s ease, background-color 0.2s ease, transform 0.2s ease;
+}
+.app-sidebar .topo-logout:hover {
+  color: #f0d1a5;
+  background: rgba(170, 76, 55, 0.14);
+  transform: translateY(-1px);
 }
 
 .app-sidebar nav p {
@@ -146,44 +322,35 @@
 }
 
 .app-sidebar nav a.bg-agron-green-light {
-  color: #f5cc54;
-  background: rgba(255, 196, 0, 0.1);
-  box-shadow: inset 0 0 0 1px rgba(255, 196, 0, 0.12);
+  color: #f7df91;
+  background: linear-gradient(100deg, rgba(153, 102, 40, 0.44), rgba(157, 127, 57, 0.23));
+  box-shadow: inset 0 0 0 1px rgba(238, 203, 113, 0.28);
 }
 
 .app-sidebar nav a.bg-agron-green-light svg {
-  color: #ffc400;
+  color: #f1cc62;
 }
 
 .app-sidebar nav a[aria-current="page"] > span {
   animation: active-menu-pulse 2s ease-in-out infinite;
 }
 
-.app-sidebar > div:first-child > div > div:first-child {
+.app-sidebar .topo-brand-mark {
   transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s ease;
 }
 
-.app-sidebar > div:first-child > div:hover > div:first-child {
+.app-sidebar .topo-brand-content:hover .topo-brand-mark {
   transform: rotate(-7deg) scale(1.06);
-  box-shadow: 0 10px 26px rgba(245, 138, 0, 0.3);
+  box-shadow: 0 10px 26px rgba(212, 180, 93, 0.26);
 }
 
-.app-sidebar > div:last-child > div {
-  background: rgba(255, 255, 255, 0.035);
+.app-sidebar .topo-user-card {
   transition: background-color 0.25s ease, border-color 0.25s ease;
 }
 
-.app-sidebar > div:last-child > div:hover {
-  background: rgba(255, 196, 0, 0.065);
-}
-
-.app-sidebar > div:last-child > button {
-  color: #aeb7a1;
-}
-
-.app-sidebar > div:last-child > button:hover {
-  color: #fca5a5;
-  background: rgba(239, 68, 68, 0.1);
+.app-sidebar .topo-user-card:hover {
+  border-color: rgba(226, 213, 160, 0.21);
+  background: rgba(255, 255, 255, 0.055);
 }
 
 @keyframes sidebar-arrive {
@@ -201,25 +368,52 @@
   50% { box-shadow: 0 0 0 5px rgba(255, 196, 0, 0); }
 }
 
+@keyframes topo-drift {
+  from { background-position: 0 0, 20% 20%; }
+  to { background-position: 8% 5%, 8% 14%; }
+}
+
+@media (max-width: 767px) {
+  .app-sidebar {
+    width: min(218px, 84vw);
+    min-width: min(218px, 84vw);
+  }
+}
+
+@media (max-height: 560px) {
+  .app-sidebar nav { padding-block: 8px; }
+  .app-sidebar nav a.topo-menu-link { min-height: 34px; padding-block: 6px; }
+}
+
 .app-mobile-header {
-  color: #f5f1df;
-  background: #171b13;
-  border-color: rgba(255, 196, 0, 0.12);
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  position: relative;
+  overflow: hidden;
+  color: #efe7ca;
+  background:
+    radial-gradient(ellipse at 12% 0, rgba(120, 150, 76, 0.16), transparent 53%),
+    #10201b;
+  border-color: rgba(211, 189, 103, 0.15);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
 }
 
 .app-mobile-header > div:first-child > div {
-  background: linear-gradient(135deg, #ffc400, #f58a00);
+  background: linear-gradient(145deg, #f7e6a5 0%, #d4b45d 100%);
+  box-shadow: 0 7px 20px rgba(212, 180, 93, 0.16);
 }
 
 .app-mobile-header > div:first-child > div span,
 .app-mobile-header > div:first-child > span {
-  color: #f5f1df;
+  color: #efe7ca;
 }
 
 .app-mobile-header button {
-  color: #d8dfce;
-  background: rgba(255, 255, 255, 0.07);
+  color: #e2d8b7;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.app-mobile-header button:hover {
+  color: #ffe078;
+  background: rgba(255, 196, 0, 0.1);
 }
 
 .app-workspace .bg-white {
@@ -356,6 +550,21 @@
   background-color: rgba(255, 255, 255, 0.035);
 }
 
+@media (max-width: 767px) {
+  .app-main {
+    height: calc(100dvh - 61px);
+    overflow-x: clip;
+  }
+
+  .app-workspace {
+    width: 100%;
+  }
+
+  .app-workspace .overflow-x-auto {
+    max-width: 100%;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .app-workspace *,
   .app-sidebar * {
@@ -369,4 +578,6 @@
   .page-leave-active {
     transition-duration: 0.01ms !important;
   }
+
+  .app-sidebar::before { animation: none; }
 }

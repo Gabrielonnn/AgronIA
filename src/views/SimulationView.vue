@@ -27,6 +27,7 @@ const scene = shallowRef<THREE.Scene | null>(null)
 const renderer = shallowRef<THREE.WebGLRenderer | null>(null)
 const camera = shallowRef<THREE.PerspectiveCamera | null>(null)
 const controls = shallowRef<OrbitControls | null>(null)
+const resizeObserver = shallowRef<ResizeObserver | null>(null)
 const raycaster = shallowRef<THREE.Raycaster | null>(null)
 const mouse = shallowRef<THREE.Vector2 | null>(null)
 const animationId = ref<number>(0)
@@ -68,7 +69,7 @@ const modes = [
   { id: 'rgb', name: 'RGB', color: 'bg-green-500' },
   { id: 'ndvi', name: 'Multiespectral', color: 'bg-red-500' },
   { id: 'thermal', name: 'Térmico', color: 'bg-orange-500' }
-]
+] as const
 
 // Telemetría en tiempo real derivada de la simulación
 const telemetry = ref({
@@ -336,9 +337,10 @@ const handleAction = (action: 'ANALYZE' | 'WATER' | 'FUMIGATE' | 'CENTINELAS') =
 
 const initThree = () => {
   if (!canvasRef.value || !containerRef.value) return
-  const width = containerRef.value.clientWidth, height = containerRef.value.clientHeight
+  const width = canvasRef.value.clientWidth, height = canvasRef.value.clientHeight
   renderer.value = new THREE.WebGLRenderer({ canvas: canvasRef.value, antialias: true })
-  renderer.value.setSize(width, height); renderer.value.setPixelRatio(window.devicePixelRatio)
+  renderer.value.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+  renderer.value.setSize(width, height, false)
   renderer.value.shadowMap.enabled = true
 
   scene.value = new THREE.Scene()
@@ -580,35 +582,45 @@ const initThree = () => {
   }
   animate()
 
-  window.addEventListener('resize', onWindowResize); containerRef.value.addEventListener('mousemove', onMouseMove)
+  window.addEventListener('resize', onWindowResize)
+  resizeObserver.value = new ResizeObserver(onWindowResize)
+  resizeObserver.value.observe(canvasRef.value)
+  containerRef.value.addEventListener('pointermove', onMouseMove)
 }
 
-const onMouseMove = (event: MouseEvent) => {
-  if (!containerRef.value || !mouse.value) return
-  const rect = containerRef.value.getBoundingClientRect()
+const onMouseMove = (event: PointerEvent) => {
+  if (!canvasRef.value || !mouse.value) return
+  const rect = canvasRef.value.getBoundingClientRect()
   mouse.value.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
   mouse.value.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
-  tooltipPos.value = { x: event.clientX + 15, y: event.clientY + 15 }
+  tooltipPos.value = {
+    x: Math.max(12, Math.min(event.clientX + 15, window.innerWidth - 280)),
+    y: Math.min(event.clientY + 15, window.innerHeight - 24)
+  }
 }
 
 const onWindowResize = () => {
-  if (!containerRef.value || !camera.value || !renderer.value) return
-  const width = containerRef.value.clientWidth, height = containerRef.value.clientHeight
-  camera.value.aspect = width / height; camera.value.updateProjectionMatrix(); renderer.value.setSize(width, height)
+  if (!canvasRef.value || !camera.value || !renderer.value) return
+  const width = canvasRef.value.clientWidth, height = canvasRef.value.clientHeight
+  if (!width || !height) return
+  camera.value.aspect = width / height
+  camera.value.updateProjectionMatrix()
+  renderer.value.setSize(width, height, false)
 }
 
 onMounted(() => { initThree() })
 onBeforeUnmount(() => {
   cancelAnimationFrame(animationId.value); window.removeEventListener('resize', onWindowResize)
-  if (containerRef.value) containerRef.value.removeEventListener('mousemove', onMouseMove)
+  resizeObserver.value?.disconnect()
+  if (containerRef.value) containerRef.value.removeEventListener('pointermove', onMouseMove)
   if (renderer.value) renderer.value.dispose()
 })
 </script>
 
 <template>
-  <div class="h-full flex flex-col relative overflow-hidden">
+  <div class="simulation-view flex flex-col relative">
     <!-- Header -->
-    <div class="px-6 py-4 bg-white border-b border-gray-200 flex justify-between items-center z-20 shadow-sm relative">
+    <div class="simulation-header px-6 py-4 bg-white border-b border-gray-200 flex justify-between items-center z-20 shadow-sm relative">
       <div>
         <h1 class="text-2xl font-bold text-gray-900">Simulación de Cultivos & Análisis</h1>
         <p class="text-sm text-gray-500 mt-1">Renderizado avanzado y gestión interactiva multizona.</p>
@@ -618,7 +630,7 @@ onBeforeUnmount(() => {
         <button 
           v-for="mode in modes" 
           :key="mode.id"
-          @click="updateMaterials(mode.id as any)"
+          @click="updateMaterials(mode.id)"
           class="flex items-center gap-2 px-4 py-2 rounded-md transition-all text-sm font-medium"
           :class="currentMode === mode.id ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'"
         >
@@ -628,11 +640,11 @@ onBeforeUnmount(() => {
       </div>
     </div>
     
-    <div ref="containerRef" class="flex-1 relative bg-gray-900 cursor-crosshair">
+    <div ref="containerRef" class="simulation-stage flex-1 relative bg-gray-900 cursor-crosshair">
       <canvas ref="canvasRef" class="w-full h-full outline-none"></canvas>
 
       <!-- Menú de Dron / Análisis -->
-      <div class="absolute top-6 right-6 bg-black/80 backdrop-blur-md border border-white/10 rounded-xl p-4 text-white shadow-2xl z-10 w-64 transition-all">
+      <div class="simulation-panel simulation-controls absolute top-6 right-6 bg-black/80 backdrop-blur-md border border-white/10 rounded-xl p-4 text-white shadow-2xl z-10 w-64 transition-all">
         <h3 class="font-bold text-lg mb-3 border-b border-white/20 pb-2 flex items-center justify-between">
           <span>Dron Autónomo</span>
           <span class="text-xs px-2 py-1 rounded-full" 
@@ -666,7 +678,7 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Leyendas -->
-      <div v-if="currentMode === 'ndvi'" class="absolute top-6 left-6 bg-black/80 backdrop-blur-md border border-white/10 rounded-xl p-4 text-white shadow-2xl z-10 w-64 transition-all">
+      <div v-if="currentMode === 'ndvi'" class="simulation-panel simulation-legend absolute top-6 left-6 bg-black/80 backdrop-blur-md border border-white/10 rounded-xl p-4 text-white shadow-2xl z-10 w-64 transition-all">
         <h3 class="font-bold text-lg mb-3 border-b border-white/20 pb-2">Índice NDVI (Plagas)</h3>
         <p class="text-xs text-gray-300 mb-3">Las plagas destruyen el vigor foliar sin subir la temperatura drásticamente.</p>
         <div class="space-y-3">
@@ -677,7 +689,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <div v-if="currentMode === 'thermal'" class="absolute top-6 left-6 bg-black/80 backdrop-blur-md border border-white/10 rounded-xl p-4 text-white shadow-2xl z-10 w-64 transition-all">
+      <div v-if="currentMode === 'thermal'" class="simulation-panel simulation-legend absolute top-6 left-6 bg-black/80 backdrop-blur-md border border-white/10 rounded-xl p-4 text-white shadow-2xl z-10 w-64 transition-all">
         <h3 class="font-bold text-lg mb-3 border-b border-white/20 pb-2">Térmico (Sequía)</h3>
         <p class="text-xs text-gray-300 mb-3">La falta de agua dispara la temperatura de la planta.</p>
         <div class="flex gap-4">
@@ -691,7 +703,7 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Leyenda de Sectores -->
-      <div v-if="droneState !== 'IDLE' || sectorMarkers.length > 0" class="absolute bottom-6 left-6 bg-black/80 backdrop-blur-md border border-white/10 rounded-xl p-4 text-white shadow-2xl z-10 w-64 transition-all">
+      <div v-if="droneState !== 'IDLE' || sectorMarkers.length > 0" class="simulation-panel simulation-severity absolute bottom-6 left-6 bg-black/80 backdrop-blur-md border border-white/10 rounded-xl p-4 text-white shadow-2xl z-10 w-64 transition-all">
         <h3 class="font-bold text-sm mb-3 border-b border-white/20 pb-2">Severidad de Sectores</h3>
         <div class="space-y-4 text-xs">
           <div>
@@ -708,7 +720,7 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Panel de Telemetría en Tiempo Real -->
-      <div class="absolute bottom-6 right-6 bg-black/85 backdrop-blur-md border border-white/10 rounded-xl p-4 text-white shadow-2xl z-10 w-64">
+      <div class="simulation-panel simulation-telemetry absolute bottom-6 right-6 bg-black/85 backdrop-blur-md border border-white/10 rounded-xl p-4 text-white shadow-2xl z-10 w-64">
         <h3 class="font-bold text-sm mb-3 border-b border-white/20 pb-2 flex items-center gap-2">
           <span class="w-2 h-2 rounded-full bg-agron-green animate-pulse"></span>
           Telemetría — Tiempo Real
@@ -764,7 +776,7 @@ onBeforeUnmount(() => {
     <!-- Tooltip Combinado (Planta + Sector) -->
     <div 
       v-if="hoveredPlant || hoveredSector"
-      class="fixed bg-white border border-gray-200 rounded-xl shadow-2xl p-4 pointer-events-none z-50 w-64 transform -translate-y-full"
+      class="simulation-tooltip fixed bg-white border border-gray-200 rounded-xl shadow-2xl p-4 pointer-events-none z-50 w-64 transform -translate-y-full"
       :style="{ left: `${tooltipPos.x}px`, top: `${tooltipPos.y - 10}px` }"
     >
       <template v-if="hoveredPlant">
@@ -796,6 +808,147 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </template>
+
+      <style scoped>
+      .simulation-view {
+        min-width: 0;
+        min-height: calc(100vh - 3rem);
+        min-height: calc(100dvh - 3rem);
+        animation: simulation-enter 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+      }
+
+      .simulation-header {
+        flex-wrap: wrap;
+        gap: 1rem;
+        border-radius: 16px 16px 0 0;
+      }
+
+      .simulation-header h1 {
+        font-size: clamp(1.25rem, 2.2vw, 1.8rem);
+        line-height: 1.2;
+        letter-spacing: -0.04em;
+      }
+
+      .simulation-stage {
+        min-height: 560px;
+        overflow: hidden;
+        border-radius: 0 0 16px 16px;
+        isolation: isolate;
+      }
+
+      .simulation-stage > canvas {
+        display: block;
+        touch-action: none;
+      }
+
+      .simulation-panel {
+        border-color: rgba(196, 218, 147, 0.18);
+        border-radius: 16px;
+        background: rgba(17, 22, 16, 0.86);
+        box-shadow: 0 18px 42px rgba(0, 0, 0, 0.32), inset 0 1px rgba(255, 255, 255, 0.06);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        animation: panel-enter 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+      }
+
+      .simulation-controls button {
+        min-height: 42px;
+        transition: filter 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+      }
+
+      .simulation-controls button:hover:not(:disabled) {
+        transform: translateY(-1px);
+        filter: brightness(1.09);
+      }
+
+      .simulation-controls button:disabled { opacity: 0.48; }
+
+      .simulation-tooltip {
+        max-width: calc(100vw - 24px);
+        border-color: rgba(196, 218, 147, 0.18);
+        background: #1c2015;
+        color: #f5f1df;
+      }
+
+      @keyframes simulation-enter {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+
+      @keyframes panel-enter {
+        from { opacity: 0; transform: translateY(6px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+
+      @media (max-width: 767px) {
+        .simulation-view {
+          min-height: 0;
+          gap: 0.75rem;
+          overflow: visible;
+        }
+
+        .simulation-header {
+          align-items: stretch;
+          padding: 1rem;
+          border-radius: 14px;
+        }
+
+        .simulation-header > div:first-child { min-width: 0; }
+        .simulation-header p { font-size: 0.8rem; }
+        .simulation-header > div:last-child {
+          width: 100%;
+          justify-content: space-between;
+          flex-wrap: wrap;
+        }
+        .simulation-header > div:last-child button {
+          flex: 1 1 auto;
+          justify-content: center;
+          padding-inline: 0.65rem;
+          font-size: 0.75rem;
+        }
+
+        .simulation-stage {
+          display: flex;
+          flex: none;
+          flex-direction: column;
+          gap: 0.75rem;
+          min-height: 0;
+          padding-top: min(66dvh, 500px);
+          overflow: visible;
+          border-radius: 14px;
+          background: transparent;
+        }
+
+        .simulation-stage > canvas {
+          position: absolute;
+          inset: 0 0 auto;
+          width: 100%;
+          height: min(66dvh, 500px);
+          border: 1px solid rgba(196, 218, 147, 0.18);
+          border-radius: 14px;
+        }
+
+        .simulation-stage > .simulation-panel {
+          position: relative;
+          inset: auto;
+          z-index: 1;
+          width: 100%;
+          margin: 0;
+        }
+
+        .simulation-tooltip { display: none; }
+      }
+
+      @media (max-width: 420px) {
+        .simulation-header > div:last-child button { gap: 0.35rem; }
+        .simulation-controls { padding: 0.9rem; }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .simulation-view, .simulation-panel { animation: none; }
+        .simulation-controls button { transition: none; }
+      }
+      </style>
 
       <!-- Divisor si hay ambos -->
       <div v-if="hoveredPlant && hoveredSector" class="my-3 border-t border-dashed border-gray-300"></div>

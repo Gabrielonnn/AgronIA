@@ -14,6 +14,7 @@ const mapContainer = ref<HTMLElement | null>(null)
 const locationStatus = ref<'idle' | 'requesting' | 'success' | 'denied'>('idle')
 const userLat = ref<number | null>(null)
 const userLng = ref<number | null>(null)
+const drawnLayers = new Set<L.Layer>()
 
 let map: L.Map | null = null
 let userMarker: L.Marker | null = null
@@ -102,32 +103,22 @@ onMounted(() => {
   })
 
   // Escuchar eventos de dibujo para extraer GeoJSON
-  map.on('pm:create', updateGeoJson)
-  map.on('pm:remove', updateGeoJson)
-
-  map.on('pm:globaleditmodetoggled', (e) => {
-    if (!e.enabled && map) {
-      map.eachLayer((layer: any) => {
-        if (layer.pm) {
-          layer.on('pm:edit', updateGeoJson)
-          layer.on('pm:dragend', updateGeoJson)
-        }
-      })
-    }
+  map.on('pm:create', (event: { layer: L.Layer }) => {
+    drawnLayers.add(event.layer)
+    event.layer.on('pm:edit', updateGeoJson)
+    event.layer.on('pm:dragend', updateGeoJson)
+    updateGeoJson()
   })
-
-  // Solicitar permisos de ubicación automáticamente al abrir
-  requestLocationPermission()
+  map.on('pm:remove', (event: { layer: L.Layer }) => {
+    drawnLayers.delete(event.layer)
+    updateGeoJson()
+  })
 })
 
 const updateGeoJson = () => {
   if (!map) return
   const featureGroup = L.featureGroup()
-  map.eachLayer((layer: any) => {
-    if (layer instanceof L.Path || layer instanceof L.Marker) {
-      featureGroup.addLayer(layer)
-    }
-  })
+  drawnLayers.forEach(layer => featureGroup.addLayer(layer))
   const geojson = featureGroup.toGeoJSON()
   emit('update:geojson', geojson)
 }
@@ -138,7 +129,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="w-full h-full rounded-xl overflow-hidden shadow-sm z-0 relative">
+  <div class="agro-map-shell w-full h-full overflow-hidden z-0 relative">
     <div ref="mapContainer" class="w-full h-full"></div>
 
     <!-- Panel de ubicación (top-right) -->
@@ -170,7 +161,7 @@ onUnmounted(() => {
       </button>
 
       <!-- Coordenadas del usuario si se obtuvo ubicación -->
-      <div v-if="locationStatus === 'success' && userLat && userLng"
+      <div v-if="locationStatus === 'success' && userLat !== null && userLng !== null"
         class="bg-black/70 backdrop-blur-sm text-white text-xs px-3 py-1.5 rounded-lg font-mono">
         <div class="flex items-center gap-1.5">
           <Crosshair class="w-3 h-3 text-agron-green" />
@@ -187,15 +178,62 @@ onUnmounted(() => {
   </div>
 </template>
 
-<style>
-/* Ajustes para z-index de leaflet respecto a tailwind */
-.leaflet-pane {
-  z-index: 10;
+<style scoped>
+.agro-map-shell {
+  border-radius: 0;
+  isolation: isolate;
 }
-.leaflet-top, .leaflet-bottom {
-  z-index: 20;
+
+.agro-map-shell :deep(.leaflet-container) {
+  width: 100%;
+  height: 100%;
+  background: #20271a;
+  font-family: Inter, system-ui, sans-serif;
 }
-.leaflet-control-container .leaflet-routing-container {
-  z-index: 30;
+
+.agro-map-shell :deep(.leaflet-pane) { z-index: 10; }
+.agro-map-shell :deep(.leaflet-top),
+.agro-map-shell :deep(.leaflet-bottom) { z-index: 20; }
+.agro-map-shell :deep(.leaflet-control-container .leaflet-routing-container) { z-index: 30; }
+.agro-map-shell :deep(.leaflet-control-zoom),
+.agro-map-shell :deep(.leaflet-pm-toolbar) {
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  border-radius: 11px !important;
+  background: rgba(19, 25, 17, 0.88) !important;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.28) !important;
+  backdrop-filter: blur(12px);
+}
+
+.agro-map-shell :deep(.leaflet-control-zoom a),
+.agro-map-shell :deep(.leaflet-pm-toolbar .leaflet-pm-action) {
+  border-color: rgba(255, 255, 255, 0.1) !important;
+  color: #edf4e5 !important;
+  background-color: transparent !important;
+  transition: color 0.18s ease, background-color 0.18s ease, transform 0.18s ease;
+}
+
+.agro-map-shell :deep(.leaflet-control-zoom a:hover),
+.agro-map-shell :deep(.leaflet-pm-toolbar .leaflet-pm-action:hover) {
+  color: #ffe078 !important;
+  background-color: rgba(255, 196, 0, 0.13) !important;
+}
+
+.agro-map-shell :deep(.leaflet-control-attribution) {
+  color: #e5e7eb;
+  background: rgba(15, 20, 16, 0.72);
+  backdrop-filter: blur(8px);
+}
+
+.agro-map-shell :deep(.leaflet-control-attribution a) { color: #d8bd56; }
+
+@media (max-width: 640px) {
+  .agro-map-shell :deep(.leaflet-top.leaflet-left) { top: 8px; left: 8px; }
+  .agro-map-shell :deep(.leaflet-control-zoom a) { width: 34px; height: 34px; line-height: 34px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agro-map-shell :deep(.leaflet-control-zoom a),
+  .agro-map-shell :deep(.leaflet-pm-toolbar .leaflet-pm-action) { transition: none; }
 }
 </style>
