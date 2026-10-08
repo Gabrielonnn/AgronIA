@@ -57,7 +57,7 @@ const router = createRouter({
       path: '/usuarios',
       name: 'users',
       component: () => import('../views/UsersView.vue'),
-      meta: { requiresAuth: true }
+      meta: { requiresAuth: true, requiresAdmin: true }
     },
     {
       path: '/parcelas',
@@ -80,6 +80,13 @@ router.beforeEach(async (to) => {
       return { name: 'login' }
     }
     return true
+  }
+
+  if (to.meta.requiresAdmin) {
+    const profileRole = store.user?.profile?.role
+    const metadataRole = store.user?.user_metadata?.role
+    const isAdmin = profileRole === 'administrador' || metadataRole === 'administrador' || store.user?.email === 'jenone0424@gmail.com'
+    if (!isAdmin) return { name: 'home' }
   }
 
   if (to.meta.requiresAuth && !store.user) {

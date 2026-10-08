@@ -32,7 +32,7 @@ onUnmounted(() => {
   <div v-if="store.loading" class="min-h-screen flex items-center justify-center bg-agron-bg-alt">
     <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-agron-green"></div>
   </div>
-  <div v-else class="min-h-screen bg-agron-bg-alt flex flex-col md:flex-row relative overflow-hidden">
+  <div v-else class="min-h-screen bg-agron-bg-alt flex flex-col md:flex-row relative overflow-hidden" :class="{ 'app-shell': !route.meta.public }">
     <Transition name="app-intro">
       <div v-if="showIntro" class="app-intro" role="status" aria-live="polite">
         <div class="app-intro-field"></div>
@@ -74,7 +74,7 @@ onUnmounted(() => {
         </div>
       </div>
     </Transition>
-    <div v-if="!route.meta.public" class="md:hidden flex items-center justify-between bg-white border-b border-gray-200 px-4 py-3 z-30 relative shadow-sm">
+    <div v-if="!route.meta.public" class="app-mobile-header md:hidden flex items-center justify-between bg-white border-b border-gray-200 px-4 py-3 z-30 relative shadow-sm">
       <div class="flex items-center gap-2">
         <div class="w-8 h-8 rounded-lg bg-agron-green flex items-center justify-center shadow-sm">
           <span class="text-white font-bold text-lg leading-none">A</span>
@@ -108,7 +108,7 @@ onUnmounted(() => {
     </div>
     <main
       class="app-main relative flex-1 h-[calc(100vh-61px)] md:h-screen overflow-y-auto w-full"
-      :class="[{ 'p-4 md:p-6': !route.meta.public }, { 'app-main-reveal': !showIntro }]"
+      :class="[{ 'p-4 md:p-6': !route.meta.public }, { 'app-main-reveal': !showIntro }, { 'app-workspace': !route.meta.public }]"
     >
       <RouterView v-slot="{ Component }">
         <component v-if="route.meta.public" :is="Component" :key="route.path" />
