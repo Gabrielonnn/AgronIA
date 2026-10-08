@@ -2,12 +2,14 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { supabase } from '../services/supabase'
+import { useMainStore } from '../stores'
 import {
   Mail, Lock, Eye, EyeOff, Leaf, AlertCircle,
   Loader2, ShieldCheck, AlertTriangle, CheckCircle2, Sparkles
 } from 'lucide-vue-next'
 
 const router = useRouter()
+const store = useMainStore()
 const email = ref('')
 const password = ref('')
 const loading = ref(false)
@@ -63,7 +65,11 @@ const backgroundDrones = Array.from({ length: 10 }, (_, index) => ({
 const finishLogin = async () => {
   loginSuccess.value = true
   await new Promise(resolve => window.setTimeout(resolve, 900))
-  await router.push('/')
+  const navigationFailure = await router.push('/')
+  if (navigationFailure) {
+    loginSuccess.value = false
+    throw new Error('No se pudo abrir tu espacio de trabajo. Intenta iniciar sesión de nuevo.')
+  }
 }
 
 const checkCapsLock = (e: KeyboardEvent) => {
@@ -88,12 +94,12 @@ const handleLogin = async () => {
     progress.value = 40
 
     if (!supabase) {
-      progress.value = 100
-      await finishLogin()
+      error.value = 'El servicio de acceso no está configurado. Contacta al administrador.'
+      progress.value = 0
       return
     }
 
-    const { error: authError } = await supabase.auth.signInWithPassword({
+    const { data, error: authError } = await supabase.auth.signInWithPassword({
       email: email.value,
       password: password.value
     })
@@ -103,12 +109,19 @@ const handleLogin = async () => {
     if (authError) {
       error.value = translateError(authError.message)
       progress.value = 0
+    } else if (!data.session) {
+      error.value = 'No se pudo establecer una sesión. Verifica tu correo e inténtalo de nuevo.'
+      progress.value = 0
     } else {
+      store.setUser(data.session.user)
       progress.value = 100
       await finishLogin()
     }
   } catch (e: any) {
-    error.value = 'Error inesperado. Intenta de nuevo.'
+    loginSuccess.value = false
+    error.value = e instanceof Error
+      ? e.message
+      : 'Error inesperado. Intenta de nuevo.'
     progress.value = 0
   } finally {
     loading.value = false
@@ -119,6 +132,9 @@ const translateError = (msg: string): string => {
   if (msg.includes('Invalid login credentials')) return 'Correo o contraseña incorrectos'
   if (msg.includes('Email not confirmed')) return 'Debes confirmar tu correo primero'
   if (msg.includes('Too many requests')) return 'Demasiados intentos. Espera un momento'
+  if (/abort|timeout|timed out|failed to fetch|networkerror/i.test(msg)) {
+    return 'No se pudo conectar con el servicio de acceso. Comprueba tu conexión y la configuración de Supabase.'
+  }
   return msg
 }
 </script>
@@ -1398,7 +1414,5 @@ Agron<span class="accent">IA</span>
 }
 
 </style>
-
-
 
 

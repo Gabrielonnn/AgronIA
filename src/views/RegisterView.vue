@@ -109,7 +109,7 @@ const handleRegister = async () => {
     progress.value = 80
 
     if (authError) {
-      error.value = authError.message
+      error.value = translateError(authError.message)
       progress.value = 0
     } else {
       successMessage.value = 'Registro exitoso. Puedes iniciar sesión ahora.'
@@ -117,7 +117,9 @@ const handleRegister = async () => {
       setTimeout(() => router.push('/login'), 2000)
     }
   } catch (err: any) {
-    error.value = 'Error inesperado al registrar. Intenta de nuevo.'
+    error.value = err instanceof Error
+      ? translateError(err.message)
+      : 'Error inesperado al registrar. Intenta de nuevo.'
     progress.value = 0
   } finally {
     loading.value = false
@@ -127,6 +129,9 @@ const handleRegister = async () => {
 const translateError = (msg: string): string => {
   if (msg.includes('Password should')) return 'La contraseña es demasiado corta'
   if (msg.includes('User already registered')) return 'Este correo ya está registrado'
+  if (/abort|timeout|timed out|failed to fetch|networkerror/i.test(msg)) {
+    return 'No se pudo conectar con el servicio de registro. Comprueba tu conexión y la configuración de Supabase.'
+  }
   return msg
 }
 </script>
