@@ -95,8 +95,8 @@
 }
 
 .app-sidebar {
-  width: 218px;
-  min-width: 218px;
+  width: 236px;
+  min-width: 236px;
   height: 100vh;
   height: 100dvh;
   position: relative;
@@ -155,6 +155,7 @@
 
 .topo-brand-content { min-width: 0; }
 .topo-brand-copy { min-width: 0; }
+.topo-brand { justify-content: space-between; }
 .topo-brand-name {
   color: #efe7ca;
   font-size: 1.05rem;
@@ -179,43 +180,145 @@
 .app-sidebar .topo-brand-mark span { color: #43320d; }
 .topo-menu-title { color: #a69b6d !important; }
 
+.topo-brand-version {
+  padding: 4px 6px;
+  border: 1px solid rgba(222, 193, 103, 0.23);
+  border-radius: 6px;
+  color: #dfc574;
+  background: rgba(222, 193, 103, 0.08);
+  font-size: 0.5rem;
+  font-weight: 850;
+  letter-spacing: 0.12em;
+}
+
 .app-sidebar nav {
   padding-top: 16px;
   padding-bottom: 16px;
 }
 
+.topo-navigation { scrollbar-width: thin; scrollbar-color: rgba(213, 185, 91, 0.25) transparent; }
+.topo-menu-search {
+  display: flex;
+  height: 38px;
+  align-items: center;
+  gap: 9px;
+  margin: 0 12px 18px;
+  padding: 0 10px;
+  border: 1px solid rgba(196, 218, 147, 0.13);
+  border-radius: 10px;
+  color: #889582;
+  background: rgba(4, 12, 10, 0.3);
+  transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.topo-menu-search:focus-within {
+  border-color: rgba(224, 194, 100, 0.48);
+  background: rgba(4, 12, 10, 0.48);
+  box-shadow: 0 0 0 3px rgba(224, 194, 100, 0.08);
+}
+
+.topo-menu-search > svg { flex: 0 0 auto; color: #b4a363; }
+.topo-menu-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  color: #e9ecdf;
+  background: transparent;
+  font-size: 0.7rem;
+}
+.topo-menu-search input::placeholder { color: #858f7b; }
+.topo-menu-search input::-webkit-search-cancel-button { display: none; }
+.topo-menu-search kbd,
+.topo-menu-search button {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid rgba(196, 218, 147, 0.12);
+  border-radius: 5px;
+  color: #89927f;
+  background: rgba(255, 255, 255, 0.035);
+  font: inherit;
+  font-size: 0.63rem;
+}
+.topo-menu-search button:hover { color: #f1d47c; background: rgba(255, 255, 255, 0.08); }
+.topo-menu-group + .topo-menu-group { margin-top: 15px; }
+.topo-menu-empty { padding: 12px 14px; color: #929d86; font-size: 0.7rem; }
+
 .app-sidebar .topo-menu-title {
-  margin-bottom: 9px;
-  padding-inline: 14px;
-  font-size: 0.59rem;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 7px;
+  padding-inline: 15px;
+  font-size: 0.56rem;
+}
+
+.app-sidebar .topo-menu-title::after {
+  height: 1px;
+  flex: 1;
+  background: linear-gradient(90deg, rgba(196, 218, 147, 0.15), transparent);
+  content: "";
 }
 
 .app-sidebar nav ul { padding-inline: 9px; }
 .app-sidebar nav ul { position: relative; }
 .app-sidebar nav a.topo-menu-link {
-  min-height: 38px;
-  margin-bottom: 2px;
-  padding: 8px 10px;
+  min-height: 42px;
+  margin-bottom: 3px;
+  padding: 7px 10px;
   border: 1px solid transparent;
-  border-radius: 9px;
+  border-radius: 11px;
   color: #c1c4ae;
   font-size: 0.79rem;
 }
 
+.topo-menu-icon-wrap {
+  display: grid;
+  width: 29px;
+  height: 29px;
+  flex: 0 0 29px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--menu-accent) 17%, transparent);
+  border-radius: 9px;
+  color: var(--menu-accent);
+  background: color-mix(in srgb, var(--menu-accent) 10%, transparent);
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.topo-menu-icon-wrap .topo-menu-icon { width: 16px; height: 16px; }
+.topo-menu-label { min-width: 0; flex: 1; }
+.menu-accent-green { --menu-accent: #86d79e; }
+.menu-accent-blue { --menu-accent: #83b9ff; }
+.menu-accent-violet { --menu-accent: #c1a0fa; }
+.menu-accent-cyan { --menu-accent: #72d4d0; }
+.menu-accent-gold { --menu-accent: #efd071; }
+.menu-accent-pink { --menu-accent: #f0a3c2; }
+.menu-accent-orange { --menu-accent: #f3b274; }
+.menu-accent-slate { --menu-accent: #b3c3ce; }
+
 .app-sidebar nav a.topo-menu-link:hover {
   color: #f4edda;
   border-color: rgba(213, 185, 91, 0.13);
-  background: rgba(226, 192, 99, 0.075);
+  background: linear-gradient(100deg, color-mix(in srgb, var(--menu-accent) 8%, transparent), rgba(226, 192, 99, 0.04));
   transform: translateX(3px);
 }
 
+.app-sidebar nav a.topo-menu-link:hover .topo-menu-icon-wrap {
+  transform: scale(1.08) rotate(-4deg);
+  background: color-mix(in srgb, var(--menu-accent) 18%, transparent);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--menu-accent) 15%, transparent);
+}
+
 .app-sidebar nav a.topo-menu-link[aria-current="page"] {
-  color: #f7df91;
-  border-color: rgba(238, 203, 113, 0.38);
+  color: color-mix(in srgb, var(--menu-accent) 72%, white);
+  border-color: color-mix(in srgb, var(--menu-accent) 37%, transparent);
   background:
-    linear-gradient(100deg, rgba(153, 102, 40, 0.44), rgba(157, 127, 57, 0.23));
+    linear-gradient(100deg, color-mix(in srgb, var(--menu-accent) 16%, rgba(20, 27, 19, 0.92)), rgba(157, 127, 57, 0.06));
   box-shadow:
-    inset 0 0 0 1px rgba(255, 232, 157, 0.045),
+    inset 0 0 0 1px color-mix(in srgb, var(--menu-accent) 8%, transparent),
     0 7px 20px rgba(0, 0, 0, 0.1);
 }
 
@@ -226,15 +329,20 @@
   bottom: 8px;
   width: 2px;
   border-radius: 0 3px 3px 0;
-  background: #f1cc62;
-  box-shadow: 0 0 12px rgba(241, 204, 98, 0.58);
+  background: var(--menu-accent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--menu-accent) 58%, transparent);
   content: "";
 }
 
-.app-sidebar nav a.topo-menu-link[aria-current="page"] .topo-menu-icon { color: #f1cc62; }
+.app-sidebar nav a.topo-menu-link[aria-current="page"] .topo-menu-icon-wrap {
+  border-color: color-mix(in srgb, var(--menu-accent) 32%, transparent);
+  background: color-mix(in srgb, var(--menu-accent) 19%, transparent);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--menu-accent) 12%, transparent);
+}
+.app-sidebar nav a.topo-menu-link[aria-current="page"] .topo-menu-icon { color: var(--menu-accent); }
 .app-sidebar .topo-menu-indicator {
-  background: #79d7a0;
-  box-shadow: 0 0 10px rgba(121, 215, 160, 0.7);
+  background: var(--menu-accent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--menu-accent) 65%, transparent);
 }
 
 .topo-user-card {
@@ -242,7 +350,9 @@
   margin-bottom: 9px;
   padding: 9px;
   border: 1px solid rgba(226, 213, 160, 0.12);
-  background: rgba(7, 15, 12, 0.36);
+  background:
+    radial-gradient(ellipse at 0 0, rgba(136, 185, 113, 0.11), transparent 72%),
+    rgba(7, 15, 12, 0.36);
 }
 .topo-user-avatar {
   width: 33px;
@@ -278,15 +388,24 @@
 }
 .app-sidebar .topo-role-icon { width: 11px; height: 11px; flex: 0 0 auto; color: #e0bd5a !important; }
 .app-sidebar .topo-logout {
-  min-height: 34px;
-  border: 1px solid transparent;
+  min-height: 37px;
+  border: 1px solid rgba(196, 218, 147, 0.1);
   color: #c0c2ad;
+  background: rgba(255, 255, 255, 0.025);
   transition: color 0.2s ease, background-color 0.2s ease, transform 0.2s ease;
 }
 .app-sidebar .topo-logout:hover {
   color: #f0d1a5;
   background: rgba(170, 76, 55, 0.14);
   transform: translateY(-1px);
+}
+
+.topo-account-caption {
+  margin: 10px 0 0;
+  color: #778271;
+  font-size: 0.55rem;
+  letter-spacing: 0.025em;
+  text-align: center;
 }
 
 .app-sidebar nav p {
@@ -349,7 +468,7 @@
   color: #f1cc62;
 }
 
-.app-sidebar nav a[aria-current="page"] > span {
+.app-sidebar nav a[aria-current="page"] .topo-menu-indicator {
   animation: active-menu-pulse 2s ease-in-out infinite;
 }
 
@@ -393,8 +512,8 @@
 
 @media (max-width: 767px) {
   .app-sidebar {
-    width: min(218px, 84vw);
-    min-width: min(218px, 84vw);
+    width: min(250px, 86vw);
+    min-width: min(250px, 86vw);
   }
 }
 
@@ -556,23 +675,48 @@
 .app-workspace .app-card {
   position: relative;
   overflow: hidden;
+  isolation: isolate;
   border-radius: 16px;
   background: linear-gradient(145deg, rgba(31, 38, 24, 0.9), rgba(21, 25, 18, 0.84));
   border-color: rgba(196, 218, 147, 0.13);
   box-shadow:
     0 16px 38px rgba(0, 0, 0, 0.16),
     0 1px 0 rgba(255, 255, 255, 0.035) inset;
+  animation: premium-card-arrive 0.48s cubic-bezier(0.16, 1, 0.3, 1) both;
   transition:
     border-color 0.25s ease,
     box-shadow 0.28s ease,
     transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+.app-workspace .app-card::before {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  right: 12%;
+  left: 12%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(245, 211, 113, 0.62), rgba(143, 207, 157, 0.52), transparent);
+  content: "";
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.28s ease, left 0.35s ease, right 0.35s ease;
+}
+
 .app-workspace .app-card:hover {
+  transform: translateY(-2px);
   border-color: rgba(196, 218, 147, 0.2);
   box-shadow:
-    0 21px 44px rgba(0, 0, 0, 0.2),
+    0 22px 48px rgba(0, 0, 0, 0.21),
+    0 9px 24px rgba(120, 150, 76, 0.055),
     0 1px 0 rgba(255, 255, 255, 0.045) inset;
+}
+
+.app-workspace .app-card:hover::before { right: 0; left: 0; opacity: 1; }
+
+.app-workspace .app-card :is(.app-card-header, .app-card-footer, .app-card-body) {
+  position: relative;
+  z-index: 1;
 }
 
 .app-workspace .app-card :is(.app-card-header, .app-card-footer) {
@@ -642,6 +786,7 @@
 .app-workspace .app-action-button:hover:not(:disabled) {
   transform: translateY(-1px);
   filter: brightness(1.06);
+  box-shadow: 0 8px 22px rgba(212, 180, 93, 0.14);
 }
 
 .app-workspace .app-action-button:active:not(:disabled) {
@@ -664,6 +809,19 @@
     transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+.app-workspace button:not(:disabled) svg,
+.app-workspace a:not([aria-current="page"]) svg {
+  transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1), filter 0.24s ease;
+}
+
+.app-workspace button:not(:disabled):hover svg,
+.app-workspace a:not([aria-current="page"]):hover svg {
+  transform: translateY(-1px) scale(1.07);
+  filter: drop-shadow(0 2px 5px rgba(224, 194, 100, 0.2));
+}
+
+.app-workspace button:active:not(:disabled) { transform: scale(0.985); }
+
 .app-workspace table {
   border-collapse: separate;
   border-spacing: 0;
@@ -677,11 +835,29 @@
 }
 
 .app-workspace table tbody tr {
-  transition: background-color 0.18s ease;
+  transition: background-color 0.18s ease, transform 0.2s ease;
 }
 
 .app-workspace table tbody tr:hover {
   background-color: rgba(255, 255, 255, 0.035);
+  transform: translateX(2px);
+}
+
+.app-workspace :is(.bg-green-500, .bg-agron-green, .bg-blue-500, .bg-orange-500, .bg-red-500) {
+  box-shadow: 0 0 14px color-mix(in srgb, currentColor 16%, transparent);
+}
+
+.app-workspace :is(.app-card-header, .app-card-footer) svg {
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), color 0.2s ease;
+}
+
+.app-workspace .app-card:hover .app-card-header svg {
+  transform: rotate(-4deg) scale(1.06);
+}
+
+@keyframes premium-card-arrive {
+  from { opacity: 0; transform: translateY(10px) scale(0.995); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 .app-workspace :is(.shadow-sm, .shadow-md):not(.app-card) {

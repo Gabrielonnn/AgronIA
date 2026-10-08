@@ -34,6 +34,7 @@ interface MapFeatureCollection {
 
 const geojsonData = ref<MapFeatureCollection | null>(null)
 const exportStatus = ref('')
+const mapBasemap = ref<'satellite' | 'streets'>('satellite')
 
 const features = computed(() => geojsonData.value?.features ?? [])
 const polygonCount = computed(() =>
@@ -55,6 +56,10 @@ const lineCount = computed(() =>
 const handleGeoJsonUpdate = (data: MapFeatureCollection) => {
   geojsonData.value = data
   exportStatus.value = ''
+}
+
+const handleBasemapUpdate = (basemap: 'satellite' | 'streets') => {
+  mapBasemap.value = basemap
 }
 
 const featureName = (feature: MapFeature, index: number) => {
@@ -92,7 +97,7 @@ const exportGeoJson = () => {
       </div>
 
       <div class="maps-heading-actions">
-        <div class="maps-live-pill"><Activity :size="15" /> Vista satelital</div>
+        <div class="maps-live-pill"><Activity :size="15" /> {{ mapBasemap === 'satellite' ? 'Vista satelital' : 'Mapa de calles' }}</div>
         <Button
           variant="primary"
           size="sm"
@@ -132,15 +137,18 @@ const exportGeoJson = () => {
               <h2><ScanLine :size="17" /> Mapa de campo</h2>
               <p>Usa las herramientas del mapa para dibujar o editar elementos.</p>
             </div>
-            <span class="map-source"><span></span> IMAGEN SATELITAL</span>
+            <span class="map-source"><span></span> {{ mapBasemap === 'satellite' ? 'IMAGEN SATELITAL' : 'MAPA DE CALLES' }}</span>
           </div>
 
           <div class="map-canvas">
-            <AgroMap @update:geojson="handleGeoJsonUpdate" />
+            <AgroMap
+              @update:geojson="handleGeoJsonUpdate"
+              @update:basemap="handleBasemapUpdate"
+            />
           </div>
           <div class="map-card-footer">
             <span><MousePointer2 :size="14" /> Arrastra para explorar · Usa la rueda para acercar</span>
-            <span>Esri World Imagery</span>
+            <span>{{ mapBasemap === 'satellite' ? 'Imágenes © Esri' : 'Calles © OpenStreetMap · CARTO' }}</span>
           </div>
         </div>
       </section>
@@ -318,7 +326,7 @@ const exportGeoJson = () => {
   gap: 18px;
   align-items: start;
 }
-.map-column { min-width: 0; }
+.map-column, .map-card, .map-sidebar { min-width: 0; }
 .map-card {
   overflow: hidden;
   border: 1px solid rgba(196, 218, 147, 0.15);
@@ -435,9 +443,17 @@ const exportGeoJson = () => {
 }
 
 @media (max-width: 1023px) {
-  .maps-layout { grid-template-columns: minmax(0, 1fr) minmax(250px, 0.72fr); }
+  .maps-layout { grid-template-columns: minmax(0, 1fr); }
+  .map-sidebar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .maps-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .overview-item { padding-inline: 12px; }
-  .map-canvas { height: clamp(430px, 58vh, 650px); }
+  .overview-item:nth-child(3) { border-left: 0; border-top: 1px solid rgba(196, 218, 147, 0.1); }
+  .overview-item:nth-child(4) { border-top: 1px solid rgba(196, 218, 147, 0.1); }
+  .map-canvas { height: clamp(400px, 56vh, 620px); height: clamp(400px, 56dvh, 620px); min-height: 0; }
+}
+
+@media (min-width: 768px) and (max-width: 820px) {
+  .map-sidebar { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 767px) {
@@ -449,7 +465,8 @@ const exportGeoJson = () => {
   .overview-item:nth-child(4) { border-top: 1px solid rgba(196, 218, 147, 0.1); }
   .maps-layout { grid-template-columns: minmax(0, 1fr); }
   .map-sidebar { grid-template-columns: 1fr; }
-  .map-canvas { height: min(62dvh, 560px); min-height: 390px; }
+  .map-canvas { height: clamp(320px, 52vh, 500px); height: clamp(320px, 52dvh, 500px); min-height: 0; }
+  .map-sidebar { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 420px) {
@@ -458,7 +475,7 @@ const exportGeoJson = () => {
   .map-card-header { align-items: flex-start; flex-direction: column; }
   .map-source { align-self: flex-start; }
   .map-card-footer { align-items: flex-start; flex-direction: column; }
-  .map-canvas { min-height: 350px; }
+  .map-canvas { height: clamp(300px, 48vh, 430px); height: clamp(300px, 48dvh, 430px); }
 }
 
 @media (prefers-reduced-motion: reduce) {
