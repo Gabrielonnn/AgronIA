@@ -107,8 +107,13 @@ onUnmounted(() => {
       <Sidebar />
     </div>
     <main
-      class="app-main relative flex-1 h-[calc(100vh-61px)] md:h-screen overflow-y-auto w-full"
-      :class="[{ 'p-4 md:p-6': !route.meta.public }, { 'app-main-reveal': !showIntro }, { 'app-workspace': !route.meta.public }]"
+      class="app-main relative flex-1 overflow-y-auto w-full"
+      :class="[
+        route.meta.public ? 'app-public' : 'h-[calc(100vh-61px)] md:h-screen',
+        { 'p-4 md:p-6': !route.meta.public },
+        { 'app-main-reveal': !showIntro },
+        { 'app-workspace': !route.meta.public }
+      ]"
     >
       <RouterView v-slot="{ Component }">
         <component v-if="route.meta.public" :is="Component" :key="route.path" />

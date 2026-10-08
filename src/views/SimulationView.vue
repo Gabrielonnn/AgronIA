@@ -21,12 +21,14 @@ const currentAction = ref<'NONE' | 'WATER' | 'FUMIGATE' | 'CENTINELAS'>('NONE')
 const hoveredPlant = ref<PlantData | null>(null)
 const hoveredSector = ref<StressCenter | null>(null)
 const tooltipPos = ref({ x: 0, y: 0 })
+const actionFeedback = ref('')
 
 // Three.js variables
 const scene = shallowRef<THREE.Scene | null>(null)
 const renderer = shallowRef<THREE.WebGLRenderer | null>(null)
 const camera = shallowRef<THREE.PerspectiveCamera | null>(null)
 const controls = shallowRef<OrbitControls | null>(null)
+const resizeObserver = shallowRef<ResizeObserver | null>(null)
 const raycaster = shallowRef<THREE.Raycaster | null>(null)
 const mouse = shallowRef<THREE.Vector2 | null>(null)
 const animationId = ref<number>(0)
@@ -52,6 +54,7 @@ let activeTargetIndex = 0
 
 let dronePath: THREE.Vector3[] = []
 let currentPathIndex = 0
+let feedbackTimeout: ReturnType<typeof setTimeout> | undefined
 
 // Enjambre de Centinelas
 let centinelaGroup: THREE.Group | null = null
@@ -68,7 +71,7 @@ const modes = [
   { id: 'rgb', name: 'RGB', color: 'bg-green-500' },
   { id: 'ndvi', name: 'Multiespectral', color: 'bg-red-500' },
   { id: 'thermal', name: 'Térmico', color: 'bg-orange-500' }
-]
+] as const
 
 // Telemetría en tiempo real derivada de la simulación
 const telemetry = ref({
@@ -169,6 +172,28 @@ const getColorForPlant = (plant: PlantData, mode: 'rgb' | 'ndvi' | 'thermal') =>
   return lerpColor(new THREE.Color(0xfde047), new THREE.Color(0xef4444), (heat - 0.66) / 0.34)
 }
 
+const setActionFeedback = (message: string, autoClear = true) => {
+  if (feedbackTimeout) clearTimeout(feedbackTimeout)
+  actionFeedback.value = message
+  if (autoClear) {
+    feedbackTimeout = setTimeout(() => {
+      actionFeedback.value = ''
+      feedbackTimeout = undefined
+    }, 6000)
+  }
+}
+
+const clearSectorMarkers = () => {
+  sectorMarkers.forEach(marker => {
+    scene.value?.remove(marker)
+    marker.geometry.dispose()
+    const material = marker.material
+    if (Array.isArray(material)) material.forEach(item => item.dispose())
+    else material.dispose()
+  })
+  sectorMarkers = []
+}
+
 const updateMaterials = (mode: 'rgb' | 'ndvi' | 'thermal') => {
   currentMode.value = mode
   if (groundMaterial) groundMaterial.color.setHex(mode === 'rgb' ? 0x78350f : (mode === 'ndvi' ? 0x1e40af : 0x450a0a))
@@ -228,8 +253,7 @@ const createParticles = () => {
 
 const generateRandomStressCenters = () => {
   stressCenters = []
-  sectorMarkers.forEach(m => scene.value?.remove(m))
-  sectorMarkers = []
+  clearSectorMarkers()
   const numCenters = Math.floor(Math.random() * 3) + 2
   for (let i=0; i<numCenters; i++) {
     stressCenters.push({
@@ -265,7 +289,14 @@ const regenerateFieldHealth = () => {
 
 const handleAction = (action: 'ANALYZE' | 'WATER' | 'FUMIGATE' | 'CENTINELAS') => {
   if (action === 'CENTINELAS') {
-    if (droneState.value === 'CENTINELAS') return // Ya está activo
+    if (droneState.value === 'CENTINELAS') {
+      droneState.value = 'IDLE'
+      currentAction.value = 'NONE'
+      if (centinelaGroup) centinelaGroup.visible = false
+      setActionFeedback('Modo Centinelas detenido.')
+      return
+    }
+    if (droneState.value !== 'IDLE') return
     droneState.value = 'CENTINELAS'
     currentAction.value = 'CENTINELAS'
     
@@ -289,10 +320,13 @@ const handleAction = (action: 'ANALYZE' | 'WATER' | 'FUMIGATE' | 'CENTINELAS') =
       }
       scene.value.add(centinelaGroup)
     }
+    if (centinelaGroup) centinelaGroup.visible = true
     return
   }
 
   if (action === 'ANALYZE') {
+    if (droneState.value !== 'IDLE') return
+    setActionFeedback('Escaneo del cultivo en curso…', false)
     droneState.value = 'SCANNING'
     generateRandomStressCenters()
     regenerateFieldHealth()
@@ -318,10 +352,13 @@ const handleAction = (action: 'ANALYZE' | 'WATER' | 'FUMIGATE' | 'CENTINELAS') =
   if (action === 'FUMIGATE') activeTargets = stressCenters.filter(c => c.type === 'PEST')
   
   if (activeTargets.length === 0) {
-    alert("Análisis limpio: No se detectaron zonas que requieran esta acción específica.")
+    setActionFeedback(action === 'WATER'
+      ? 'No se encontraron zonas con estrés hídrico que requieran riego.'
+      : 'No se encontraron zonas con indicios de plaga que requieran fumigación.')
     return
   }
 
+  setActionFeedback(action === 'WATER' ? 'Dron de riego en misión…' : 'Dron de fumigación en misión…', false)
   currentAction.value = action
   droneState.value = 'FLYING'
   activeTargetIndex = 0
@@ -334,30 +371,73 @@ const handleAction = (action: 'ANALYZE' | 'WATER' | 'FUMIGATE' | 'CENTINELAS') =
   }
 }
 
+const resetCamera = () => {
+  if (!camera.value || !controls.value) return
+  camera.value.position.set(0, 18, 35)
+  controls.value.target.set(0, 0, 0)
+  controls.value.update()
+}
+
+const zoomCamera = (direction: 'in' | 'out') => {
+  if (!controls.value) return
+  if (direction === 'in') controls.value.dollyIn(1.2)
+  else controls.value.dollyOut(1.2)
+  controls.value.update()
+}
+
+const createNewScenario = () => {
+  if (droneState.value !== 'IDLE') return
+  if (centinelaGroup) centinelaGroup.visible = false
+  currentAction.value = 'NONE'
+  particleSystem.visible = false
+  generateRandomStressCenters()
+  regenerateFieldHealth()
+  setActionFeedback('Nuevo escenario generado. Analiza el cultivo para detectar las zonas de estrés.')
+}
+
 const initThree = () => {
   if (!canvasRef.value || !containerRef.value) return
-  const width = containerRef.value.clientWidth, height = containerRef.value.clientHeight
-  renderer.value = new THREE.WebGLRenderer({ canvas: canvasRef.value, antialias: true })
-  renderer.value.setSize(width, height); renderer.value.setPixelRatio(window.devicePixelRatio)
-  renderer.value.shadowMap.enabled = true
+  const width = canvasRef.value.clientWidth, height = canvasRef.value.clientHeight
+  const isSmallScreen = window.matchMedia('(max-width: 767px)').matches
+  renderer.value = new THREE.WebGLRenderer({ canvas: canvasRef.value, antialias: !isSmallScreen })
+  renderer.value.setPixelRatio(Math.min(window.devicePixelRatio, isSmallScreen ? 1.5 : 2))
+  renderer.value.setSize(width, height, false)
+  renderer.value.shadowMap.enabled = !isSmallScreen
 
   scene.value = new THREE.Scene()
-  scene.value.background = new THREE.Color(0x87ceeb)
-  scene.value.fog = new THREE.FogExp2(0x87ceeb, 0.01)
+  scene.value.background = new THREE.Color(0x9ba993)
+  scene.value.fog = new THREE.FogExp2(0x9ba993, 0.008)
 
   camera.value = new THREE.PerspectiveCamera(60, width / height, 0.1, 1000)
   camera.value.position.set(0, 18, 35)
   controls.value = new OrbitControls(camera.value, renderer.value.domElement)
   controls.value.target.set(0, 0, 0)
+  controls.value.enableDamping = true
+  controls.value.dampingFactor = 0.075
+  controls.value.minDistance = 12
+  controls.value.maxDistance = 75
+  controls.value.maxPolarAngle = Math.PI / 2.05
 
-  scene.value.add(new THREE.AmbientLight(0xffffff, 0.4))
+  scene.value.add(new THREE.HemisphereLight(0xe5edda, 0x483d29, 1.15))
   const dirLight = new THREE.DirectionalLight(0xffffff, 1.0)
-  dirLight.position.set(50, 100, 30); dirLight.castShadow = true
+  dirLight.position.set(-35, 65, 25); dirLight.castShadow = true
   scene.value.add(dirLight)
 
   groundMaterial = new THREE.MeshLambertMaterial({ color: 0x78350f })
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(150, 150), groundMaterial)
   ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.value.add(ground)
+
+  const furrowPositions: number[] = []
+  for (let x = -26; x <= 26; x += 3.5) {
+    furrowPositions.push(x, 0.025, -21, x, 0.025, 21)
+  }
+  const furrowGeometry = new THREE.BufferGeometry()
+  furrowGeometry.setAttribute('position', new THREE.Float32BufferAttribute(furrowPositions, 3))
+  const furrows = new THREE.LineSegments(
+    furrowGeometry,
+    new THREE.LineBasicMaterial({ color: 0xc39a64, transparent: true, opacity: 0.17 })
+  )
+  scene.value.add(furrows)
 
   // Generación aleatoria de zonas inicial
   generateRandomStressCenters()
@@ -438,6 +518,15 @@ const initThree = () => {
   const animate = () => {
     animationId.value = requestAnimationFrame(animate)
     controls.value?.update()
+
+    if (droneState.value === 'IDLE') {
+      const hover = Math.sin(performance.now() * 0.0018) * 0.08
+      droneGroup.position.y = DRONE_BASE.y + hover
+      droneGroup.rotation.z = Math.sin(performance.now() * 0.0012) * 0.012
+      propellers.forEach((propeller, index) => {
+        propeller.rotation.y += index % 2 === 0 ? 0.12 : -0.12
+      })
+    }
     
     // Raycaster para Plantas y Zonas
     if (raycaster.value && mouse.value && camera.value && scene.value) {
@@ -489,6 +578,7 @@ const initThree = () => {
           if (currentPathIndex >= dronePath.length) {
             droneState.value = 'IDLE'
             droneGroup.rotation.set(0,0,0) // Reset rotación
+            setActionFeedback('Escaneo completado. Explora las zonas de estrés detectadas.')
             // Revelar sectores escaneados
             stressCenters.forEach(center => {
               const geo = new THREE.PlaneGeometry(center.radius * 2, center.radius * 2)
@@ -570,7 +660,11 @@ const initThree = () => {
           if (dist < 0.2) {
             droneState.value = 'IDLE'
             droneGroup.rotation.set(0,0,0)
+            const completedAction = currentAction.value
             currentAction.value = 'NONE'
+            setActionFeedback(completedAction === 'WATER'
+              ? 'Misión de riego completada. Se actualizaron las métricas del cultivo.'
+              : 'Misión de fumigación completada. Se actualizaron las métricas del cultivo.')
           }
         }
       }
@@ -580,84 +674,137 @@ const initThree = () => {
   }
   animate()
 
-  window.addEventListener('resize', onWindowResize); containerRef.value.addEventListener('mousemove', onMouseMove)
+  window.addEventListener('resize', onWindowResize)
+  resizeObserver.value = new ResizeObserver(onWindowResize)
+  resizeObserver.value.observe(canvasRef.value)
+  containerRef.value.addEventListener('pointermove', onMouseMove)
 }
 
-const onMouseMove = (event: MouseEvent) => {
-  if (!containerRef.value || !mouse.value) return
-  const rect = containerRef.value.getBoundingClientRect()
+const onMouseMove = (event: PointerEvent) => {
+  if (!canvasRef.value || !mouse.value) return
+  const rect = canvasRef.value.getBoundingClientRect()
   mouse.value.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
   mouse.value.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
-  tooltipPos.value = { x: event.clientX + 15, y: event.clientY + 15 }
+  tooltipPos.value = {
+    x: Math.max(12, Math.min(event.clientX + 15, window.innerWidth - 280)),
+    y: Math.min(event.clientY + 15, window.innerHeight - 24)
+  }
 }
 
 const onWindowResize = () => {
-  if (!containerRef.value || !camera.value || !renderer.value) return
-  const width = containerRef.value.clientWidth, height = containerRef.value.clientHeight
-  camera.value.aspect = width / height; camera.value.updateProjectionMatrix(); renderer.value.setSize(width, height)
+  if (!canvasRef.value || !camera.value || !renderer.value) return
+  const width = canvasRef.value.clientWidth, height = canvasRef.value.clientHeight
+  if (!width || !height) return
+  camera.value.aspect = width / height
+  camera.value.updateProjectionMatrix()
+  const isSmallScreen = window.matchMedia('(max-width: 767px)').matches
+  renderer.value.shadowMap.enabled = !isSmallScreen
+  renderer.value.setPixelRatio(Math.min(window.devicePixelRatio, isSmallScreen ? 1.5 : 2))
+  renderer.value.setSize(width, height, false)
 }
 
 onMounted(() => { initThree() })
 onBeforeUnmount(() => {
   cancelAnimationFrame(animationId.value); window.removeEventListener('resize', onWindowResize)
-  if (containerRef.value) containerRef.value.removeEventListener('mousemove', onMouseMove)
+  if (feedbackTimeout) clearTimeout(feedbackTimeout)
+  resizeObserver.value?.disconnect()
+  if (containerRef.value) containerRef.value.removeEventListener('pointermove', onMouseMove)
   if (renderer.value) renderer.value.dispose()
 })
 </script>
 
 <template>
-  <div class="h-full flex flex-col relative overflow-hidden">
+  <div class="simulation-view flex flex-col relative">
     <!-- Header -->
-    <div class="px-6 py-4 bg-white border-b border-gray-200 flex justify-between items-center z-20 shadow-sm relative">
+    <div class="simulation-header px-6 py-4 bg-white border-b border-gray-200 flex justify-between items-center z-20 shadow-sm relative">
       <div>
-        <h1 class="text-2xl font-bold text-gray-900">Simulación de Cultivos & Análisis</h1>
-        <p class="text-sm text-gray-500 mt-1">Renderizado avanzado y gestión interactiva multizona.</p>
+        <span class="simulation-eyebrow">LABORATORIO AGRÍCOLA</span>
+        <h1 class="text-2xl font-bold text-gray-900">Simulador de cultivos</h1>
+        <p class="text-sm text-gray-500 mt-1">Explora el cultivo, analiza su vigor y ejecuta misiones con drones.</p>
       </div>
       
-      <div class="flex bg-gray-100 p-1 rounded-lg gap-1">
-        <button 
-          v-for="mode in modes" 
-          :key="mode.id"
-          @click="updateMaterials(mode.id as any)"
-          class="flex items-center gap-2 px-4 py-2 rounded-md transition-all text-sm font-medium"
-          :class="currentMode === mode.id ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'"
-        >
-          <span class="w-3 h-3 rounded-full" :class="mode.color"></span>
-          {{ mode.name }}
+      <div class="simulation-header-actions">
+        <button class="simulation-new-scenario" type="button" @click="createNewScenario" :disabled="droneState !== 'IDLE'">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+            <path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.64 5.64l2.12 2.12m8.48 8.48 2.12 2.12m0-12.72-2.12 2.12m-8.48 8.48-2.12 2.12M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6" />
+          </svg>
+          Nuevo escenario
         </button>
+        <div class="simulation-mode-switch flex p-1 rounded-lg gap-1" role="group" aria-label="Capas de visualización">
+          <button
+            v-for="mode in modes"
+            :key="mode.id"
+            @click="updateMaterials(mode.id)"
+            class="flex items-center gap-2 px-4 py-2 rounded-md transition-all text-sm font-medium"
+            :class="currentMode === mode.id ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'"
+            :aria-pressed="currentMode === mode.id"
+          >
+            <span class="w-3 h-3 rounded-full" :class="mode.color"></span>
+            {{ mode.name }}
+          </button>
+        </div>
       </div>
     </div>
+
+    <div v-if="actionFeedback" class="simulation-feedback" role="status" aria-live="polite">
+      <span class="simulation-feedback-dot" :class="droneState === 'IDLE' ? 'is-idle' : ''"></span>
+      <span>{{ actionFeedback }}</span>
+      <button type="button" aria-label="Cerrar mensaje" @click="actionFeedback = ''">×</button>
+    </div>
     
-    <div ref="containerRef" class="flex-1 relative bg-gray-900 cursor-crosshair">
-      <canvas ref="canvasRef" class="w-full h-full outline-none"></canvas>
+    <div ref="containerRef" class="simulation-stage flex-1 relative bg-gray-900 cursor-crosshair">
+      <canvas ref="canvasRef" class="w-full h-full outline-none" role="img" aria-label="Vista tridimensional interactiva del cultivo. Usa el ratón o gestos para explorar."></canvas>
+      <p class="simulation-touch-hint">Arrastra para explorar · Pellizca para acercar</p>
+      <div class="simulation-demo-badge" aria-label="Entorno demostrativo">
+        <span class="simulation-demo-dot"></span>
+        ENTORNO DEMOSTRATIVO · DATOS SIMULADOS
+      </div>
+      <div class="simulation-camera-tools" role="group" aria-label="Controles de cámara">
+        <button type="button" @click="zoomCamera('out')" aria-label="Alejar vista" title="Alejar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8" /><path d="m16 16 4.5 4.5M7.8 10.8h6" stroke-linecap="round" /></svg>
+        </button>
+        <button type="button" @click="zoomCamera('in')" aria-label="Acercar vista" title="Acercar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8" /><path d="m16 16 4.5 4.5M7.8 10.8h6m-3-3v6" stroke-linecap="round" /></svg>
+        </button>
+        <button type="button" @click="resetCamera" aria-label="Restablecer vista de cámara" title="Restablecer vista">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M3 12a9 9 0 1 0 2.64-6.36L3 8m0-5v5h5" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" /></svg>
+          <span>Restablecer</span>
+        </button>
+      </div>
 
       <!-- Menú de Dron / Análisis -->
-      <div class="absolute top-6 right-6 bg-black/80 backdrop-blur-md border border-white/10 rounded-xl p-4 text-white shadow-2xl z-10 w-64 transition-all">
-        <h3 class="font-bold text-lg mb-3 border-b border-white/20 pb-2 flex items-center justify-between">
-          <span>Dron Autónomo</span>
-          <span class="text-xs px-2 py-1 rounded-full" 
-            :class="droneState === 'IDLE' ? 'bg-green-500/20 text-green-400' : 'bg-blue-500/20 text-blue-400 animate-pulse'">
-            {{ droneState === 'IDLE' ? 'En Base' : (droneState === 'SCANNING' ? 'Mapeando...' : (droneState === 'CENTINELAS' ? 'Centinelas...' : 'En Misión')) }}
+      <div class="simulation-panel simulation-controls absolute top-6 right-6 bg-black/80 backdrop-blur-md border border-white/10 rounded-xl p-4 text-white shadow-2xl z-10 w-64 transition-all">
+        <div class="simulation-panel-heading">
+          <span class="simulation-panel-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path d="m5 10 7-4 7 4v4l-7 4-7-4v-4Zm2 1 5 3 5-3M12 6v8m-7-1-3 2m17-2 3 2" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6" />
+            </svg>
           </span>
-        </h3>
+          <span class="simulation-panel-title"><strong>Centro de misión</strong><small>Operaciones autónomas</small></span>
+          <span class="simulation-status" :class="droneState === 'IDLE' ? 'status-ready' : 'status-active'">
+            <span></span>
+            {{ droneState === 'IDLE' ? 'Disponible' : (droneState === 'SCANNING' ? 'Escaneando' : (droneState === 'CENTINELAS' ? 'Centinelas' : 'En misión')) }}
+          </span>
+        </div>
         
+        <p class="simulation-control-hint">Selecciona una operación para el dron.</p>
         <div class="space-y-2">
-          <button @click="handleAction('ANALYZE')" :disabled="droneState !== 'IDLE' && droneState !== 'CENTINELAS'" class="w-full bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed border border-white/10 p-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2">
+          <button @click="handleAction('ANALYZE')" :disabled="droneState !== 'IDLE'" class="simulation-action simulation-action-primary w-full disabled:cursor-not-allowed p-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-            Analizar Campo
+            Analizar cultivo
           </button>
           
-          <button @click="handleAction('CENTINELAS')" :disabled="droneState === 'CENTINELAS' || droneState !== 'IDLE'" class="w-full bg-purple-500 hover:bg-purple-600 disabled:bg-purple-900 disabled:text-gray-400 disabled:cursor-not-allowed text-white border border-white/10 p-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 mt-2">
+          <button @click="handleAction('CENTINELAS')" :disabled="droneState !== 'IDLE' && droneState !== 'CENTINELAS'" class="simulation-action simulation-action-sentinel w-full disabled:cursor-not-allowed p-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 mt-2">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-            Modo Centinelas
+            {{ droneState === 'CENTINELAS' ? 'Detener Centinelas' : 'Activar Centinelas' }}
           </button>
           
           <div class="grid grid-cols-2 gap-2 mt-2">
-            <button @click="handleAction('WATER')" :disabled="droneState !== 'IDLE' && droneState !== 'CENTINELAS'" class="bg-blue-500 hover:bg-blue-600 disabled:bg-blue-900 disabled:text-gray-400 disabled:cursor-not-allowed text-white p-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-1.5">
+            <button @click="handleAction('WATER')" :disabled="droneState !== 'IDLE'" class="simulation-action simulation-action-water disabled:cursor-not-allowed p-2 rounded-lg text-sm font-medium flex items-center justify-center gap-1.5">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1M4.22 4.22l.71.71m14.14 14.14l.71.71M1 12h1m20 0h1M4.22 19.78l.71-.71M18.07 5.93l.71-.71M12 6a6 6 0 100 12 6 6 0 000-12z"/></svg>
               Regar
             </button>
-            <button @click="handleAction('FUMIGATE')" :disabled="droneState !== 'IDLE' && droneState !== 'CENTINELAS'" class="bg-emerald-500 hover:bg-emerald-600 disabled:bg-emerald-900 disabled:text-gray-400 disabled:cursor-not-allowed text-white p-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-1.5">
+            <button @click="handleAction('FUMIGATE')" :disabled="droneState !== 'IDLE'" class="simulation-action simulation-action-fumigate disabled:cursor-not-allowed p-2 rounded-lg text-sm font-medium flex items-center justify-center gap-1.5">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
               Fumigar
             </button>
@@ -666,9 +813,18 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Leyendas -->
-      <div v-if="currentMode === 'ndvi'" class="absolute top-6 left-6 bg-black/80 backdrop-blur-md border border-white/10 rounded-xl p-4 text-white shadow-2xl z-10 w-64 transition-all">
-        <h3 class="font-bold text-lg mb-3 border-b border-white/20 pb-2">Índice NDVI (Plagas)</h3>
-        <p class="text-xs text-gray-300 mb-3">Las plagas destruyen el vigor foliar sin subir la temperatura drásticamente.</p>
+      <div v-if="currentMode === 'rgb'" class="simulation-panel simulation-legend absolute top-6 left-6 bg-black/80 backdrop-blur-md border border-white/10 rounded-xl p-4 text-white shadow-2xl z-10 w-64 transition-all">
+        <h3 class="font-bold text-sm mb-3 border-b border-white/20 pb-2">Vista natural · RGB</h3>
+        <p class="text-xs text-gray-300 mb-3">Representación visual del estado general de las plantas.</p>
+        <div class="simulation-color-key">
+          <span><i class="key-healthy"></i> Vigor alto</span>
+          <span><i class="key-stressed"></i> Vigor bajo</span>
+        </div>
+      </div>
+
+      <div v-if="currentMode === 'ndvi'" class="simulation-panel simulation-legend absolute top-6 left-6 bg-black/80 backdrop-blur-md border border-white/10 rounded-xl p-4 text-white shadow-2xl z-10 w-64 transition-all">
+        <h3 class="font-bold text-sm mb-3 border-b border-white/20 pb-2">Índice de vegetación · NDVI</h3>
+        <p class="text-xs text-gray-300 mb-3">Lectura visual del vigor vegetal. Es una simulación, no un diagnóstico agronómico.</p>
         <div class="space-y-3">
           <div class="flex items-center justify-between"><div class="flex items-center gap-2"><div class="w-6 h-4 bg-[#16a34a] rounded-sm"></div><span class="text-sm font-medium">Alto Vigor</span></div></div>
           <div class="flex items-center justify-between"><div class="flex items-center gap-2"><div class="w-6 h-4 bg-[#facc15] rounded-sm"></div><span class="text-sm font-medium">Moderado</span></div></div>
@@ -677,7 +833,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <div v-if="currentMode === 'thermal'" class="absolute top-6 left-6 bg-black/80 backdrop-blur-md border border-white/10 rounded-xl p-4 text-white shadow-2xl z-10 w-64 transition-all">
+      <div v-if="currentMode === 'thermal'" class="simulation-panel simulation-legend absolute top-6 left-6 bg-black/80 backdrop-blur-md border border-white/10 rounded-xl p-4 text-white shadow-2xl z-10 w-64 transition-all">
         <h3 class="font-bold text-lg mb-3 border-b border-white/20 pb-2">Térmico (Sequía)</h3>
         <p class="text-xs text-gray-300 mb-3">La falta de agua dispara la temperatura de la planta.</p>
         <div class="flex gap-4">
@@ -691,7 +847,7 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Leyenda de Sectores -->
-      <div v-if="droneState !== 'IDLE' || sectorMarkers.length > 0" class="absolute bottom-6 left-6 bg-black/80 backdrop-blur-md border border-white/10 rounded-xl p-4 text-white shadow-2xl z-10 w-64 transition-all">
+      <div v-if="droneState !== 'IDLE' || sectorMarkers.length > 0" class="simulation-panel simulation-severity absolute bottom-6 left-6 bg-black/80 backdrop-blur-md border border-white/10 rounded-xl p-4 text-white shadow-2xl z-10 w-64 transition-all">
         <h3 class="font-bold text-sm mb-3 border-b border-white/20 pb-2">Severidad de Sectores</h3>
         <div class="space-y-4 text-xs">
           <div>
@@ -708,10 +864,10 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Panel de Telemetría en Tiempo Real -->
-      <div class="absolute bottom-6 right-6 bg-black/85 backdrop-blur-md border border-white/10 rounded-xl p-4 text-white shadow-2xl z-10 w-64">
+      <div class="simulation-panel simulation-telemetry absolute bottom-6 right-6 bg-black/85 backdrop-blur-md border border-white/10 rounded-xl p-4 text-white shadow-2xl z-10 w-64">
         <h3 class="font-bold text-sm mb-3 border-b border-white/20 pb-2 flex items-center gap-2">
           <span class="w-2 h-2 rounded-full bg-agron-green animate-pulse"></span>
-          Telemetría — Tiempo Real
+          Estado del cultivo
         </h3>
         <div class="space-y-2.5 text-xs">
           <div class="flex justify-between items-center">
@@ -764,7 +920,7 @@ onBeforeUnmount(() => {
     <!-- Tooltip Combinado (Planta + Sector) -->
     <div 
       v-if="hoveredPlant || hoveredSector"
-      class="fixed bg-white border border-gray-200 rounded-xl shadow-2xl p-4 pointer-events-none z-50 w-64 transform -translate-y-full"
+      class="simulation-tooltip fixed bg-white border border-gray-200 rounded-xl shadow-2xl p-4 pointer-events-none z-50 w-64 transform -translate-y-full"
       :style="{ left: `${tooltipPos.x}px`, top: `${tooltipPos.y - 10}px` }"
     >
       <template v-if="hoveredPlant">
@@ -796,6 +952,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </template>
+
 
       <!-- Divisor si hay ambos -->
       <div v-if="hoveredPlant && hoveredSector" class="my-3 border-t border-dashed border-gray-300"></div>
@@ -831,3 +988,495 @@ onBeforeUnmount(() => {
 
   </div>
 </template>
+
+<style scoped>
+      .simulation-view {
+        min-width: 0;
+        min-height: calc(100vh - 3rem);
+        min-height: calc(100dvh - 3rem);
+        gap: 0.85rem;
+        animation: simulation-enter 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+      }
+
+      .simulation-header {
+        flex-wrap: wrap;
+        gap: 1rem;
+        border: 1px solid rgba(196, 218, 147, 0.12);
+        border-radius: 16px;
+        background:
+          radial-gradient(ellipse at 0 0, rgba(120, 150, 76, 0.12), transparent 42%),
+          rgba(28, 32, 21, 0.9);
+        box-shadow: 0 14px 36px rgba(0, 0, 0, 0.16), inset 0 1px rgba(255, 255, 255, 0.035);
+      }
+
+      .simulation-header h1 {
+        margin-top: 3px;
+        font-size: clamp(1.4rem, 2.5vw, 1.9rem);
+        line-height: 1.2;
+        letter-spacing: -0.05em;
+      }
+
+      .simulation-eyebrow {
+        color: #d2b65d;
+        font-size: 0.62rem;
+        font-weight: 800;
+        letter-spacing: 0.15em;
+      }
+
+      .simulation-header p { color: #929d86; }
+
+      .simulation-header-actions {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 0.65rem;
+        flex-wrap: wrap;
+      }
+
+      .simulation-new-scenario {
+        display: inline-flex;
+        min-height: 40px;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 0 13px;
+        border: 1px solid rgba(211, 189, 103, 0.28);
+        border-radius: 10px;
+        color: #ead796;
+        background: rgba(211, 189, 103, 0.08);
+        font-size: 0.75rem;
+        font-weight: 700;
+        transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+      }
+
+      .simulation-new-scenario:hover:not(:disabled) {
+        transform: translateY(-1px);
+        border-color: rgba(238, 203, 113, 0.55);
+        background: rgba(211, 189, 103, 0.15);
+      }
+
+      .simulation-new-scenario:disabled { cursor: not-allowed; opacity: 0.45; }
+      .simulation-new-scenario svg { width: 16px; height: 16px; }
+
+      .simulation-mode-switch {
+        flex: 0 0 auto;
+        border: 1px solid rgba(196, 218, 147, 0.12);
+        background: rgba(7, 11, 8, 0.45);
+      }
+
+      .simulation-mode-switch button {
+        color: #aab29e;
+        transition: color 0.2s ease, background 0.2s ease, transform 0.2s ease;
+      }
+
+      .simulation-mode-switch button:hover { color: #eff2e7; }
+
+      .simulation-mode-switch button[aria-pressed="true"] {
+        color: #211a08;
+        background: linear-gradient(135deg, #f6d977, #dfb53d);
+        box-shadow: 0 5px 14px rgba(214, 172, 58, 0.18);
+      }
+
+      .simulation-mode-switch button[aria-pressed="true"] span {
+        box-shadow: 0 0 0 2px rgba(20, 26, 16, 0.22);
+      }
+
+      .simulation-feedback {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 14px;
+        border: 1px solid rgba(196, 218, 147, 0.15);
+        border-radius: 12px;
+        color: #e4e9dc;
+        background: rgba(28, 32, 21, 0.86);
+        font-size: 0.82rem;
+        animation: panel-enter 0.25s ease both;
+      }
+
+      .simulation-feedback-dot,
+      .simulation-demo-dot {
+        flex: 0 0 auto;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #efb953;
+        box-shadow: 0 0 12px rgba(239, 185, 83, 0.4);
+      }
+
+      .simulation-feedback-dot.is-idle {
+        background: #96bf61;
+        box-shadow: 0 0 12px rgba(150, 191, 97, 0.42);
+      }
+
+      .simulation-feedback button {
+        margin-left: auto;
+        color: #929d86;
+        font-size: 1.2rem;
+      }
+
+      .simulation-stage {
+        min-height: clamp(560px, 72vh, 850px);
+        min-height: clamp(560px, 72dvh, 850px);
+        overflow: hidden;
+        border: 1px solid rgba(196, 218, 147, 0.14);
+        border-radius: 18px;
+        background:
+          radial-gradient(ellipse at 50% 5%, rgba(206, 210, 172, 0.25), transparent 42%),
+          linear-gradient(145deg, #1b2921, #101713);
+        box-shadow: 0 22px 52px rgba(0, 0, 0, 0.23), inset 0 1px rgba(255, 255, 255, 0.035);
+        isolation: isolate;
+      }
+
+      .simulation-stage > canvas {
+        display: block;
+        touch-action: none;
+        cursor: grab;
+      }
+
+      .simulation-stage > canvas:active { cursor: grabbing; }
+      .simulation-touch-hint { display: none; }
+
+      .simulation-demo-badge {
+        position: absolute;
+        z-index: 2;
+        top: 1rem;
+        left: 1rem;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 11px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 999px;
+        color: #eff1e9;
+        background: rgba(13, 20, 16, 0.75);
+        backdrop-filter: blur(12px);
+        font-size: 0.58rem;
+        font-weight: 750;
+        letter-spacing: 0.08em;
+        pointer-events: none;
+      }
+
+      .simulation-demo-dot {
+        width: 6px;
+        height: 6px;
+        background: #efb953;
+        animation: status-pulse 2s ease-in-out infinite;
+      }
+
+      .simulation-camera-tools {
+        position: absolute;
+        z-index: 5;
+        bottom: 1rem;
+        left: 50%;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 5px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 12px;
+        color: #edf1e6;
+        background: rgba(13, 20, 16, 0.82);
+        backdrop-filter: blur(12px);
+        transform: translateX(-50%);
+        box-shadow: 0 8px 25px rgba(0, 0, 0, 0.2);
+      }
+
+      .simulation-camera-tools button {
+        display: inline-flex;
+        min-width: 36px;
+        min-height: 36px;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        padding: 0 9px;
+        border: 1px solid transparent;
+        border-radius: 8px;
+        color: #e7ecdf;
+        font-size: 0.69rem;
+        font-weight: 650;
+        transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+      }
+
+      .simulation-camera-tools button:hover {
+        transform: translateY(-1px);
+        border-color: rgba(238, 203, 113, 0.42);
+        background: rgba(29, 39, 29, 0.92);
+      }
+
+      .simulation-camera-tools svg { width: 16px; height: 16px; }
+
+      .simulation-panel {
+        border: 1px solid rgba(196, 218, 147, 0.18);
+        border-radius: 16px;
+        background:
+          linear-gradient(145deg, rgba(24, 31, 23, 0.92), rgba(12, 18, 14, 0.9));
+        box-shadow: 0 18px 42px rgba(0, 0, 0, 0.32), inset 0 1px rgba(255, 255, 255, 0.06);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        animation: panel-enter 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+      }
+
+      .simulation-panel-heading {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 12px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.11);
+      }
+
+      .simulation-panel-icon {
+        display: grid;
+        flex: 0 0 auto;
+        width: 36px;
+        height: 36px;
+        place-items: center;
+        border: 1px solid rgba(196, 218, 147, 0.16);
+        border-radius: 11px;
+        color: #e6c961;
+        background: rgba(196, 218, 147, 0.08);
+      }
+
+      .simulation-panel-icon svg { width: 19px; height: 19px; }
+      .simulation-panel-title { min-width: 0; }
+      .simulation-panel-title strong,
+      .simulation-panel-title small { display: block; }
+      .simulation-panel-title strong { color: #f1f2eb; font-size: 0.86rem; }
+      .simulation-panel-title small { margin-top: 2px; color: #929d86; font-size: 0.66rem; }
+
+      .simulation-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        margin-left: auto;
+        padding: 5px 8px;
+        border: 1px solid rgba(196, 218, 147, 0.12);
+        border-radius: 999px;
+        font-size: 0.61rem;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+
+      .simulation-status > span {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: currentColor;
+      }
+
+      .status-ready { color: #b8d986; background: rgba(116, 153, 70, 0.13); }
+      .status-active { color: #f2cd71; background: rgba(203, 150, 56, 0.13); }
+      .status-active > span { animation: status-pulse 1.2s ease-in-out infinite; }
+      .simulation-control-hint { margin: 0 0 11px; color: #909b86; font-size: 0.69rem; }
+
+      .simulation-controls button {
+        min-height: 42px;
+        transition: filter 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+      }
+
+      .simulation-controls button:hover:not(:disabled) {
+        transform: translateY(-1px);
+        filter: brightness(1.09);
+      }
+
+      .simulation-controls button:disabled { opacity: 0.48; }
+
+      .simulation-action {
+        color: #f2f2e9;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        transition: filter 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+      }
+
+      .simulation-action-primary { background: linear-gradient(135deg, #b99d4e, #907a3c); }
+      .simulation-action-sentinel { background: linear-gradient(135deg, #63518a, #453661); }
+      .simulation-action-water { background: linear-gradient(135deg, #386e83, #285164); }
+      .simulation-action-fumigate { background: linear-gradient(135deg, #467a5b, #31583f); }
+      .simulation-action:disabled { filter: saturate(0.45); }
+
+      .simulation-controls .simulation-action:disabled { opacity: 0.46; }
+
+      .simulation-controls .simulation-action:not(:disabled):hover {
+        box-shadow: 0 5px 16px rgba(0, 0, 0, 0.22);
+      }
+
+      .simulation-controls button:focus-visible,
+      .simulation-camera-tools button:focus-visible,
+      .simulation-new-scenario:focus-visible,
+      .simulation-mode-switch button:focus-visible {
+        outline: 2px solid #f2d474;
+        outline-offset: 2px;
+      }
+
+      .simulation-tooltip {
+        max-width: calc(100vw - 24px);
+        border-color: rgba(196, 218, 147, 0.18);
+        background: #1c2015;
+        color: #f5f1df;
+      }
+
+      .simulation-color-key { display: grid; gap: 9px; color: #d6ddce; font-size: 0.72rem; }
+      .simulation-color-key span { display: inline-flex; align-items: center; gap: 9px; }
+      .simulation-color-key i { width: 12px; height: 12px; border-radius: 4px; }
+      .simulation-color-key .key-healthy { background: #15803d; }
+      .simulation-color-key .key-stressed { background: #84cc16; }
+
+      @keyframes simulation-enter {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+
+      @keyframes panel-enter {
+        from { opacity: 0; transform: translateY(6px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+
+      @keyframes status-pulse {
+        0%, 100% { opacity: 0.65; box-shadow: 0 0 0 0 rgba(239, 185, 83, 0.25); }
+        50% { opacity: 1; box-shadow: 0 0 0 5px rgba(239, 185, 83, 0); }
+      }
+
+      @media (min-width: 768px) and (max-width: 1023px) {
+        .simulation-stage { min-height: clamp(520px, 66dvh, 720px); }
+        .simulation-panel { width: 220px; padding: 0.85rem; }
+        .simulation-panel-heading { gap: 7px; }
+        .simulation-status { gap: 4px; padding-inline: 6px; font-size: 0.56rem; }
+        .simulation-legend { max-width: 220px; }
+        .simulation-telemetry,
+        .simulation-severity { max-width: 220px; }
+      }
+
+      @media (max-width: 767px) {
+        .simulation-view {
+          min-height: 0;
+          gap: 0.75rem;
+          overflow: visible;
+          padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+        }
+
+        .simulation-header {
+          align-items: stretch;
+          padding: 1rem;
+          border-radius: 14px;
+        }
+
+        .simulation-header > div:first-child { min-width: 0; }
+        .simulation-header p { font-size: 0.8rem; }
+        .simulation-header-actions { width: 100%; align-items: stretch; }
+        .simulation-new-scenario { flex: 1; }
+        .simulation-mode-switch {
+          width: 100%;
+          justify-content: space-between;
+          flex-wrap: wrap;
+        }
+        .simulation-mode-switch button {
+          flex: 1 1 auto;
+          justify-content: center;
+          padding-inline: 0.65rem;
+          font-size: 0.75rem;
+        }
+
+        .simulation-stage {
+          display: flex;
+          flex: none;
+          flex-direction: column;
+          gap: 0.6rem;
+          min-height: 0;
+          padding-top: clamp(260px, 44vh, 390px);
+          padding-top: clamp(260px, 44dvh, 390px);
+          overflow: visible;
+          border: 0;
+          border-radius: 14px;
+          background: transparent;
+          box-shadow: none;
+        }
+
+        .simulation-stage > canvas {
+          position: absolute;
+          inset: 0 0 auto;
+          width: 100%;
+          height: clamp(260px, 44vh, 390px);
+          height: clamp(260px, 44dvh, 390px);
+          border: 1px solid rgba(196, 218, 147, 0.18);
+          border-radius: 14px;
+        }
+
+        .simulation-touch-hint {
+          display: block;
+          position: absolute;
+          top: calc(clamp(260px, 44vh, 390px) - 2.65rem);
+          top: calc(clamp(260px, 44dvh, 390px) - 2.65rem);
+          left: 50%;
+          z-index: 3;
+          max-width: calc(100% - 1rem);
+          margin: 0;
+          padding: 6px 9px;
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          border-radius: 8px;
+          color: #dce4d5;
+          background: rgba(13, 20, 16, 0.72);
+          backdrop-filter: blur(10px);
+          font-size: 0.62rem;
+          white-space: nowrap;
+          transform: translateX(-50%);
+          pointer-events: none;
+        }
+
+        .simulation-stage > .simulation-panel {
+          position: relative;
+          inset: auto;
+          z-index: 1;
+          width: 100%;
+          margin: 0;
+        }
+
+        .simulation-demo-badge {
+          top: 0.75rem;
+          left: 0.75rem;
+          padding: 7px 9px;
+          font-size: 0.52rem;
+        }
+
+        .simulation-camera-tools {
+          top: 0.65rem;
+          bottom: auto;
+          left: auto;
+          right: 0.65rem;
+          transform: none;
+        }
+
+        .simulation-camera-tools button { min-width: 42px; min-height: 42px; }
+        .simulation-camera-tools button span { display: inline; }
+        .simulation-panel { border-radius: 14px; }
+        .simulation-panel-heading { flex-wrap: wrap; }
+        .simulation-panel-icon { width: 34px; height: 34px; }
+        .simulation-status { margin-left: auto; }
+        .simulation-control-hint { font-size: 0.73rem; }
+        .simulation-controls { order: 1; }
+        .simulation-legend { order: 2; }
+        .simulation-severity { order: 3; }
+        .simulation-telemetry { order: 4; }
+        .simulation-tooltip { display: none; }
+        .simulation-controls button { min-height: 46px; font-size: 0.84rem; }
+        .simulation-telemetry { margin-bottom: 0.25rem !important; }
+      }
+
+      @media (max-width: 420px) {
+        .simulation-mode-switch { flex-wrap: nowrap; }
+        .simulation-mode-switch button { gap: 0.35rem; padding-inline: 0.4rem; font-size: 0.68rem; }
+        .simulation-new-scenario { min-height: 44px; }
+        .simulation-controls { padding: 0.9rem; }
+        .simulation-panel-heading { gap: 8px; }
+        .simulation-status { padding-inline: 6px; font-size: 0.57rem; }
+        .simulation-demo-badge { max-width: calc(100% - 8.5rem); font-size: 0.47rem; }
+        .simulation-camera-tools { gap: 2px; }
+        .simulation-camera-tools button { min-width: 40px; min-height: 42px; padding-inline: 7px; }
+        .simulation-controls .grid.grid-cols-2 { gap: 0.55rem; }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .simulation-view, .simulation-panel { animation: none; }
+        .simulation-demo-dot, .status-active > span { animation: none; }
+        .simulation-controls button, .simulation-camera-tools button, .simulation-new-scenario { transition: none; }
+      }
+</style>

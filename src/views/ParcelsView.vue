@@ -59,7 +59,7 @@ const addParcela = () => {
   allParcelas.value.push({ id: Date.now(), ...newParcela.value, status })
   newParcela.value = { clientName: '', clientEmail: '', parcelaName: '', hectareas: 0, cultivo: '', municipio: '' }
   showNewParcela.value = false
-  
+
   if (isAdmin.value) {
     addParcelaMsg.value = 'Parcela registrada exitosamente.'
   } else {
