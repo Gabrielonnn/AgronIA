@@ -4,7 +4,7 @@ import { supabase } from '../services/supabase'
 import { useMainStore } from '../stores'
 import Card from '../components/ui/Card.vue'
 import Button from '../components/ui/Button.vue'
-import { Users, UserPlus, Trash2, List, ShieldCheck } from 'lucide-vue-next'
+import { Users, UserPlus, Trash2, List } from 'lucide-vue-next'
 
 const store = useMainStore()
 
@@ -60,7 +60,7 @@ const isAdmin = computed(() => {
 
 const fetchUsers = async () => {
   loadingUsers.value = true
-  const { data, error } = await supabase.from('profiles').select('*').order('created_at', { ascending: false })
+  const { data } = await supabase!.from('profiles').select('*').order('created_at', { ascending: false })
   if (data) users.value = data as UserProfile[]
   loadingUsers.value = false
 }
@@ -76,7 +76,7 @@ const addUser = async () => {
   addUserMsg.value = ''
   
   // Usar signUp para crear la cuenta en Auth
-  const { error: authError } = await supabase.auth.signUp({
+  const { error: authError } = await supabase!.auth.signUp({
     email: newUserEmail.value,
     password: newUserPassword.value,
     options: {
@@ -112,24 +112,24 @@ const addUser = async () => {
 
 const removeUser = async (id: string) => {
   if (!confirm('¿Seguro que deseas eliminar este perfil? Esto no borra la cuenta en auth, solo su acceso.')) return
-  await supabase.from('profiles').delete().eq('id', id)
+  await supabase!.from('profiles').delete().eq('id', id)
   users.value = users.value.filter(u => u.id !== id)
 }
 
 const toggleUserActive = async (user: UserProfile) => {
   const newStatus = !user.active
-  const { error } = await supabase.from('profiles').update({ active: newStatus }).eq('id', user.id)
+  const { error } = await supabase!.from('profiles').update({ active: newStatus }).eq('id', user.id)
   if (!error) user.active = newStatus
 }
 
 const changeUserRole = async (user: UserProfile, newRole: Role) => {
-  const { error } = await supabase.from('profiles').update({ role: newRole }).eq('id', user.id)
+  const { error } = await supabase!.from('profiles').update({ role: newRole }).eq('id', user.id)
   if (!error) user.role = newRole
 }
 
 const updateStatus = async (user: UserProfile, newStatus: 'aprobado' | 'rechazado') => {
   const active = newStatus === 'aprobado'
-  const { error } = await supabase.from('profiles').update({ status: newStatus, active }).eq('id', user.id)
+  const { error } = await supabase!.from('profiles').update({ status: newStatus, active }).eq('id', user.id)
   if (!error) {
     user.status = newStatus
     user.active = active
@@ -139,7 +139,7 @@ const updateStatus = async (user: UserProfile, newStatus: 'aprobado' | 'rechazad
 const viewLogs = async (user: UserProfile) => {
   selectedUserName.value = user.full_name || user.email
   showLogsModal.value = true
-  const { data } = await supabase.from('user_logs').select('*').eq('user_id', user.id).order('timestamp', { ascending: false }).limit(20)
+  const { data } = await supabase!.from('user_logs').select('*').eq('user_id', user.id).order('timestamp', { ascending: false }).limit(20)
   selectedUserLogs.value = data || []
 }
 </script>
