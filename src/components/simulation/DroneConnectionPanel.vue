@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { Activity, Battery, Cable, Crosshair, MapPin, Radio, Unplug } from 'lucide-vue-next'
+import { Activity, Battery, Cable, Crosshair, MapPin, Radio, Unplug, Wifi } from 'lucide-vue-next'
 import { MavLinkTelemetryParser, type MavLinkTelemetryMessage } from '../../services/mavlinkTelemetry'
 
 type LinkState = 'disconnected' | 'connecting' | 'connected' | 'error'
+type ConnectionMode = 'usb' | 'mavlink-bridge' | 'dji-bridge'
 
 interface SerialPortLike {
   open(options: { baudRate: number }): Promise<void>
@@ -19,6 +20,7 @@ interface WebSerialLike {
 interface DroneTelemetry {
   systemId: number | null
   autopilot: number | null
+  vehicleName: string | null
   armed: boolean | null
   latitude: number | null
   longitude: number | null
@@ -37,11 +39,15 @@ interface DroneTelemetry {
 }
 
 const baudRate = ref(57600)
+const connectionMode = ref<ConnectionMode>('usb')
+const mavlinkBridgeUrl = ref('ws://127.0.0.1:8765')
+const djiBridgeUrl = ref('ws://127.0.0.1:8766')
 const linkState = ref<LinkState>('disconnected')
 const errorMessage = ref('')
 const telemetry = ref<DroneTelemetry>({
   systemId: null,
   autopilot: null,
+  vehicleName: null,
   armed: null,
   latitude: null,
   longitude: null,
@@ -63,6 +69,7 @@ const clock = ref(Date.now())
 let port: SerialPortLike | null = null
 let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
 let readTask: Promise<void> | null = null
+let webSocket: WebSocket | null = null
 let disconnectRequested = false
 let clockInterval: ReturnType<typeof setInterval> | undefined
 
@@ -84,11 +91,18 @@ const locationUrl = computed(() => {
     : `https://www.google.com/maps?q=${latitude},${longitude}`
 })
 const autopilotLabel = computed(() => {
+  if (connectionMode.value === 'dji-bridge') return telemetry.value.vehicleName ?? 'DJI · puente'
   if (telemetry.value.autopilot === 3) return 'ArduPilot'
   if (telemetry.value.autopilot === 12) return 'PX4'
   return telemetry.value.autopilot === null
     ? 'Sin heartbeat'
     : `Autopiloto ${telemetry.value.autopilot}`
+})
+
+const connectionLabel = computed(() => {
+  if (connectionMode.value === 'usb') return 'MAVLink · USB/serial'
+  if (connectionMode.value === 'mavlink-bridge') return 'MAVLink · Wi‑Fi/radio'
+  return 'DJI · puente'
 })
 
 const readNumber = (message: MavLinkTelemetryMessage, field: string) => {
@@ -159,6 +173,63 @@ const updateTelemetry = (message: MavLinkTelemetryMessage) => {
   telemetry.value = next
 }
 
+const updateDjiTelemetry = (data: unknown) => {
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+    throw new Error('El puente DJI envió un mensaje que no es un objeto JSON.')
+  }
+
+  const payload = data as Record<string, unknown>
+  if (payload.type !== 'telemetry') {
+    throw new Error('El puente DJI debe enviar mensajes con type: "telemetry".')
+  }
+
+  const readNumber = (field: string, min: number, max: number) => {
+    const value = payload[field]
+    if (value === undefined || value === null) return null
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) {
+      throw new Error(`El campo "${field}" recibido del puente DJI no es válido.`)
+    }
+    return value
+  }
+
+  const vehicleName = payload.vehicleName
+  const armed = payload.armed
+  if (payload.armed !== undefined && payload.armed !== null && typeof payload.armed !== 'boolean') {
+    throw new Error('El campo "armed" recibido del puente DJI debe ser booleano.')
+  }
+  if (payload.vehicleName !== undefined && payload.vehicleName !== null && typeof payload.vehicleName !== 'string') {
+    throw new Error('El campo "vehicleName" recibido del puente DJI debe ser texto.')
+  }
+
+  const next = { ...telemetry.value }
+  const systemId = readNumber('systemId', 0, 255)
+  const latitude = readNumber('latitude', -90, 90)
+  const longitude = readNumber('longitude', -180, 180)
+  const altitude = readNumber('altitude', -1000, 100000)
+  const groundSpeed = readNumber('groundSpeed', 0, 1000)
+  const heading = readNumber('heading', 0, 360)
+  const gpsFix = readNumber('gpsFix', 0, 10)
+  const satellites = readNumber('satellites', 0, 255)
+  const batteryPercent = readNumber('batteryPercent', 0, 100)
+  const batteryVoltage = readNumber('batteryVoltage', 0, 1000)
+
+  if (systemId !== null) next.systemId = systemId
+  if (typeof vehicleName === 'string' || vehicleName === null) next.vehicleName = vehicleName
+  if (typeof armed === 'boolean' || armed === null) next.armed = armed
+  if (latitude !== null) next.latitude = latitude
+  if (longitude !== null) next.longitude = longitude
+  if (altitude !== null) next.altitude = altitude
+  if (groundSpeed !== null) next.groundSpeed = groundSpeed
+  if (heading !== null) next.heading = heading === 360 ? 0 : heading
+  if (gpsFix !== null) next.gpsFix = gpsFix
+  if (satellites !== null) next.satellites = satellites
+  if (batteryPercent !== null) next.batteryPercent = batteryPercent
+  if (batteryVoltage !== null) next.batteryVoltage = batteryVoltage
+  next.lastMessageAt = Date.now()
+  next.messagesReceived += 1
+  telemetry.value = next
+}
+
 const closePort = async (activePort: SerialPortLike) => {
   if (!activePort.readable) return
   await activePort.close()
@@ -220,6 +291,11 @@ const readMavlink = async (
 
 const connect = async () => {
   errorMessage.value = ''
+  if (connectionMode.value !== 'usb') {
+    await connectBridge()
+    return
+  }
+
   if (!serial.value) {
     linkState.value = 'error'
     errorMessage.value = 'Este navegador no admite Web Serial. Usa Chrome o Edge en escritorio y abre AgronIA mediante HTTPS o localhost.'
@@ -227,6 +303,7 @@ const connect = async () => {
   }
 
   linkState.value = 'connecting'
+  telemetry.value.lastMessageAt = null
   try {
     const selectedPort = await serial.value.requestPort()
     port = selectedPort
@@ -259,7 +336,132 @@ const connect = async () => {
   }
 }
 
+const connectBridge = async () => {
+  const urlValue = connectionMode.value === 'mavlink-bridge'
+    ? mavlinkBridgeUrl.value.trim()
+    : djiBridgeUrl.value.trim()
+  let url: URL
+  try {
+    url = new URL(urlValue)
+  } catch {
+    linkState.value = 'error'
+    errorMessage.value = 'Escribe una URL WebSocket válida (ws:// o wss://).'
+    return
+  }
+  if (url.protocol !== 'ws:' && url.protocol !== 'wss:') {
+    linkState.value = 'error'
+    errorMessage.value = 'La dirección del puente debe usar ws:// o wss://.'
+    return
+  }
+  if (window.location.protocol === 'https:' && url.protocol === 'ws:') {
+    linkState.value = 'error'
+    errorMessage.value = 'Esta página usa HTTPS y el navegador bloquea ws://. Configura el puente con wss://.'
+    return
+  }
+
+  errorMessage.value = ''
+  linkState.value = 'connecting'
+  disconnectRequested = false
+  telemetry.value.lastMessageAt = null
+  const parser = connectionMode.value === 'mavlink-bridge' ? new MavLinkTelemetryParser() : null
+  const socket = new WebSocket(url.toString())
+  socket.binaryType = 'arraybuffer'
+  webSocket = socket
+
+  try {
+    let transportError = false
+    await new Promise<void>((resolve, reject) => {
+      let opened = false
+      const timeout = window.setTimeout(() => {
+        if (opened) return
+        socket.close()
+        reject(new Error('El puente no respondió al abrir WebSocket (10 s).'))
+      }, 10_000)
+
+      socket.onopen = () => {
+        opened = true
+        window.clearTimeout(timeout)
+        resolve()
+      }
+      socket.onerror = () => {
+        window.clearTimeout(timeout)
+        reject(new Error('No se pudo abrir WebSocket con el puente. Verifica la URL y que acepte conexiones del navegador.'))
+      }
+      socket.onclose = event => {
+        window.clearTimeout(timeout)
+        if (!opened) {
+          reject(new Error(`El puente cerró la conexión antes de iniciarla (código ${event.code}).`))
+          return
+        }
+        if (webSocket !== socket) return
+        webSocket = null
+        linkState.value = disconnectRequested ? 'disconnected' : 'error'
+        if (!disconnectRequested && !transportError) {
+          errorMessage.value = `Se cerró la conexión con el puente (código ${event.code}).`
+        }
+        disconnectRequested = false
+      }
+    })
+
+    linkState.value = 'connected'
+    socket.onerror = () => {
+      transportError = true
+      linkState.value = 'error'
+      errorMessage.value = 'Se perdió la comunicación WebSocket con el puente.'
+      socket.close()
+    }
+    socket.onmessage = event => {
+      void (async () => {
+        try {
+          if (connectionMode.value === 'mavlink-bridge' && parser) {
+            let bytes: Uint8Array
+            if (event.data instanceof ArrayBuffer) {
+              bytes = new Uint8Array(event.data)
+            } else if (event.data instanceof Blob) {
+              bytes = new Uint8Array(await event.data.arrayBuffer())
+            } else {
+              throw new Error('El puente MAVLink debe enviar tramas MAVLink como mensajes WebSocket binarios.')
+            }
+            for (const message of parser.feed(bytes)) updateTelemetry(message)
+            telemetry.value = {
+              ...telemetry.value,
+              crcErrors: parser.crcErrors,
+              signedPacketsSkipped: parser.signedPacketsSkipped,
+              incompatibleFramesSkipped: parser.incompatibleFramesSkipped,
+            }
+          } else {
+            if (typeof event.data !== 'string') {
+              throw new Error('El puente DJI debe enviar objetos JSON como texto WebSocket.')
+            }
+            updateDjiTelemetry(JSON.parse(event.data))
+          }
+        } catch (error) {
+          transportError = true
+          linkState.value = 'error'
+          errorMessage.value = error instanceof Error
+            ? error.message
+            : 'El puente envió telemetría que no se pudo procesar.'
+          socket.close()
+        }
+      })()
+    }
+  } catch (error) {
+    if (webSocket === socket) webSocket = null
+    linkState.value = 'error'
+    errorMessage.value = error instanceof Error ? error.message : 'No se pudo conectar con el puente.'
+    if (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN) socket.close()
+  }
+}
+
 const disconnect = async () => {
+  if (webSocket) {
+    disconnectRequested = true
+    webSocket.close(1000, 'Desconexión solicitada desde AgronIA')
+    webSocket = null
+    linkState.value = 'disconnected'
+    return
+  }
+
   if (!reader) {
     if (port) {
       const activePort = port
@@ -309,6 +511,10 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   if (clockInterval) clearInterval(clockInterval)
+  if (webSocket) {
+    disconnectRequested = true
+    webSocket.close(1000, 'Vista cerrada')
+  }
   if (reader) void disconnect()
 })
 </script>
@@ -319,7 +525,7 @@ onBeforeUnmount(() => {
       <div class="drone-link-title">
         <span class="drone-link-icon"><Radio :size="18" /></span>
         <div>
-          <span class="drone-link-eyebrow">ENLACE MAVLINK · SOLO LECTURA</span>
+          <span class="drone-link-eyebrow">TELEMETRÍA REAL · SOLO LECTURA</span>
           <h2 id="drone-link-title">Conexión con dron</h2>
         </div>
       </div>
@@ -330,9 +536,28 @@ onBeforeUnmount(() => {
 
     <div class="drone-link-body">
       <div class="drone-link-connect">
-        <p>Conecta por USB el controlador ArduPilot o PX4 para visualizar telemetría en vivo.</p>
+        <div class="connection-modes" role="group" aria-label="Método de conexión">
+          <button type="button" :aria-pressed="connectionMode === 'usb'" :disabled="linkState === 'connected' || linkState === 'connecting'" @click="connectionMode = 'usb'">
+            <Cable :size="14" /> USB
+          </button>
+          <button type="button" :aria-pressed="connectionMode === 'mavlink-bridge'" :disabled="linkState === 'connected' || linkState === 'connecting'" @click="connectionMode = 'mavlink-bridge'">
+            <Wifi :size="14" /> MAVLink
+          </button>
+          <button type="button" :aria-pressed="connectionMode === 'dji-bridge'" :disabled="linkState === 'connected' || linkState === 'connecting'" @click="connectionMode = 'dji-bridge'">
+            <Radio :size="14" /> DJI
+          </button>
+        </div>
+        <p v-if="connectionMode === 'usb'">
+          Controlador ArduPilot o PX4 por USB. El navegador debe admitir Web Serial y usar HTTPS o localhost.
+        </p>
+        <p v-else-if="connectionMode === 'mavlink-bridge'">
+          Conecta la radio o Wi‑Fi a un puente de computadora que retransmita tramas MAVLink binarias por WebSocket.
+        </p>
+        <p v-else>
+          Para DJI se requiere un puente local basado en DJI SDK/Cloud API que convierta la telemetría a JSON WebSocket.
+        </p>
         <div class="drone-link-controls">
-          <label class="drone-link-baud">
+          <label v-if="connectionMode === 'usb'" class="drone-link-baud">
             <span>Velocidad</span>
             <select v-model.number="baudRate" :disabled="linkState === 'connected' || linkState === 'connecting'">
               <option :value="57600">57 600 baud</option>
@@ -340,32 +565,59 @@ onBeforeUnmount(() => {
               <option :value="921600">921 600 baud</option>
             </select>
           </label>
+          <label v-else class="drone-link-url">
+            <span>URL del puente WebSocket</span>
+            <input
+              v-if="connectionMode === 'mavlink-bridge'"
+              v-model="mavlinkBridgeUrl"
+              type="url"
+              inputmode="url"
+              autocomplete="url"
+              placeholder="ws://127.0.0.1:8765"
+              :disabled="linkState === 'connected' || linkState === 'connecting'"
+            />
+            <input
+              v-else
+              v-model="djiBridgeUrl"
+              type="url"
+              inputmode="url"
+              autocomplete="url"
+              placeholder="ws://127.0.0.1:8766"
+              :disabled="linkState === 'connected' || linkState === 'connecting'"
+            />
+          </label>
           <button
             v-if="linkState !== 'connected'"
             class="drone-link-button"
             type="button"
-            :disabled="linkState === 'connecting'"
+            :disabled="linkState === 'connecting' || (connectionMode === 'usb' && !serial)"
             @click="connect"
           >
-            <Cable :size="16" /> {{ linkState === 'connecting' ? 'Conectando…' : 'Conectar por USB' }}
+            <Cable v-if="connectionMode === 'usb'" :size="16" />
+            <Wifi v-else :size="16" />
+            {{ linkState === 'connecting' ? 'Conectando…' : `Conectar · ${connectionLabel}` }}
           </button>
           <button v-else class="drone-link-button drone-link-disconnect" type="button" @click="disconnect">
             <Unplug :size="16" /> Desconectar
           </button>
         </div>
-        <p v-if="!serial" class="drone-link-support">
+        <p v-if="connectionMode === 'usb' && !serial" class="drone-link-support">
           Web Serial no está disponible en este navegador. Prueba con Chrome o Edge en escritorio, usando HTTPS o localhost.
         </p>
+        <details v-if="connectionMode === 'dji-bridge'" class="dji-bridge-contract">
+          <summary>Formato JSON esperado del puente</summary>
+          <pre>{"type":"telemetry","vehicleName":"DJI","latitude":19.43,"longitude":-99.13,"altitude":42.5,"groundSpeed":3.2,"heading":180,"gpsFix":3,"satellites":12,"batteryPercent":86,"batteryVoltage":15.4,"armed":false}</pre>
+        </details>
         <p v-if="errorMessage" class="drone-link-error" role="alert">{{ errorMessage }}</p>
         <p class="drone-link-safety">
           <ShieldCheck :size="14" />
-          Solo lectura: no arma ni controla el dron. Las misiones de arriba solo animan el simulador 3D.
+          Solo lectura en las tres conexiones: no arma ni controla el dron. Las misiones de arriba solo animan el simulador 3D.
         </p>
       </div>
 
       <div class="drone-link-telemetry" :class="{ 'telemetry-online': hasHeartbeat }">
         <div class="drone-telemetry-item">
-          <span class="drone-telemetry-label"><Activity :size="14" /> Vehículo</span>
+          <span class="drone-telemetry-label"><Activity :size="14" /> {{ connectionLabel }}</span>
           <strong>{{ telemetry.systemId === null ? '—' : `Sistema ${telemetry.systemId}` }}</strong>
           <small>{{ autopilotLabel }}</small>
         </div>
@@ -397,7 +649,7 @@ onBeforeUnmount(() => {
 
     <footer class="drone-link-footer">
       <span :class="{ 'telemetry-dot-online': hasHeartbeat }"></span>
-      <span>{{ telemetry.messagesReceived }} mensajes MAVLink recibidos</span>
+      <span>{{ telemetry.messagesReceived }} {{ connectionMode === 'dji-bridge' ? 'lecturas del puente recibidas' : 'mensajes MAVLink recibidos' }}</span>
       <span v-if="telemetry.crcErrors > 0" class="drone-crc-warning">{{ telemetry.crcErrors }} tramas con CRC inválido</span>
       <span v-if="telemetry.signedPacketsSkipped > 0" class="drone-crc-warning">Telemetría firmada omitida</span>
       <span v-if="telemetry.incompatibleFramesSkipped > 0" class="drone-crc-warning">Tramas incompatibles omitidas</span>
@@ -454,10 +706,19 @@ onBeforeUnmount(() => {
 .drone-link-body { display: grid; grid-template-columns: minmax(225px, 0.8fr) minmax(0, 2fr); }
 .drone-link-connect { padding: 1rem 1.15rem; border-right: 1px solid rgba(196, 218, 147, 0.1); }
 .drone-link-connect > p:first-child { color: #a8b09e; font-size: 0.7rem; line-height: 1.55; }
+.connection-modes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.3rem; margin-bottom: 0.8rem; padding: 0.25rem; border: 1px solid rgba(196, 218, 147, 0.1); border-radius: 10px; background: rgba(5, 10, 7, 0.28); }
+.connection-modes button { display: inline-flex; min-width: 0; min-height: 32px; align-items: center; justify-content: center; gap: 0.35rem; padding: 0 0.4rem; border: 1px solid transparent; border-radius: 7px; color: #9ba693; font-size: 0.62rem; font-weight: 700; transition: color 0.18s ease, background 0.18s ease, border-color 0.18s ease; }
+.connection-modes button[aria-pressed="true"] { border-color: rgba(196, 218, 147, 0.15); color: #e9efdf; background: rgba(196, 218, 147, 0.1); }
+.connection-modes button:disabled { cursor: not-allowed; opacity: 0.55; }
+.connection-modes button:focus-visible, .drone-link-url input:focus-visible { outline: 2px solid #d7c16e; outline-offset: 2px; }
 .drone-link-controls { align-items: flex-end; flex-wrap: wrap; gap: 0.55rem; margin-top: 0.85rem; }
 .drone-link-baud { display: grid; gap: 0.32rem; color: #8f9986; font-size: 0.6rem; font-weight: 650; }
 .drone-link-baud select { min-height: 36px; padding: 0.45rem 1.4rem 0.45rem 0.6rem; border: 1px solid rgba(196, 218, 147, 0.16); border-radius: 8px; outline: none; color: #dce3d3; background: #1a241b; font-size: 0.65rem; }
 .drone-link-baud select:focus { border-color: rgba(211, 189, 103, 0.5); }
+.drone-link-url { display: grid; min-width: 170px; flex: 1 1 170px; gap: 0.32rem; color: #8f9986; font-size: 0.6rem; font-weight: 650; }
+.drone-link-url input { width: 100%; min-height: 36px; padding: 0.45rem 0.6rem; border: 1px solid rgba(196, 218, 147, 0.16); border-radius: 8px; outline: none; color: #dce3d3; background: #1a241b; font-size: 0.65rem; }
+.drone-link-url input:focus { border-color: rgba(211, 189, 103, 0.5); }
+.drone-link-url input:disabled { cursor: not-allowed; opacity: 0.65; }
 .drone-link-button { display: inline-flex; min-height: 36px; align-items: center; justify-content: center; gap: 0.45rem; padding: 0.5rem 0.7rem; border: 1px solid rgba(126, 221, 170, 0.24); border-radius: 9px; color: #e3f0e3; background: linear-gradient(120deg, #12845e, #0e6d50); font-size: 0.66rem; font-weight: 700; transition: transform 0.18s ease, filter 0.18s ease; }
 .drone-link-button:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.12); }
 .drone-link-button:disabled { cursor: wait; opacity: 0.7; }
@@ -465,6 +726,9 @@ onBeforeUnmount(() => {
 .drone-link-support, .drone-link-error { margin-top: 0.6rem; font-size: 0.64rem; line-height: 1.5; }
 .drone-link-support { color: #e2c777; }
 .drone-link-error { color: #f0a293; }
+.dji-bridge-contract { margin-top: 0.65rem; color: #bdc7b6; font-size: 0.61rem; }
+.dji-bridge-contract summary { width: fit-content; color: #d7c16e; cursor: pointer; }
+.dji-bridge-contract pre { max-width: 100%; margin-top: 0.45rem; padding: 0.55rem; overflow-x: auto; border: 1px solid rgba(196, 218, 147, 0.1); border-radius: 7px; color: #cbd8c3; background: rgba(5, 10, 7, 0.38); font-size: 0.55rem; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .drone-link-safety { gap: 0.4rem; margin-top: 0.8rem; color: #909a87; font-size: 0.59rem; line-height: 1.45; }
 .drone-link-safety svg { flex: 0 0 auto; color: #8fc99d; }
 
@@ -506,6 +770,6 @@ onBeforeUnmount(() => {
 
 @media (prefers-reduced-motion: reduce) {
   .drone-link-panel, .drone-link-status > span, .drone-link-footer .telemetry-dot-online { animation: none; }
-  .drone-link-button, .drone-telemetry-item { transition: none; }
+  .drone-link-button, .connection-modes button { transition: none; }button, .drone-telemetry-item { transition: none; }
 }
 </style>

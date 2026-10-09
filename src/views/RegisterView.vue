@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import { supabase } from '../services/supabase'
 import {
   Mail, Lock, Eye, EyeOff, Leaf, AlertCircle,
-  Loader2, ShieldCheck, AlertTriangle, CheckCircle2
+  Loader2, ShieldCheck, AlertTriangle, CheckCircle2, Sparkles
 } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -30,49 +30,6 @@ const passwordStrength = computed(() => {
   const labels = ['Muy débil', 'Débil', 'Aceptable', 'Buena', 'Fuerte']
   return { score, label: labels[score] }
 })
-
-const backgroundLeaves = Array.from({ length: 10 }, (_, index) => ({
-  id: index,
-  style: {
-    '--x': `${(index * 37 + 8) % 96}%`,
-    '--delay': `${-index * 2.1}s`,
-    '--duration': `${16 + (index % 5) * 2}s`,
-    '--rotate': `${index * 47}deg`,
-    '--sway-duration': `${3 + (index % 4) * 0.7}s`
-  }
-}))
-const backgroundParticles = Array.from({ length: 22 }, (_, index) => ({
-  id: index,
-  style: {
-    '--x': `${(index * 29 + 11) % 98}%`,
-    '--delay': `${-index * 0.8}s`,
-    '--duration': `${11 + (index % 6) * 2}s`,
-    '--size': `${2 + (index % 4)}px`,
-    '--drift-x': `${index % 2 ? 34 : -34}px`
-  }
-}))
-const backgroundFireflies = Array.from({ length: 12 }, (_, index) => ({
-  id: index,
-  style: {
-    '--x': `${(index * 41 + 13) % 96}%`,
-    '--y': `${(index * 31 + 9) % 94}%`,
-    '--delay': `${-index * 1.3}s`,
-    '--duration': `${7 + (index % 5) * 1.5}s`,
-    '--drift-x': `${index % 2 ? 18 : -18}px`,
-    '--drift-y': `${index % 3 ? -22 : 22}px`
-  }
-}))
-const backgroundDrones = Array.from({ length: 10 }, (_, index) => ({
-  id: index,
-  color: ['#78964c', '#ffc400', '#f58a00', '#b4d18b'][index % 4],
-  style: {
-    '--drone-y': `${8 + index * 9}%`,
-    '--drone-size': `${38 + (index % 3) * 9}px`,
-    '--drone-duration': `${19 + (index % 5) * 3}s`,
-    '--drone-delay': `${-index * 2.7}s`,
-    '--drone-direction': index % 2 ? 'reverse' : 'normal'
-  }
-}))
 
 const checkCapsLock = (e: KeyboardEvent) => {
   capsLockOn.value = e.getModifierState && e.getModifierState('CapsLock')
@@ -141,62 +98,171 @@ const translateError = (msg: string): string => {
 
 <template>
   <div class="login-root">
-    <div class="bg-grid"></div>
-    <div class="field-contours"></div>
-    <div class="glow glow-green"></div>
-    <div class="glow glow-blue"></div>
-    <div class="ambient-fireflies" aria-hidden="true">
-      <span
-        v-for="firefly in backgroundFireflies"
-        :key="'firefly-' + firefly.id"
-        class="firefly"
-        :style="firefly.style"
-      ></span>
-    </div>
+    <div class="auth-shell">
+      <aside class="story-panel">
+        <RouterLink to="/" class="story-brand" aria-label="AgronIA, inicio">
+          <span class="story-brand-mark"><Leaf :size="21" :stroke-width="2.2" /></span>
+          <span>Agron<span>IA</span></span>
+        </RouterLink>
 
-    <div class="drone-fleet" aria-hidden="true">
-      <div
-        v-for="drone in backgroundDrones"
-        :key="'drone-' + drone.id"
-        class="drone"
-        :style="{ ...drone.style, color: drone.color }"
-      >
-        <svg viewBox="0 0 64 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <ellipse cx="12" cy="10" rx="10" ry="2" fill="currentColor" opacity="0.42"/>
-          <ellipse cx="52" cy="10" rx="10" ry="2" fill="currentColor" opacity="0.42"/>
-          <rect x="24" y="12" width="16" height="8" rx="3" fill="#17200f" stroke="currentColor" stroke-width="1.5"/>
-          <path d="M24 14 L12 10 M40 14 L52 10" stroke="currentColor" stroke-width="1.5"/>
-          <circle cx="32" cy="22" r="3" fill="currentColor"/>
-          <circle cx="32" cy="22" r="6" fill="currentColor" opacity="0.28">
-            <animate attributeName="r" values="6;9;6" dur="1.8s" repeatCount="indefinite"/>
-            <animate attributeName="opacity" values="0.28;0;0.28" dur="1.8s" repeatCount="indefinite"/>
-          </circle>
-        </svg>
-      </div>
-    </div>
+        <div class="story-copy">
+          <p class="story-eyebrow"><span></span> Agricultura de precisión</p>
+          <h2>Decisiones más claras.<br /><em>Cultivos más fuertes.</em></h2>
+          <p class="story-description">
+            Conecta tus parcelas con información inteligente y lleva cada temporada más lejos.
+          </p>
+        </div>
 
-    <div class="trail trail-1"></div>
-    <div class="trail trail-2"></div>
-    <div class="scan-line"></div>
+        <div class="field-visual" aria-hidden="true">
+          <div class="field-orbit field-orbit-outer"></div>
+          <div class="field-orbit field-orbit-inner"></div>
+          <div class="field-sun"></div>
+          <div class="field-row field-row-one"></div>
+          <div class="field-row field-row-two"></div>
+          <div class="field-row field-row-three"></div>
+          <div class="field-row field-row-four"></div>
+          <div class="field-pin"><Leaf :size="18" /></div>
+          <div class="field-data-card">
+            <span class="field-data-icon"><ShieldCheck :size="15" /></span>
+            <span><strong>Tu campo, en perspectiva</strong><small>Información para crecer mejor</small></span>
+            <span class="field-data-status"></span>
+          </div>
+        </div>
 
-    <div class="leaves">
-      <span
-        v-for="leaf in backgroundLeaves"
-        :key="'leaf-' + leaf.id"
-        class="leaf"
-        :style="leaf.style"
-      >
-        <Leaf :size="14" />
-      </span>
-    </div>
+        <div class="story-footnote">
+          <span class="story-footnote-line"></span>
+          <span>Tecnología con raíces en el campo</span>
+        </div>
+      </aside>
 
-    <div class="particles">
-      <span
-        v-for="particle in backgroundParticles"
-        :key="'p-' + particle.id"
-        class="particle"
-        :style="particle.style"
-      ></span>
+      <main class="login-card">
+        <div class="form-heading">
+          <div class="logo-wrapper">
+            <Leaf class="logo-icon" :size="25" :stroke-width="2.2" />
+          </div>
+          <div class="form-heading-copy">
+            <p class="badge"><ShieldCheck :size="13" /><span>Acceso a AgronIA</span></p>
+            <h1 class="title">Crea tu cuenta</h1>
+          </div>
+        </div>
+
+        <p class="subtitle">Empieza a tomar decisiones con más contexto y confianza.</p>
+
+        <form @submit.prevent="handleRegister" class="form">
+          <div v-if="error" class="error-box reveal-item">
+            <AlertCircle :size="16" />
+            <span>{{ translateError(error) }}</span>
+          </div>
+
+          <div v-if="successMessage" class="success-box reveal-item">
+            <CheckCircle2 :size="16" />
+            <span>{{ successMessage }}</span>
+          </div>
+
+          <div class="input-wrapper reveal-item reveal-delay-1">
+            <label class="field-label" for="register-email">Correo electrónico</label>
+            <div class="input-group">
+              <Mail class="input-icon" :size="18" />
+              <input
+                id="register-email"
+                v-model="email"
+                type="email"
+                required
+                placeholder="tu@correo.com"
+                autocomplete="email"
+                :disabled="loading"
+                aria-label="Correo electrónico"
+              />
+            </div>
+          </div>
+
+          <div class="input-wrapper reveal-item reveal-delay-2">
+            <label class="field-label" for="register-password">Contraseña</label>
+            <div class="input-group">
+              <Lock class="input-icon" :size="18" />
+              <input
+                id="register-password"
+                v-model="password"
+                :type="showPassword ? 'text' : 'password'"
+                required
+                placeholder="Crea una contraseña segura"
+                autocomplete="new-password"
+                :disabled="loading"
+                aria-label="Contraseña"
+              />
+              <button
+                type="button"
+                class="toggle-pass"
+                @click="showPassword = !showPassword"
+                :aria-label="showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'"
+                :aria-pressed="showPassword"
+              >
+                <Eye v-if="!showPassword" :size="18" />
+                <EyeOff v-else :size="18" />
+              </button>
+            </div>
+
+            <Transition name="strength">
+              <div v-if="password" class="password-strength" aria-live="polite">
+                <div class="strength-heading">
+                  <span>Seguridad de la contraseña</span>
+                  <span class="strength-label" :class="`strength-${passwordStrength.score}`">
+                    {{ passwordStrength.label }}
+                  </span>
+                </div>
+                <div
+                  class="strength-meter"
+                  role="meter"
+                  aria-label="Fortaleza de la contraseña"
+                  :aria-valuenow="passwordStrength.score"
+                  aria-valuemin="0"
+                  aria-valuemax="4"
+                >
+                  <span
+                    v-for="segment in 4"
+                    :key="segment"
+                    class="strength-segment"
+                    :class="{ active: passwordStrength.score >= segment }"
+                    :style="{ '--segment-index': segment }"
+                  ></span>
+                </div>
+                <span class="strength-hint">Usa 8 caracteres, mayúsculas, números y símbolos.</span>
+              </div>
+            </Transition>
+
+            <transition name="fade">
+              <div v-if="capsLockOn" class="caps-warning">
+                <AlertTriangle :size="12" />
+                <span>Bloq Mayús está activado</span>
+              </div>
+            </transition>
+          </div>
+
+          <transition name="fade">
+            <div v-if="loading" class="progress-bar reveal-item">
+              <div class="progress-fill" :style="{ width: progress + '%' }"></div>
+            </div>
+          </transition>
+
+          <button
+            type="submit"
+            class="btn-login reveal-item reveal-delay-3"
+            :disabled="loading"
+          >
+            <Loader2 v-if="loading" class="spin" :size="18" />
+            <span>{{ loading ? 'Registrando usuario...' : 'Crear cuenta' }}</span>
+          </button>
+        </form>
+
+        <p class="review-note"><ShieldCheck :size="15" /> Cada solicitud es revisada por nuestro equipo.</p>
+
+        <p class="footer-text reveal-item reveal-delay-4">
+          ¿Ya tienes cuenta?
+          <RouterLink to="/login" class="footer-link">
+            Inicia sesión
+          </RouterLink>
+        </p>
+      </main>
     </div>
 
     <Transition name="login-success">
@@ -215,135 +281,6 @@ const translateError = (msg: string): string => {
         </div>
       </div>
     </Transition>
-
-    <div class="login-card">
-      <div class="logo-wrapper">
-        <div class="logo-ring ring-1"></div>
-        <div class="logo-ring ring-2"></div>
-        <div class="logo-pulse"></div>
-        <Leaf class="logo-icon" :size="30" :stroke-width="2.5" />
-      </div>
-
-      <h1 class="title">
-        Agron<span class="accent">IA</span>
-      </h1>
-
-      <div class="badge">
-        <ShieldCheck :size="12" />
-        <span>Crear cuenta</span>
-      </div>
-
-      <p class="subtitle">
-        Únete a la red inteligente de monitoreo agrícola
-      </p>
-
-      <form @submit.prevent="handleRegister" class="form">
-        <div v-if="error" class="error-box reveal-item">
-          <AlertCircle :size="16" />
-          <span>{{ translateError(error) }}</span>
-        </div>
-
-        <div v-if="successMessage" class="success-box reveal-item">
-          <CheckCircle2 :size="16" />
-          <span>{{ successMessage }}</span>
-        </div>
-
-        <div class="input-group reveal-item reveal-delay-1">
-          <Mail class="input-icon" :size="18" />
-          <input
-            v-model="email"
-            type="email"
-            required
-            placeholder="tu@correo.com"
-            autocomplete="email"
-            :disabled="loading"
-            aria-label="Correo electrónico"
-          />
-        </div>
-
-        <div class="input-wrapper reveal-item reveal-delay-2">
-          <div class="input-group">
-            <Lock class="input-icon" :size="18" />
-            <input
-              v-model="password"
-              :type="showPassword ? 'text' : 'password'"
-              required
-              placeholder="••••••••"
-              autocomplete="new-password"
-              :disabled="loading"
-              aria-label="Contraseña"
-            />
-            <button
-              type="button"
-              class="toggle-pass"
-              @click="showPassword = !showPassword"
-              :aria-label="showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'"
-              :aria-pressed="showPassword"
-            >
-              <Eye v-if="!showPassword" :size="18" />
-              <EyeOff v-else :size="18" />
-            </button>
-          </div>
-
-          <Transition name="strength">
-            <div v-if="password" class="password-strength" aria-live="polite">
-              <div class="strength-heading">
-                <span>Seguridad de la contraseña</span>
-                <span class="strength-label" :class="`strength-${passwordStrength.score}`">
-                  {{ passwordStrength.label }}
-                </span>
-              </div>
-              <div
-                class="strength-meter"
-                role="meter"
-                aria-label="Fortaleza de la contraseña"
-                :aria-valuenow="passwordStrength.score"
-                aria-valuemin="0"
-                aria-valuemax="4"
-              >
-                <span
-                  v-for="segment in 4"
-                  :key="segment"
-                  class="strength-segment"
-                  :class="{ active: passwordStrength.score >= segment }"
-                  :style="{ '--segment-index': segment }"
-                ></span>
-              </div>
-              <span class="strength-hint">Usa 8 caracteres, mayúsculas, números y símbolos.</span>
-            </div>
-          </Transition>
-
-          <transition name="fade">
-            <div v-if="capsLockOn" class="caps-warning">
-              <AlertTriangle :size="12" />
-              <span>Bloq Mayús está activado</span>
-            </div>
-          </transition>
-        </div>
-
-        <transition name="fade">
-          <div v-if="loading" class="progress-bar reveal-item">
-            <div class="progress-fill" :style="{ width: progress + '%' }"></div>
-          </div>
-        </transition>
-
-        <button
-          type="submit"
-          class="btn-login reveal-item reveal-delay-3"
-          :disabled="loading"
-        >
-          <Loader2 v-if="loading" class="spin" :size="18" />
-          <span>{{ loading ? 'Registrando usuario...' : 'Crear cuenta' }}</span>
-        </button>
-      </form>
-
-      <p class="footer-text reveal-item reveal-delay-4">
-        ¿Ya tienes cuenta?
-        <RouterLink to="/login" class="footer-link">
-          Inicia sesión
-        </RouterLink>
-      </p>
-    </div>
 
     <div class="bottom-credit">
       © 2025 AgronIA · Tecnológico Nacional de México
@@ -1349,5 +1286,564 @@ const translateError = (msg: string): string => {
 
 @media (prefers-reduced-motion: reduce) {
   .drone-fleet .drone { animation: none !important; }
+}
+
+.login-root {
+  --palette-forest: #203d2e;
+  --palette-leaf: #64866c;
+  --palette-gold: #d6a85b;
+  --palette-orange: #c7863e;
+  --palette-earth: #27372c;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  justify-items: center;
+  align-items: center;
+  gap: 18px;
+  min-height: 100svh;
+  padding: clamp(24px, 5vh, 48px) 32px 22px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background:
+    radial-gradient(ellipse at 10% 10%, rgba(93, 122, 88, 0.24), transparent 38%),
+    radial-gradient(ellipse at 93% 94%, rgba(168, 117, 60, 0.12), transparent 35%),
+    #111a14;
+}
+
+.auth-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1.03fr) minmax(400px, 0.97fr);
+  width: min(1080px, 100%);
+  min-height: 610px;
+  overflow: hidden;
+  border: 1px solid rgba(225, 232, 216, 0.13);
+  border-radius: 28px;
+  background: #faf9f5;
+  box-shadow: 0 32px 90px rgba(0, 0, 0, 0.34), 0 1px 0 rgba(255, 255, 255, 0.08) inset;
+  animation: card-arrive 0.65s cubic-bezier(0.2, 0.75, 0.25, 1) both;
+}
+
+.story-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 38px 44px 30px;
+  overflow: hidden;
+  color: #f4f2e8;
+  background:
+    radial-gradient(ellipse at 90% 6%, rgba(208, 168, 91, 0.13), transparent 36%),
+    linear-gradient(150deg, #243d2d 0%, #1b3024 52%, #15271d 100%);
+}
+
+.story-panel::before,
+.story-panel::after {
+  position: absolute;
+  border: 1px solid rgba(221, 219, 176, 0.08);
+  border-radius: 50%;
+  content: '';
+  pointer-events: none;
+}
+
+.story-panel::before {
+  top: 30%;
+  left: -30%;
+  width: 112%;
+  aspect-ratio: 1;
+}
+
+.story-panel::after {
+  top: 34%;
+  left: -24%;
+  width: 100%;
+  aspect-ratio: 1;
+}
+
+.story-brand {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  width: fit-content;
+  color: #f5f4eb;
+  font-size: 17px;
+  font-weight: 720;
+  letter-spacing: -0.45px;
+  text-decoration: none;
+}
+
+.story-brand > span:last-child > span { color: #d8b36d; }
+
+.story-brand-mark {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 1px solid rgba(226, 207, 155, 0.28);
+  border-radius: 12px;
+  color: #e2c477;
+  background: rgba(248, 247, 233, 0.08);
+}
+
+.story-copy {
+  position: relative;
+  z-index: 1;
+  max-width: 430px;
+  margin-top: 60px;
+}
+
+.story-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 0 19px;
+  color: #d3c7a7;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.6px;
+  text-transform: uppercase;
+}
+
+.story-eyebrow span,
+.field-data-status {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #d9b96e;
+  box-shadow: 0 0 12px rgba(217, 185, 110, 0.6);
+}
+
+.story-copy h2 {
+  margin: 0;
+  color: #fbfaf3;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: clamp(34px, 3.6vw, 46px);
+  font-weight: 500;
+  letter-spacing: -1.7px;
+  line-height: 1.1;
+}
+
+.story-copy h2 em {
+  color: #d7bb79;
+  font-weight: 400;
+}
+
+.story-description {
+  max-width: 350px;
+  margin: 18px 0 0;
+  color: rgba(232, 234, 220, 0.72);
+  font-size: 13px;
+  line-height: 1.75;
+}
+
+.field-visual {
+  position: relative;
+  min-height: 204px;
+  flex: 1;
+  margin: 16px -8px 0;
+  overflow: hidden;
+  isolation: isolate;
+  background:
+    radial-gradient(ellipse at 50% 88%, rgba(151, 166, 106, 0.23), transparent 53%),
+    linear-gradient(180deg, transparent 5%, rgba(13, 34, 24, 0.16) 100%);
+  mask-image: linear-gradient(to bottom, transparent 0%, #000 16%, #000 90%, transparent 100%);
+}
+
+.field-orbit {
+  position: absolute;
+  left: 50%;
+  bottom: -59%;
+  width: 108%;
+  aspect-ratio: 1;
+  border: 1px solid rgba(213, 196, 142, 0.24);
+  border-radius: 50%;
+  transform: translateX(-50%);
+}
+
+.field-orbit-inner {
+  bottom: -69%;
+  width: 86%;
+  border-color: rgba(213, 196, 142, 0.18);
+}
+
+.field-sun {
+  position: absolute;
+  top: 16%;
+  right: 17%;
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgba(230, 205, 137, 0.45);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(226, 194, 117, 0.2), rgba(226, 194, 117, 0.02) 70%);
+}
+
+.field-row {
+  position: absolute;
+  left: 50%;
+  bottom: -52%;
+  width: 126%;
+  height: 113%;
+  border: 1px solid rgba(215, 198, 147, 0.22);
+  border-radius: 48%;
+  transform: translateX(-50%) rotate(-9deg);
+}
+
+.field-row-two { width: 108%; bottom: -57%; transform: translateX(-50%) rotate(8deg); }
+.field-row-three { width: 90%; bottom: -63%; transform: translateX(-50%) rotate(-7deg); }
+.field-row-four { width: 72%; bottom: -69%; transform: translateX(-50%) rotate(6deg); }
+
+.field-pin {
+  position: absolute;
+  top: 31%;
+  left: 50%;
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 1px solid rgba(230, 209, 153, 0.45);
+  border-radius: 14px;
+  color: #e4c777;
+  background: rgba(30, 58, 40, 0.88);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.23);
+  transform: translateX(-50%) rotate(-5deg);
+}
+
+.field-data-card {
+  position: absolute;
+  right: 2%;
+  bottom: 22%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 230px;
+  padding: 11px 13px;
+  border: 1px solid rgba(236, 235, 216, 0.13);
+  border-radius: 13px;
+  background: rgba(29, 49, 36, 0.82);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(12px);
+}
+
+.field-data-icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 9px;
+  color: #e1c376;
+  background: rgba(218, 187, 111, 0.12);
+}
+
+.field-data-card strong,
+.field-data-card small { display: block; }
+.field-data-card strong { color: #f2f0e6; font-size: 10px; font-weight: 650; }
+.field-data-card small { margin-top: 3px; color: rgba(224, 228, 211, 0.58); font-size: 9px; }
+.field-data-status { width: 5px; height: 5px; margin-left: auto; }
+
+.story-footnote {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  color: rgba(227, 228, 211, 0.58);
+  font-size: 10px;
+  letter-spacing: 0.25px;
+}
+
+.story-footnote-line {
+  width: 25px;
+  height: 1px;
+  background: #c9ab67;
+}
+
+.login-card {
+  align-self: stretch;
+  width: auto;
+  max-width: none;
+  padding: 54px clamp(34px, 4.2vw, 58px) 34px;
+  border: 0;
+  border-radius: 0;
+  color: #29362c;
+  background: #faf9f5;
+  box-shadow: none;
+  text-align: left;
+  transition: none;
+}
+
+.login-card:hover {
+  transform: none;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.form-heading {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.logo-wrapper {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 auto;
+  place-items: center;
+  margin: 0;
+  border: 1px solid #e6e9de;
+  border-radius: 15px;
+  background: #edf1e9;
+  box-shadow: none;
+  animation: none;
+}
+
+.logo-icon {
+  z-index: 1;
+  color: #3d6747;
+  filter: none;
+}
+
+.form-heading-copy { min-width: 0; }
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  margin: 0 0 5px;
+  border: 0;
+  color: #71816c;
+  background: transparent;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1.15px;
+  text-transform: uppercase;
+  animation: none;
+}
+
+.badge::before { display: none; }
+
+.title {
+  margin: 0;
+  color: #26372b;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 29px;
+  font-weight: 500;
+  letter-spacing: -0.8px;
+  line-height: 1.1;
+}
+
+.subtitle {
+  margin: 14px 0 26px;
+  color: #7c8379;
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.form { gap: 17px; }
+.input-wrapper { gap: 8px; }
+
+.field-label {
+  color: #39463a;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.input-group {
+  min-height: 49px;
+  padding: 0 14px;
+  border: 1px solid #e4e7df;
+  border-radius: 11px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(26, 43, 30, 0.025);
+}
+
+.input-group:hover {
+  border-color: #c8d3c5;
+  transform: none;
+  box-shadow: 0 3px 10px rgba(37, 67, 45, 0.05);
+}
+
+.input-group:focus-within {
+  border-color: #65846a;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(92, 128, 97, 0.12);
+  transform: none;
+}
+
+.input-icon { color: #98a095; }
+.input-group:focus-within .input-icon { color: #56765b; }
+
+.input-group input {
+  padding: 13px 0;
+  color: #28372c;
+  font-size: 12px;
+}
+
+.input-group input::placeholder { color: #aab0a7; }
+.toggle-pass { color: #8a9389; }
+.toggle-pass:hover { color: #456b4d; background: #eff3ed; }
+
+.password-strength {
+  gap: 7px;
+  padding: 2px 1px 0;
+}
+
+.strength-heading { color: #818a7f; font-size: 10px; }
+.strength-hint { color: #9aa095; font-size: 9px; }
+.strength-segment { height: 3px; background: #e8ebe4; }
+.strength-segment.active {
+  background: linear-gradient(90deg, #789476, #cfaa61);
+  box-shadow: none;
+}
+
+.caps-warning {
+  border-color: #eed9a9;
+  color: #8a6831;
+  background: #fbf5e8;
+}
+
+.error-box {
+  border-color: #f0d0c8;
+  border-radius: 10px;
+  color: #a64d3f;
+  background: #fff3f0;
+}
+
+.success-box {
+  border-color: #d4e2d0;
+  color: #456b4d;
+  background: #f0f6ee;
+}
+
+.progress-bar { background: #e8ebe4; }
+.progress-fill {
+  background: linear-gradient(90deg, #6e8c6f, #c8a45c);
+  box-shadow: none;
+}
+
+.btn-login {
+  min-height: 49px;
+  margin-top: 1px;
+  padding: 13px 16px;
+  border: 1px solid #34583e;
+  border-radius: 11px;
+  color: #f7f6ee;
+  background: linear-gradient(135deg, #426b4b, #31563c);
+  box-shadow: 0 7px 16px rgba(49, 86, 60, 0.16), 0 1px 0 rgba(255, 255, 255, 0.15) inset;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.15px;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
+}
+
+.btn-login:hover:not(:disabled) {
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+  box-shadow: 0 10px 20px rgba(49, 86, 60, 0.2);
+}
+
+.btn-login:active:not(:disabled) { transform: translateY(0); }
+.btn-login:focus-visible, .toggle-pass:focus-visible, .footer-link:focus-visible {
+  outline-color: #8a7043;
+}
+
+.review-note {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin: 16px 0 0;
+  color: #8a9187;
+  font-size: 10px;
+}
+
+.review-note svg { color: #788d71; }
+
+.footer-text {
+  margin: 20px 0 0;
+  padding-top: 17px;
+  border-top: 1px solid #eceee8;
+  color: #858c82;
+  font-size: 11px;
+}
+
+.footer-link {
+  color: #456a4d;
+  font-weight: 700;
+}
+
+.footer-link:hover { color: #2f5739; }
+
+.bottom-credit {
+  position: static;
+  color: rgba(220, 224, 210, 0.48);
+  font-size: 9px;
+  letter-spacing: 0.55px;
+}
+
+@media (max-width: 900px) {
+  .auth-shell {
+    grid-template-columns: minmax(0, 0.95fr) minmax(370px, 1.05fr);
+    min-height: 570px;
+  }
+
+  .story-panel { padding: 32px 30px 26px; }
+  .story-copy { margin-top: 48px; }
+  .story-copy h2 { font-size: 36px; }
+  .login-card { padding: 44px 34px 30px; }
+}
+
+@media (max-width: 700px) {
+  .login-root { padding: 20px 18px 16px; }
+
+  .auth-shell {
+    grid-template-columns: minmax(0, 1fr);
+    width: min(480px, 100%);
+    min-height: 0;
+    border-radius: 22px;
+  }
+
+  .story-panel { min-height: 250px; padding: 24px 27px 20px; }
+  .story-copy { margin-top: 31px; }
+  .story-copy h2 { font-size: 32px; }
+  .story-eyebrow { margin-bottom: 12px; font-size: 9px; }
+  .story-description { max-width: 320px; margin-top: 11px; font-size: 11px; }
+  .field-visual { position: absolute; right: 16px; bottom: 1px; width: 42%; min-height: 140px; margin: 0; opacity: 0.66; }
+  .field-data-card, .field-pin { display: none; }
+  .story-footnote { display: none; }
+  .login-card { padding: 31px 28px 25px; }
+  .subtitle { margin-bottom: 21px; }
+  .form { gap: 14px; }
+  .review-note { margin-top: 13px; }
+  .footer-text { margin-top: 17px; padding-top: 14px; }
+}
+
+@media (max-width: 420px) {
+  .login-root { padding: 12px; }
+  .story-panel { min-height: 232px; padding: 20px 21px 17px; }
+  .story-copy { margin-top: 28px; }
+  .story-copy h2 { font-size: 29px; }
+  .story-description { max-width: 260px; }
+  .field-visual { right: 0; width: 38%; opacity: 0.45; }
+  .login-card { padding: 27px 21px 22px; }
+  .title { font-size: 26px; }
+  .form-heading { gap: 12px; }
+  .logo-wrapper { width: 43px; height: 43px; border-radius: 13px; }
+  .review-note { align-items: flex-start; font-size: 9px; }
+}
+
+@media (max-height: 760px) and (min-width: 701px) {
+  .login-root { align-items: start; }
+  .auth-shell { min-height: 560px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-shell, .login-card, .reveal-item, .error-box, .success-box,
+  .progress-fill::after, .password-strength, .strength-segment.active {
+    animation: none !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 </style>

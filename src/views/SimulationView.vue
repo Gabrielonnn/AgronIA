@@ -2,6 +2,7 @@
 import { ref, onMounted, onBeforeUnmount, shallowRef } from 'vue'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { Download, Pause, Play, Wind } from 'lucide-vue-next'
 import DroneConnectionPanel from '../components/simulation/DroneConnectionPanel.vue'
 
 interface PlantData {
@@ -17,6 +18,8 @@ const containerRef = ref<HTMLDivElement | null>(null)
 const currentMode = ref<'rgb' | 'ndvi' | 'thermal'>('rgb')
 const droneState = ref<'IDLE' | 'SCANNING' | 'FLYING' | 'ACTION' | 'RETURNING' | 'CENTINELAS'>('IDLE')
 const currentAction = ref<'NONE' | 'WATER' | 'FUMIGATE' | 'CENTINELAS'>('NONE')
+const simulationPaused = ref(false)
+const windEnabled = ref(true)
 
 // Datos de interacción
 const hoveredPlant = ref<PlantData | null>(null)
@@ -42,6 +45,10 @@ let leafToPlantMap: number[] = []; let tasselToPlantMap: number[] = []; let earT
 let trunkMesh: THREE.InstancedMesh, leafMesh: THREE.InstancedMesh
 let tasselMesh: THREE.InstancedMesh, earMesh: THREE.InstancedMesh, hitboxMesh: THREE.InstancedMesh
 let groundMaterial: THREE.MeshLambertMaterial
+let leafWindUniform: { value: number } | null = null
+let leafWindStrengthUniform: { value: number } | null = null
+let sectorFalloffTexture: THREE.CanvasTexture | null = null
+let simulationTime = 0
 
 // Dron y Analisis
 let stressCenters: StressCenter[] = []
@@ -103,6 +110,68 @@ const updateTelemetry = () => {
     plantCount: count,
     stressZones: stressCenters.length
   }
+}
+
+const createSoilTexture = () => {
+  const size = 512
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  const context = canvas.getContext('2d')
+  if (!context) throw new Error('No se pudo crear la textura del terreno.')
+
+  context.fillStyle = '#765b40'
+  context.fillRect(0, 0, size, size)
+
+  let seed = 82471
+  const random = () => {
+    seed = (seed * 16807) % 2147483647
+    return (seed - 1) / 2147483646
+  }
+  for (let i = 0; i < 9000; i++) {
+    context.fillStyle = random() > 0.52
+      ? 'rgba(42, 35, 25, 0.12)'
+      : 'rgba(208, 174, 119, 0.11)'
+    const diameter = 0.5 + random() * 2
+    context.beginPath()
+    context.ellipse(
+      random() * size,
+      random() * size,
+      diameter * 1.8,
+      diameter,
+      random() * Math.PI,
+      0,
+      Math.PI * 2
+    )
+    context.fill()
+  }
+
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.colorSpace = THREE.SRGBColorSpace
+  texture.wrapS = THREE.RepeatWrapping
+  texture.wrapT = THREE.RepeatWrapping
+  texture.repeat.set(12, 12)
+  texture.anisotropy = 8
+  return texture
+}
+
+const createSectorFalloffTexture = () => {
+  const canvas = document.createElement('canvas')
+  canvas.width = 128
+  canvas.height = 128
+  const context = canvas.getContext('2d')
+  if (!context) throw new Error('No se pudo crear la textura de las zonas de estrés.')
+
+  const gradient = context.createRadialGradient(64, 64, 5, 64, 64, 62)
+  gradient.addColorStop(0, 'rgba(255, 255, 255, 0.72)')
+  gradient.addColorStop(0.45, 'rgba(255, 255, 255, 0.42)')
+  gradient.addColorStop(1, 'rgba(255, 255, 255, 0)')
+  context.fillStyle = gradient
+  context.fillRect(0, 0, 128, 128)
+
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.colorSpace = THREE.SRGBColorSpace
+  return texture
 }
 
 // Funciones geométricas
@@ -197,7 +266,7 @@ const clearSectorMarkers = () => {
 
 const updateMaterials = (mode: 'rgb' | 'ndvi' | 'thermal') => {
   currentMode.value = mode
-  if (groundMaterial) groundMaterial.color.setHex(mode === 'rgb' ? 0x78350f : (mode === 'ndvi' ? 0x1e40af : 0x450a0a))
+  if (groundMaterial) groundMaterial.color.setHex(mode === 'rgb' ? 0xffffff : (mode === 'ndvi' ? 0x1e40af : 0x450a0a))
   if (!trunkMesh || !leafMesh) return
 
   for (let i = 0; i < allPlants.length; i++) trunkMesh.setColorAt(i, mode === 'rgb' ? new THREE.Color(0x84cc16) : getColorForPlant(allPlants[i], mode))
@@ -387,13 +456,50 @@ const zoomCamera = (direction: 'in' | 'out') => {
 }
 
 const createNewScenario = () => {
-  if (droneState.value !== 'IDLE') return
+  if (droneState.value !== 'IDLE' || simulationPaused.value) return
   if (centinelaGroup) centinelaGroup.visible = false
   currentAction.value = 'NONE'
   particleSystem.visible = false
   generateRandomStressCenters()
   regenerateFieldHealth()
   setActionFeedback('Nuevo escenario generado. Analiza el cultivo para detectar las zonas de estrés.')
+}
+
+const toggleSimulation = () => {
+  simulationPaused.value = !simulationPaused.value
+  setActionFeedback(simulationPaused.value
+    ? 'Simulación pausada. La cámara y la telemetría siguen disponibles.'
+    : 'Simulación reanudada.')
+}
+
+const toggleWind = () => {
+  windEnabled.value = !windEnabled.value
+  setActionFeedback(windEnabled.value ? 'Viento suave activado.' : 'Viento desactivado.')
+}
+
+const exportCropData = () => {
+  const rows = [
+    ['ID de planta', 'Etapa', 'Estado', 'Salud (%)', 'NDVI', 'Temperatura (°C)', 'Coordenada X', 'Coordenada Z'],
+    ...allPlants.map(plant => [
+      plant.id,
+      plant.stage === 1 ? 'Brote' : plant.stage === 2 ? 'Desarrollo' : 'Madurez',
+      plant.status,
+      (plant.health * 100).toFixed(1),
+      plant.ndvi.toFixed(2),
+      plant.temp.toFixed(1),
+      plant.x.toFixed(2),
+      plant.z.toFixed(2),
+    ]),
+  ]
+  const csv = rows.map(row => row.map(value => `"${String(value).replaceAll('"', '""')}"`).join(',')).join('\r\n')
+  const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `agronia-cultivo-${new Date().toISOString().slice(0, 10)}.csv`
+  link.click()
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
+  setActionFeedback(`Reporte exportado: ${allPlants.length} plantas y sus métricas actuales.`)
 }
 
 const initThree = () => {
@@ -404,10 +510,14 @@ const initThree = () => {
   renderer.value.setPixelRatio(Math.min(window.devicePixelRatio, isSmallScreen ? 1.5 : 2))
   renderer.value.setSize(width, height, false)
   renderer.value.shadowMap.enabled = !isSmallScreen
+  renderer.value.shadowMap.type = THREE.PCFSoftShadowMap
+  renderer.value.outputColorSpace = THREE.SRGBColorSpace
+  renderer.value.toneMapping = THREE.ACESFilmicToneMapping
+  renderer.value.toneMappingExposure = 1.12
 
   scene.value = new THREE.Scene()
-  scene.value.background = new THREE.Color(0x9ba993)
-  scene.value.fog = new THREE.FogExp2(0x9ba993, 0.008)
+  scene.value.background = new THREE.Color(0xb4c2aa)
+  scene.value.fog = new THREE.FogExp2(0xb4c2aa, 0.007)
 
   camera.value = new THREE.PerspectiveCamera(60, width / height, 0.1, 1000)
   camera.value.position.set(0, 18, 35)
@@ -419,12 +529,20 @@ const initThree = () => {
   controls.value.maxDistance = 75
   controls.value.maxPolarAngle = Math.PI / 2.05
 
-  scene.value.add(new THREE.HemisphereLight(0xe5edda, 0x483d29, 1.15))
-  const dirLight = new THREE.DirectionalLight(0xffffff, 1.0)
-  dirLight.position.set(-35, 65, 25); dirLight.castShadow = true
+  scene.value.add(new THREE.HemisphereLight(0xeaf1df, 0x493b2c, 1.45))
+  const dirLight = new THREE.DirectionalLight(0xfff0d2, 2.1)
+  dirLight.position.set(-35, 65, 25)
+  dirLight.castShadow = true
+  dirLight.shadow.mapSize.set(2048, 2048)
+  dirLight.shadow.camera.left = -40
+  dirLight.shadow.camera.right = 40
+  dirLight.shadow.camera.top = 40
+  dirLight.shadow.camera.bottom = -40
+  dirLight.shadow.bias = -0.0002
   scene.value.add(dirLight)
 
-  groundMaterial = new THREE.MeshLambertMaterial({ color: 0x78350f })
+  groundMaterial = new THREE.MeshLambertMaterial({ color: 0xffffff, map: createSoilTexture() })
+  sectorFalloffTexture = createSectorFalloffTexture()
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(150, 150), groundMaterial)
   ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.value.add(ground)
 
@@ -469,13 +587,48 @@ const initThree = () => {
   }
 
   // Meshes setup
-  leafMesh = new THREE.InstancedMesh(createLeafGeometry(), new THREE.MeshLambertMaterial({ side: THREE.DoubleSide }), leafCount)
+  const leafMaterial = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    side: THREE.DoubleSide,
+    roughness: 0.84,
+    metalness: 0,
+  })
+  leafWindUniform = { value: 0 }
+  leafWindStrengthUniform = { value: 1 }
+  leafMaterial.onBeforeCompile = shader => {
+    shader.uniforms.uWindTime = leafWindUniform!
+    shader.uniforms.uWindStrength = leafWindStrengthUniform!
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nuniform float uWindTime;\nuniform float uWindStrength;')
+      .replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
+        float leafWindWeight = smoothstep(0.05, 2.4, position.y);
+        float leafWindPhase = uWindTime * 1.35 + position.y * 1.7 + instanceMatrix[3][0] * 0.24 + instanceMatrix[3][2] * 0.18;
+        transformed.x += sin(leafWindPhase) * 0.11 * leafWindWeight * uWindStrength;
+        transformed.z += cos(leafWindPhase * 0.83) * 0.055 * leafWindWeight * uWindStrength;`
+      )
+  }
+  leafMaterial.customProgramCacheKey = () => 'agronia-leaf-wind-v1'
+  leafMesh = new THREE.InstancedMesh(createLeafGeometry(), leafMaterial, leafCount)
   const trunkGeo = new THREE.CylinderGeometry(0.04, 0.08, 1, 8); trunkGeo.translate(0, 0.5, 0)
-  trunkMesh = new THREE.InstancedMesh(trunkGeo, new THREE.MeshLambertMaterial(), allPlants.length)
+  trunkMesh = new THREE.InstancedMesh(
+    trunkGeo,
+    new THREE.MeshStandardMaterial({ roughness: 0.92, metalness: 0 }),
+    allPlants.length
+  )
   const tasselGeo = createTasselGeometry(); tasselGeo.translate(0, -0.1, 0)
-  tasselMesh = new THREE.InstancedMesh(tasselGeo, new THREE.MeshLambertMaterial(), tasselCount)
+  tasselMesh = new THREE.InstancedMesh(
+    tasselGeo,
+    new THREE.MeshStandardMaterial({ roughness: 0.82, metalness: 0 }),
+    tasselCount
+  )
   const earGeo = new THREE.CapsuleGeometry(0.12, 0.4, 4, 8); earGeo.rotateZ(Math.PI / 8); earGeo.translate(0.15, 0.2, 0)
-  earMesh = new THREE.InstancedMesh(earGeo, new THREE.MeshLambertMaterial(), earCount)
+  earMesh = new THREE.InstancedMesh(
+    earGeo,
+    new THREE.MeshStandardMaterial({ roughness: 0.88, metalness: 0 }),
+    earCount
+  )
   const hitboxGeo = new THREE.CylinderGeometry(0.5, 0.5, 3.5, 8); hitboxGeo.translate(0, 1.75, 0)
   hitboxMesh = new THREE.InstancedMesh(hitboxGeo, new THREE.MeshBasicMaterial({ visible: false }), allPlants.length)
 
@@ -510,6 +663,11 @@ const initThree = () => {
     }
   })
 
+  trunkMesh.castShadow = true
+  trunkMesh.receiveShadow = true
+  leafMesh.castShadow = true
+  tasselMesh.castShadow = true
+  earMesh.castShadow = true
   scene.value.add(trunkMesh, leafMesh, tasselMesh, earMesh, hitboxMesh)
   regenerateFieldHealth()
   raycaster.value = new THREE.Raycaster(); mouse.value = new THREE.Vector2()
@@ -519,6 +677,13 @@ const initThree = () => {
   const animate = () => {
     animationId.value = requestAnimationFrame(animate)
     controls.value?.update()
+    if (simulationPaused.value) {
+      if (renderer.value && scene.value && camera.value) renderer.value.render(scene.value, camera.value)
+      return
+    }
+    simulationTime += 0.016
+    if (leafWindUniform) leafWindUniform.value = simulationTime
+    if (leafWindStrengthUniform) leafWindStrengthUniform.value = windEnabled.value ? 1 : 0
 
     if (droneState.value === 'IDLE') {
       const hover = Math.sin(performance.now() * 0.0018) * 0.08
@@ -582,11 +747,15 @@ const initThree = () => {
             setActionFeedback('Escaneo completado. Explora las zonas de estrés detectadas.')
             // Revelar sectores escaneados
             stressCenters.forEach(center => {
-              const geo = new THREE.PlaneGeometry(center.radius * 2, center.radius * 2)
+              const geo = new THREE.CircleGeometry(center.radius, 48)
               geo.rotateX(-Math.PI / 2)
               const mat = new THREE.MeshBasicMaterial({ 
                 color: getSectorColor(center.type, center.intensity),
-                transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false
+                map: sectorFalloffTexture,
+                transparent: true,
+                opacity: 0.72,
+                side: THREE.DoubleSide,
+                depthWrite: false,
               })
               const mesh = new THREE.Mesh(geo, mat)
               mesh.position.set(center.x, 0.2, center.z) // Ligeramente elevado
@@ -710,7 +879,10 @@ onBeforeUnmount(() => {
   if (feedbackTimeout) clearTimeout(feedbackTimeout)
   resizeObserver.value?.disconnect()
   if (containerRef.value) containerRef.value.removeEventListener('pointermove', onMouseMove)
-  if (renderer.value) renderer.value.dispose()
+  controls.value?.dispose()
+  groundMaterial?.map?.dispose()
+  sectorFalloffTexture?.dispose()
+  renderer.value?.dispose()
 })
 </script>
 
@@ -725,7 +897,32 @@ onBeforeUnmount(() => {
       </div>
       
       <div class="simulation-header-actions">
-        <button class="simulation-new-scenario" type="button" @click="createNewScenario" :disabled="droneState !== 'IDLE'">
+        <button
+          class="simulation-toolbar-button"
+          type="button"
+          @click="toggleSimulation"
+          :aria-label="simulationPaused ? 'Reanudar simulación' : 'Pausar simulación'"
+          :title="simulationPaused ? 'Reanudar simulación' : 'Pausar simulación'"
+        >
+          <Play v-if="simulationPaused" :size="15" />
+          <Pause v-else :size="15" />
+          {{ simulationPaused ? 'Reanudar' : 'Pausar' }}
+        </button>
+        <button
+          class="simulation-toolbar-button"
+          type="button"
+          @click="toggleWind"
+          :aria-pressed="windEnabled"
+          :title="windEnabled ? 'Desactivar viento' : 'Activar viento'"
+        >
+          <Wind :size="15" />
+          {{ windEnabled ? 'Viento' : 'Sin viento' }}
+        </button>
+        <button class="simulation-toolbar-button" type="button" @click="exportCropData" :disabled="allPlants.length === 0">
+          <Download :size="15" />
+          Exportar CSV
+        </button>
+        <button class="simulation-new-scenario" type="button" @click="createNewScenario" :disabled="droneState !== 'IDLE' || simulationPaused">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
             <path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.64 5.64l2.12 2.12m8.48 8.48 2.12 2.12m0-12.72-2.12 2.12m-8.48 8.48-2.12 2.12M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6" />
           </svg>
@@ -788,24 +985,26 @@ onBeforeUnmount(() => {
           </span>
         </div>
         
-        <p class="simulation-control-hint">Selecciona una operación para el dron.</p>
+        <p class="simulation-control-hint">
+          {{ simulationPaused ? 'Simulación pausada.' : 'Selecciona una operación para el dron.' }}
+        </p>
         <div class="space-y-2">
-          <button @click="handleAction('ANALYZE')" :disabled="droneState !== 'IDLE'" class="simulation-action simulation-action-primary w-full disabled:cursor-not-allowed p-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2">
+          <button @click="handleAction('ANALYZE')" :disabled="droneState !== 'IDLE' || simulationPaused" class="simulation-action simulation-action-primary w-full disabled:cursor-not-allowed p-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
             Analizar cultivo
           </button>
           
-          <button @click="handleAction('CENTINELAS')" :disabled="droneState !== 'IDLE' && droneState !== 'CENTINELAS'" class="simulation-action simulation-action-sentinel w-full disabled:cursor-not-allowed p-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 mt-2">
+          <button @click="handleAction('CENTINELAS')" :disabled="simulationPaused || (droneState !== 'IDLE' && droneState !== 'CENTINELAS')" class="simulation-action simulation-action-sentinel w-full disabled:cursor-not-allowed p-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 mt-2">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
             {{ droneState === 'CENTINELAS' ? 'Detener Centinelas' : 'Activar Centinelas' }}
           </button>
           
           <div class="grid grid-cols-2 gap-2 mt-2">
-            <button @click="handleAction('WATER')" :disabled="droneState !== 'IDLE'" class="simulation-action simulation-action-water disabled:cursor-not-allowed p-2 rounded-lg text-sm font-medium flex items-center justify-center gap-1.5">
+            <button @click="handleAction('WATER')" :disabled="droneState !== 'IDLE' || simulationPaused" class="simulation-action simulation-action-water disabled:cursor-not-allowed p-2 rounded-lg text-sm font-medium flex items-center justify-center gap-1.5">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1M4.22 4.22l.71.71m14.14 14.14l.71.71M1 12h1m20 0h1M4.22 19.78l.71-.71M18.07 5.93l.71-.71M12 6a6 6 0 100 12 6 6 0 000-12z"/></svg>
               Regar
             </button>
-            <button @click="handleAction('FUMIGATE')" :disabled="droneState !== 'IDLE'" class="simulation-action simulation-action-fumigate disabled:cursor-not-allowed p-2 rounded-lg text-sm font-medium flex items-center justify-center gap-1.5">
+            <button @click="handleAction('FUMIGATE')" :disabled="droneState !== 'IDLE' || simulationPaused" class="simulation-action simulation-action-fumigate disabled:cursor-not-allowed p-2 rounded-lg text-sm font-medium flex items-center justify-center gap-1.5">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
               Fumigar
             </button>
@@ -1034,6 +1233,36 @@ onBeforeUnmount(() => {
         justify-content: flex-end;
         gap: 0.65rem;
         flex-wrap: wrap;
+      }
+
+      .simulation-toolbar-button {
+        display: inline-flex;
+        min-height: 40px;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        padding: 0 11px;
+        border: 1px solid rgba(196, 218, 147, 0.17);
+        border-radius: 10px;
+        color: #cbd4c2;
+        background: rgba(255, 255, 255, 0.035);
+        font-size: 0.72rem;
+        font-weight: 650;
+        transition: color 0.2s ease, background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+      }
+
+      .simulation-toolbar-button:hover:not(:disabled),
+      .simulation-toolbar-button[aria-pressed="true"] {
+        border-color: rgba(196, 218, 147, 0.34);
+        color: #f0efdf;
+        background: rgba(196, 218, 147, 0.1);
+      }
+
+      .simulation-toolbar-button:hover:not(:disabled) { transform: translateY(-1px); }
+      .simulation-toolbar-button:disabled { cursor: not-allowed; opacity: 0.45; }
+      .simulation-toolbar-button:focus-visible {
+        outline: 2px solid #f2d474;
+        outline-offset: 2px;
       }
 
       .simulation-new-scenario {
@@ -1366,7 +1595,9 @@ onBeforeUnmount(() => {
         .simulation-header > div:first-child { min-width: 0; }
         .simulation-header p { font-size: 0.8rem; }
         .simulation-header-actions { width: 100%; align-items: stretch; }
-        .simulation-new-scenario { flex: 1; }
+        .simulation-header-actions > button { flex: 1 1 calc(50% - 0.65rem); }
+        .simulation-header-actions > .simulation-new-scenario { flex: 1; }
+        .simulation-toolbar-button { padding-inline: 8px; }
         .simulation-mode-switch {
           width: 100%;
           justify-content: space-between;
@@ -1478,8 +1709,9 @@ onBeforeUnmount(() => {
       }
 
       @media (prefers-reduced-motion: reduce) {
-        .simulation-view, .simulation-panel { animation: none; }
+        .simulation-view, .simulation-panel, .simulation-feedback { animation: none; }
         .simulation-demo-dot, .status-active > span { animation: none; }
-        .simulation-controls button, .simulation-camera-tools button, .simulation-new-scenario { transition: none; }
+        .simulation-controls button, .simulation-camera-tools button,
+        .simulation-new-scenario, .simulation-toolbar-button { transition: none; }
       }
 </style>

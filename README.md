@@ -15,9 +15,32 @@ La clave pública `publishable`/`anon` se utiliza en el cliente. **No uses ni co
 
 ## Telemetría de dron MAVLink
 
-En **Simulación → Conexión con dron**, puedes conectar por USB un controlador ArduPilot o PX4 que exponga telemetría serie MAVLink 1 o 2. El navegador debe admitir Web Serial (Chrome o Edge de escritorio) y la aplicación debe servirse en HTTPS o `localhost`. Conecta el controlador, pulsa **Conectar por USB**, elige el puerto del controlador y selecciona la misma velocidad en baudios configurada para ese enlace (habitualmente 57 600 o 115 200).
+En **Simulación → Conexión con dron** hay tres modalidades de telemetría de solo lectura:
 
-La integración es **solo lectura**: valida el CRC MAVLink y recibe heartbeat, posición, GPS, velocidad, rumbo y batería cuando el autopiloto transmite esos mensajes. No envía paquetes de control, no arma el vehículo y no ejecuta misiones; las acciones de la escena 3D siguen siendo simuladas. Los mensajes MAVLink 2 firmados se omiten porque esta conexión no valida claves de firma. Para una prueba de banco, retira las hélices y verifica el puerto y la velocidad con el fabricante del controlador. En móviles, Safari y navegadores sin Web Serial, el panel informa que la conexión directa no está disponible.
+1. **USB/serial MAVLink:** conecta un controlador ArduPilot o PX4 que exponga MAVLink 1/2 por serie. Requiere Web Serial (Chrome o Edge de escritorio), HTTPS o `localhost`; selecciona el puerto y los baudios del controlador (habitualmente 57 600 o 115 200).
+2. **MAVLink por Wi‑Fi/radio:** AgronIA incluye un puente UDP→WebSocket para ejecutar en la computadora conectada a la radio. En esa computadora instala las dependencias del proyecto y ejecuta `npm run bridge:mavlink`; configura el autopiloto/radio para enviar telemetría MAVLink UDP a la IP de esa computadora, puerto `14550`. El puente retransmite los datagramas como mensajes binarios WebSocket a `ws://127.0.0.1:8765/mavlink`. Selecciona **MAVLink** en AgronIA y conecta a esa URL. El servidor WebSocket solo escucha en loopback por defecto y acepta el origen local de Vite; se puede personalizar con `AGRONIA_MAVLINK_UDP_HOST`, `AGRONIA_MAVLINK_UDP_PORT`, `AGRONIA_MAVLINK_WS_HOST`, `AGRONIA_MAVLINK_WS_PORT` y `AGRONIA_ALLOWED_ORIGINS` (lista de origins separada por comas). Para una app alojada remotamente, configura un proxy TLS `wss://` hacia el puente y autoriza su origin. No expongas el WebSocket en una red pública.
+3. **DJI mediante puente:** requiere una computadora/app puente basada en el SDK o Cloud API compatible con tu modelo DJI. El puente debe publicar mensajes WebSocket de texto JSON en `ws://` o `wss://` (valor local inicial `ws://127.0.0.1:8766`) con este esquema:
+
+   ```json
+   {
+     "type": "telemetry",
+     "vehicleName": "DJI",
+     "latitude": 19.43,
+     "longitude": -99.13,
+     "altitude": 42.5,
+     "groundSpeed": 3.2,
+     "heading": 180,
+     "gpsFix": 3,
+     "satellites": 12,
+     "batteryPercent": 86,
+     "batteryVoltage": 15.4,
+     "armed": false
+   }
+   ```
+
+   `type` es obligatorio; los demás campos son opcionales y se validan por tipo y rango. AgronIA no incluye ni sustituye el SDK de DJI: la compatibilidad depende del puente y del modelo.
+
+Las tres integraciones son **solo lectura**: no envían paquetes de control, no arman el vehículo ni ejecutan misiones. Los botones de riego, fumigación, análisis y centinelas solo animan el simulador 3D. MAVLink valida el CRC; las tramas MAVLink 2 firmadas se omiten porque la aplicación no valida claves de firma. La conexión Wi‑Fi/radio requiere un puente que exponga WebSocket accesible desde el navegador (el navegador no puede abrir UDP directamente). Para pruebas de banco, retira las hélices y sigue las indicaciones del fabricante del dron/controlador. En móviles, Safari y navegadores sin Web Serial, solo están disponibles las modalidades con puente.
 
 ## Comandos
 
