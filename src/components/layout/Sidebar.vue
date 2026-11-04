@@ -2,6 +2,7 @@
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { Home, Map, MapPin, PieChart, Database, Settings, LogOut, MonitorPlay, Search, ShieldCheck, Users, X, ScanSearch } from 'lucide-vue-next'
 import { useMainStore } from '../../stores'
+import { supabase } from '../../services/supabase'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 
 const route = useRoute()
@@ -11,6 +12,11 @@ const menuSearch = ref('')
 const menuSearchInput = ref<HTMLInputElement | null>(null)
 
 const userEmail = computed(() => store.user?.email || 'demo@agronia.com')
+const avatarUrl = computed(() => {
+  const path = store.user?.profile?.avatar_path
+  if (!path || !supabase) return ''
+  return supabase.storage.from('avatars').getPublicUrl(path).data.publicUrl
+})
 const userRole = computed(() => {
   const profileRole = store.user?.profile?.role
   if (profileRole === 'administrador' && store.user?.profile?.active) return 'Administrador'
@@ -140,7 +146,8 @@ const roleColor = computed(() => {
     <div class="topo-account-area p-4 border-t border-gray-100">
       <div class="topo-user-card flex items-center gap-3 mb-3 p-2 rounded-lg bg-gray-50">
         <div class="topo-user-avatar w-9 h-9 rounded-full bg-agron-green flex items-center justify-center flex-shrink-0">
-          <span class="text-xs font-bold text-white">{{ userInitials }}</span>
+          <img v-if="avatarUrl" :src="avatarUrl" alt="" />
+          <span v-else class="text-xs font-bold text-white">{{ userInitials }}</span>
         </div>
         <div class="flex-1 min-w-0">
           <p class="topo-user-name text-xs font-bold truncate">{{ userDisplayName }}</p>

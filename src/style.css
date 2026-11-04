@@ -357,10 +357,12 @@
 .topo-user-avatar {
   width: 33px;
   height: 33px;
+  overflow: hidden;
   color: #3c3215;
   background: linear-gradient(145deg, #f4e6b2, #b8a46a);
   box-shadow: 0 0 0 2px rgba(245, 225, 157, 0.11);
 }
+.topo-user-avatar img { width: 100%; height: 100%; object-fit: cover; }
 .app-sidebar .topo-user-name {
   max-width: 100%;
   margin: 0;

@@ -23,7 +23,7 @@ WHERE profile.id = auth_user.id
   AND auth_user.email = 'tu-correo-administrador@ejemplo.com';
 ```
 
-Después aplica las migraciones versionadas con `supabase link --project-ref <project-ref>` y `supabase db push`. La configuración de Supabase vive en `.env.local`; no hay credenciales locales disponibles en este checkout, por lo que la conexión al proyecto debe completarse con los valores del panel del proyecto.
+Después aplica las migraciones versionadas con `supabase link --project-ref <project-ref>` y `supabase db push`. Esto crea también el bucket público `avatars` y sus políticas para que cada usuario gestione solo su propia foto. Si no tienes Supabase CLI, abre `supabase/migrations/20261104194500_profile_avatars.sql` y ejecuta su contenido en el SQL Editor del proyecto. La configuración de Supabase vive en `.env.local`; no hay credenciales locales disponibles en este checkout, por lo que la conexión al proyecto debe completarse con los valores del panel del proyecto. `.env.example` solo contiene valores de ejemplo y no conecta con una base de datos real.
 
 ## Telemetría de dron MAVLink
 

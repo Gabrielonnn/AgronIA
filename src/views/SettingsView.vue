@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useMainStore } from '../stores'
+import { supabase } from '../services/supabase'
+import { uploadProfileAvatar } from '../services/profileAvatar'
 import Card from '../components/ui/Card.vue'
 import Button from '../components/ui/Button.vue'
 import {
   User, Settings2, ShieldCheck, Bell, Globe,
-  Save, Eye, EyeOff
+  Save, Eye, EyeOff, Camera
 } from 'lucide-vue-next'
 
 const store = useMainStore()
@@ -29,6 +31,45 @@ const accountEmail = ref(store.user?.email || 'demo@agronia.com')
 const newPassword = ref('')
 const showPassword = ref(false)
 const saveAccountMsg = ref('')
+const avatarInput = ref<HTMLInputElement | null>(null)
+const avatarLoading = ref(false)
+const avatarError = ref('')
+const avatarNotice = ref('')
+
+const avatarUrl = computed(() => {
+  const path = store.user?.profile?.avatar_path
+  if (!path || !supabase) return ''
+  return supabase.storage.from('avatars').getPublicUrl(path).data.publicUrl
+})
+
+const handleAvatarChange = async (event: Event) => {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+
+  avatarError.value = ''
+  avatarNotice.value = ''
+  const userId = store.user?.id
+  if (!userId) {
+    avatarError.value = 'Inicia sesión con una cuenta activa para cambiar la foto.'
+    return
+  }
+
+  avatarLoading.value = true
+  try {
+    const result = await uploadProfileAvatar(file, userId, store.user?.profile?.avatar_path ?? null)
+    store.setUser({
+      ...store.user,
+      profile: { ...store.user.profile, avatar_path: result.path },
+    })
+    avatarNotice.value = result.warning || 'Foto de perfil actualizada.'
+  } catch (error) {
+    avatarError.value = error instanceof Error ? error.message : 'No se pudo subir la foto de perfil.'
+  } finally {
+    avatarLoading.value = false
+  }
+}
 
 const saveAccount = () => {
   saveAccountMsg.value = 'Cambios guardados correctamente.'
@@ -205,6 +246,12 @@ const savePrefs = () => {
           .settings-card-icon { display: grid; width: 34px; height: 34px; flex: 0 0 34px; place-items: center; border: 1px solid rgba(211, 189, 103, 0.2); border-radius: 10px; color: #dfc775; background: rgba(211, 189, 103, 0.08); }
           .settings-form { width: min(100%, 680px); }
           .settings-preferences { width: min(100%, 760px); }
+          .settings-avatar-row { display: flex; align-items: center; gap: 1rem; }
+          .settings-avatar { display: grid; width: 68px; height: 68px; flex: 0 0 68px; place-items: center; overflow: hidden; border: 1px solid rgba(211, 189, 103, 0.3); border-radius: 50%; color: #dfc775; background: rgba(211, 189, 103, 0.08); }
+          .settings-avatar img { width: 100%; height: 100%; object-fit: cover; }
+          .settings-avatar-copy { color: #94a08d; font-size: 0.7rem; }
+          .settings-avatar-error { color: #ff9a91; }
+          .settings-avatar-success { color: #94d2a5; }
 
           .settings-field-label,
           .settings-range-label {
@@ -323,6 +370,35 @@ const savePrefs = () => {
           }
           </style>
           <div class="settings-form space-y-4">
+            <div class="settings-avatar-row">
+              <div class="settings-avatar">
+                <img v-if="avatarUrl" :src="avatarUrl" alt="Foto de perfil" />
+                <User v-else :size="26" aria-hidden="true" />
+              </div>
+              <div class="space-y-2">
+                <input
+                  ref="avatarInput"
+                  class="sr-only"
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  aria-label="Seleccionar foto de perfil"
+                  @change="handleAvatarChange"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  :disabled="avatarLoading"
+                  @click="avatarInput?.click()"
+                >
+                  <Camera class="w-4 h-4 mr-2" />
+                  {{ avatarLoading ? 'Subiendo…' : 'Cambiar foto' }}
+                </Button>
+                <p class="settings-avatar-copy">JPG, PNG o WebP; máximo 5 MB.</p>
+                <p v-if="avatarError" class="settings-avatar-error" role="alert">{{ avatarError }}</p>
+                <p v-else-if="avatarNotice" class="settings-avatar-success" role="status">{{ avatarNotice }}</p>
+              </div>
+            </div>
             <div v-if="saveAccountMsg" class="settings-feedback">
               {{ saveAccountMsg }}
             </div>
