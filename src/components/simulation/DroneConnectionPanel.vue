@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
-import { Activity, Battery, Bug, Cable, Camera, CameraOff, Check, Crosshair, LocateFixed, MapPin, Radio, Save, ShieldCheck, Unplug, Wifi } from 'lucide-vue-next'
+import { Activity, Battery, Bug, Cable, Camera, CameraOff, Check, Crosshair, ExternalLink, LocateFixed, MapPin, Radio, Save, ShieldCheck, Unplug, Wifi } from 'lucide-vue-next'
 import { MavLinkTelemetryParser, type MavLinkTelemetryMessage } from '../../services/mavlinkTelemetry'
 import { supabase } from '../../services/supabase'
 import { useMainStore } from '../../stores'
@@ -52,6 +52,8 @@ interface SavedObservation {
   issue_type: string
   severity: string | null
   notes: string | null
+  detector_class: string | null
+  detector_confidence: number | null
   image_path: string
   latitude: number | null
   longitude: number | null
@@ -101,6 +103,8 @@ const photoError = ref('')
 const issueType = ref('plaga')
 const issueSeverity = ref('media')
 const observationNotes = ref('')
+const detectorClass = ref('')
+const detectorConfidencePercent = ref('')
 const locationSourcePreference = ref<'auto' | 'drone' | 'phone'>('auto')
 const phoneLocation = ref<PhoneLocation | null>(null)
 const locatingPhone = ref(false)
@@ -111,6 +115,19 @@ const observationError = ref('')
 const loadingObservations = ref(false)
 const observationListError = ref('')
 const recentObservations = ref<SavedObservation[]>([])
+const detectorUrl = 'https://plant-dectection.streamlit.app/'
+const detectorClasses = [
+  'Apple Scab',
+  'Apple Rust',
+  'Corn Leaf Blight',
+  'Corn Gray Spot',
+  'Potato Early Blight',
+  'Potato Late Blight',
+  'Tomato Bacterial Spot',
+  'Tomato Leaf Mold',
+  'Tomato Mosaic Virus',
+  'Healthy Leaf',
+]
 
 let port: SerialPortLike | null = null
 let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
@@ -757,7 +774,7 @@ const loadRecentObservations = async () => {
   try {
     const { data, error } = await client
       .from('field_observations')
-      .select('id, issue_type, severity, notes, image_path, latitude, longitude, location_source, created_at')
+      .select('id, issue_type, severity, notes, detector_class, detector_confidence, image_path, latitude, longitude, location_source, created_at')
       .eq('user_id', userId)
       .order('created_at', { ascending: false })
       .limit(6)
@@ -807,6 +824,18 @@ const saveObservation = async () => {
     observationError.value = 'Selecciona un nivel de severidad para el hallazgo, o “Sin severidad” si no se observó un problema.'
     return
   }
+  const confidencePercent = detectorConfidencePercent.value.trim() === ''
+    ? null
+    : Number(detectorConfidencePercent.value)
+  if (detectorClass.value && confidencePercent !== null
+    && (!Number.isFinite(confidencePercent) || confidencePercent < 0 || confidencePercent > 100)) {
+    observationError.value = 'La confianza del detector debe estar entre 0 y 100%.'
+    return
+  }
+  if (!detectorClass.value && detectorConfidencePercent.value.trim() !== '') {
+    observationError.value = 'Selecciona la clase YOLOv8 para guardar su confianza.'
+    return
+  }
 
   savingObservation.value = true
   observationError.value = ''
@@ -830,6 +859,8 @@ const saveObservation = async () => {
       issue_type: issueType.value,
       severity: issueSeverity.value === 'ninguna' ? null : issueSeverity.value,
       notes: observationNotes.value.trim() || null,
+      detector_class: detectorClass.value || null,
+      detector_confidence: confidencePercent === null ? null : confidencePercent / 100,
       image_path: imagePath,
       latitude: location?.latitude ?? null,
       longitude: location?.longitude ?? null,
@@ -848,6 +879,8 @@ const saveObservation = async () => {
 
     releaseCapturedPhoto()
     observationNotes.value = ''
+    detectorClass.value = ''
+    detectorConfidencePercent.value = ''
     observationMessage.value = 'Observación guardada con su foto.'
     await loadRecentObservations()
   } catch (error) {
@@ -861,6 +894,16 @@ const saveObservation = async () => {
 
 const handleIssueTypeChange = () => {
   issueSeverity.value = issueType.value === 'sin_hallazgo' ? 'ninguna' : 'media'
+}
+
+const handleDetectorClassChange = () => {
+  if (detectorClass.value === 'Healthy Leaf') {
+    issueType.value = 'sin_hallazgo'
+    issueSeverity.value = 'ninguna'
+  } else if (detectorClass.value) {
+    issueType.value = 'enfermedad'
+    issueSeverity.value = 'media'
+  }
 }
 
 const issueLabels: Record<string, string> = {
@@ -1101,12 +1144,40 @@ onBeforeUnmount(() => {
         El navegador te pedirá permiso. Para usar la cámara del teléfono, abre AgronIA desde el teléfono.
         La cámara no controla ni representa el video del dron.
       </p>
+      <div v-if="capturedPhoto" class="drone-detector-handoff">
+        <p>
+          Analiza esta foto con el detector YOLOv8 existente. Descárgala, abre el detector y súbela allí;
+          después regresa para registrar la clase y confianza que te muestre.
+        </p>
+        <div class="drone-camera-controls">
+          <a
+            class="drone-link-button"
+            :href="capturedPhotoUrl"
+            :download="capturedPhoto.name"
+          >
+            <Save :size="15" /> Descargar foto
+          </a>
+          <a
+            class="drone-camera-switch"
+            :href="detectorUrl"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <ExternalLink :size="14" /> Abrir detector YOLOv8
+          </a>
+        </div>
+        <p class="drone-detector-limits">
+          Detecta enfermedades de manzana, maíz, papa y tomate, además de hoja sana. No detecta insectos.
+          El resultado no vuelve automáticamente a AgronIA: confirma y transcribe manualmente.
+          Al subir la foto a Streamlit, la envías a ese servicio externo; el GPS no se comparte.
+        </p>
+      </div>
       <div class="drone-observation-form">
         <div class="drone-observation-heading">
           <Bug :size="17" />
           <div>
             <h4>Registro de campo</h4>
-            <p>Clasificación manual; no es una detección automática de IA.</p>
+            <p>Combina observación de campo con el resultado que confirmes del detector.</p>
           </div>
         </div>
 
@@ -1166,6 +1237,25 @@ onBeforeUnmount(() => {
             <span>Notas (opcional)</span>
             <textarea v-model="observationNotes" maxlength="1000" rows="2" placeholder="Describe lo observado para revisarlo después"></textarea>
           </label>
+          <label class="drone-observation-notes">
+            <span>Clase del detector YOLOv8 (opcional, cópiala de la otra página)</span>
+            <select v-model="detectorClass" @change="handleDetectorClassChange">
+              <option value="">Sin resultado del detector</option>
+              <option v-for="name in detectorClasses" :key="name" :value="name">{{ name }}</option>
+            </select>
+          </label>
+          <label v-if="detectorClass" class="drone-observation-notes">
+            <span>Confianza indicada por YOLOv8 (%)</span>
+            <input
+              v-model="detectorConfidencePercent"
+              type="number"
+              min="0"
+              max="100"
+              step="0.1"
+              inputmode="decimal"
+              placeholder="Ej. 92.5"
+            />
+          </label>
         </div>
         <button
           class="drone-link-button"
@@ -1190,6 +1280,12 @@ onBeforeUnmount(() => {
           <div>
             <strong>{{ issueLabels[observation.issue_type] ?? 'Observación' }}</strong>
             <span v-if="observation.severity">Severidad {{ severityLabels[observation.severity] ?? observation.severity }}</span>
+            <span v-if="observation.detector_class">
+              Resultado YOLOv8 informado: {{ observation.detector_class }}
+              <template v-if="observation.detector_confidence !== null">
+                ({{ (observation.detector_confidence * 100).toFixed(1) }}%)
+              </template>
+            </span>
             <span>
               {{ observation.location_source === 'drone' ? 'GPS del dron' : observation.location_source === 'phone' ? 'GPS del teléfono' : 'Sin ubicación' }}
               <template v-if="observation.latitude !== null && observation.longitude !== null">
@@ -1300,13 +1396,16 @@ onBeforeUnmount(() => {
 .drone-camera-placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 0.5rem; color: #89927f; font-size: 0.68rem; }
 .drone-camera-placeholder svg { color: #c1a95f; }
 .drone-camera-controls { display: flex; grid-column: 2; align-content: start; align-items: center; flex-wrap: wrap; gap: 0.55rem; }
-.drone-camera-switch { min-height: 36px; padding: 0.45rem 0.65rem; border: 1px solid rgba(196, 218, 147, 0.15); border-radius: 9px; color: #c5cfbd; background: rgba(196, 218, 147, 0.06); font-size: 0.63rem; font-weight: 650; }
+.drone-camera-switch { display: inline-flex; min-height: 36px; align-items: center; justify-content: center; gap: 0.35rem; padding: 0.45rem 0.65rem; border: 1px solid rgba(196, 218, 147, 0.15); border-radius: 9px; color: #c5cfbd; background: rgba(196, 218, 147, 0.06); font-size: 0.63rem; font-weight: 650; text-decoration: none; }
 .drone-camera-switch:hover:not(:disabled) { color: #f0e5bd; background: rgba(211, 189, 103, 0.1); }
 .drone-camera-switch:disabled { cursor: wait; opacity: 0.6; }
 .drone-camera-controls .drone-link-button { min-height: 36px; }
 .drone-camera-privacy { grid-column: 2; align-self: start; }
 .drone-link-camera > .drone-link-error { grid-column: 2; margin-top: 0; }
 .drone-camera-switch:focus-visible { outline: 2px solid #d7c16e; outline-offset: 2px; }
+.drone-detector-handoff { display: grid; grid-column: 1 / -1; gap: 0.5rem; padding: 0.75rem; border: 1px solid rgba(211, 189, 103, 0.17); border-radius: 10px; background: rgba(211, 189, 103, 0.045); }
+.drone-detector-handoff > p:first-child { color: #c4cbb9; font-size: 0.62rem; line-height: 1.5; }
+.drone-detector-limits { color: #d3bd77; font-size: 0.58rem; line-height: 1.5; }
 .drone-observation-form, .drone-observation-history, .drone-observation-list-status { grid-column: 1 / -1; }
 .drone-observation-form { display: grid; gap: 0.75rem; padding: 0.85rem; border: 1px solid rgba(196, 218, 147, 0.1); border-radius: 11px; background: rgba(5, 10, 7, 0.2); }
 .drone-observation-heading { display: flex; align-items: flex-start; gap: 0.55rem; color: #d7c16e; }
@@ -1314,8 +1413,8 @@ onBeforeUnmount(() => {
 .drone-observation-heading p { margin-top: 0.2rem; color: #929b88; font-size: 0.59rem; }
 .drone-observation-location { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 0.55rem; }
 .drone-observation-location label, .drone-observation-fields label { display: grid; min-width: 0; gap: 0.32rem; color: #a9b29f; font-size: 0.6rem; font-weight: 650; }
-.drone-observation-location select, .drone-observation-fields select, .drone-observation-fields textarea { width: 100%; min-height: 36px; padding: 0.45rem 0.6rem; border: 1px solid rgba(196, 218, 147, 0.16); border-radius: 8px; outline: none; color: #dce3d3; background: #1a241b; font-size: 0.65rem; }
-.drone-observation-location select:focus, .drone-observation-fields select:focus, .drone-observation-fields textarea:focus { border-color: rgba(211, 189, 103, 0.5); }
+.drone-observation-location select, .drone-observation-fields select, .drone-observation-fields textarea, .drone-observation-fields input { width: 100%; min-height: 36px; padding: 0.45rem 0.6rem; border: 1px solid rgba(196, 218, 147, 0.16); border-radius: 8px; outline: none; color: #dce3d3; background: #1a241b; font-size: 0.65rem; }
+.drone-observation-location select:focus, .drone-observation-fields select:focus, .drone-observation-fields textarea:focus, .drone-observation-fields input:focus { border-color: rgba(211, 189, 103, 0.5); }
 .drone-location-status { display: flex; grid-column: 1 / -1; align-items: center; gap: 0.35rem; color: #9ed5a9; font-size: 0.59rem; line-height: 1.4; overflow-wrap: anywhere; }
 .drone-location-status.is-missing { color: #9a9f91; }
 .drone-observation-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.55rem; }

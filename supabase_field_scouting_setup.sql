@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS public.field_observations (
   ),
   severity text CHECK (severity IN ('baja', 'media', 'alta')),
   notes text CHECK (notes IS NULL OR char_length(notes) <= 1000),
+  detector_class text,
+  detector_confidence double precision,
   image_path text NOT NULL,
   latitude double precision CHECK (latitude IS NULL OR latitude BETWEEN -90 AND 90),
   longitude double precision CHECK (longitude IS NULL OR longitude BETWEEN -180 AND 180),
@@ -34,6 +36,59 @@ CREATE TABLE IF NOT EXISTS public.field_observations (
     split_part(image_path, '/', 1) = user_id::text
   )
 );
+
+ALTER TABLE public.field_observations
+  ADD COLUMN IF NOT EXISTS detector_class text,
+  ADD COLUMN IF NOT EXISTS detector_confidence double precision;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.field_observations'::regclass
+      AND conname = 'field_observations_detector_class_valid'
+  ) THEN
+    ALTER TABLE public.field_observations
+      ADD CONSTRAINT field_observations_detector_class_valid CHECK (
+        detector_class IS NULL
+        OR detector_class IN (
+          'Apple Scab',
+          'Apple Rust',
+          'Corn Leaf Blight',
+          'Corn Gray Spot',
+          'Potato Early Blight',
+          'Potato Late Blight',
+          'Tomato Bacterial Spot',
+          'Tomato Leaf Mold',
+          'Tomato Mosaic Virus',
+          'Healthy Leaf'
+        )
+      );
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.field_observations'::regclass
+      AND conname = 'field_observations_detector_confidence_valid'
+  ) THEN
+    ALTER TABLE public.field_observations
+      ADD CONSTRAINT field_observations_detector_confidence_valid CHECK (
+        detector_confidence IS NULL OR detector_confidence BETWEEN 0 AND 1
+      );
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.field_observations'::regclass
+      AND conname = 'field_observations_confidence_has_class'
+  ) THEN
+    ALTER TABLE public.field_observations
+      ADD CONSTRAINT field_observations_confidence_has_class CHECK (
+        detector_confidence IS NULL OR detector_class IS NOT NULL
+      );
+  END IF;
+END;
+$$;
 
 CREATE INDEX IF NOT EXISTS field_observations_user_created_idx
   ON public.field_observations (user_id, created_at DESC);
