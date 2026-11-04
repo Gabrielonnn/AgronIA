@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { Home, Map, MapPin, PieChart, Database, Settings, LogOut, MonitorPlay, Search, ShieldCheck, Users, X } from 'lucide-vue-next'
+import { Home, Map, MapPin, PieChart, Database, Settings, LogOut, MonitorPlay, Search, ShieldCheck, Users, X, ScanSearch } from 'lucide-vue-next'
 import { useMainStore } from '../../stores'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 
@@ -25,6 +25,7 @@ const menuItems = computed(() => [
   { name: 'Mapas', path: '/mapas', icon: Map, group: 'OPERACIÓN', accent: 'blue' },
   { name: 'Dashboards', path: '/dashboards', icon: PieChart, group: 'OPERACIÓN', accent: 'violet' },
   { name: 'Datos', path: '/datos', icon: Database, group: 'OPERACIÓN', accent: 'cyan' },
+  { name: 'Análisis IA', path: '/analisis', icon: ScanSearch, group: 'OPERACIÓN', accent: 'violet' },
   { name: 'Simulación', path: '/simulacion', icon: MonitorPlay, group: 'OPERACIÓN', accent: 'gold' },
   { name: 'Usuarios', path: '/usuarios', icon: Users, group: 'GESTIÓN', accent: 'pink' },
   { name: 'Parcelas', path: '/parcelas', icon: MapPin, group: 'GESTIÓN', accent: 'orange' },

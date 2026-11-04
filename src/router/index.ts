@@ -42,6 +42,12 @@ const router = createRouter({
       meta: { requiresAuth: true }
     },
     {
+      path: '/analisis',
+      name: 'crop-analysis',
+      component: () => import('../views/CropAnalysisView.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
       path: '/simulacion',
       name: 'simulation',
       component: () => import('../views/SimulationView.vue'),

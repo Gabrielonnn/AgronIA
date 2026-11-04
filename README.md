@@ -40,10 +40,29 @@ En **Simulación → Conexión con dron** hay tres modalidades de telemetría de
 
    `type` es obligatorio; los demás campos son opcionales y se validan por tipo y rango. AgronIA no incluye ni sustituye el SDK de DJI: la compatibilidad depende del puente y del modelo.
 
-Las tres integraciones son **solo lectura**: no envían paquetes de control, no arman el vehículo ni ejecutan misiones. Los botones de riego, fumigación, análisis y centinelas solo animan el simulador 3D. MAVLink valida el CRC; las tramas MAVLink 2 firmadas se omiten porque la aplicación no valida claves de firma. La conexión Wi‑Fi/radio requiere un puente que exponga WebSocket accesible desde el navegador (el navegador no puede abrir UDP directamente). Para pruebas de banco, retira las hélices y sigue las indicaciones del fabricante del dron/controlador. En móviles, Safari y navegadores sin Web Serial, solo están disponibles las modalidades con puente.
+Las tres integraciones son **solo lectura**: no envían paquetes de control, no arman el vehículo ni ejecutan misiones. Los botones de riego, fumigación y centinelas de **Simulación** solo animan el simulador 3D. MAVLink valida el CRC; las tramas MAVLink 2 firmadas se omiten porque la aplicación no valida claves de firma. La conexión Wi‑Fi/radio requiere un puente que exponga WebSocket accesible desde el navegador (el navegador no puede abrir UDP directamente). Para pruebas de banco, retira las hélices y sigue las indicaciones del fabricante del dron/controlador. En móviles, Safari y navegadores sin Web Serial, solo están disponibles las modalidades con puente.
+
+## Análisis de imágenes de cultivo
+
+En **Análisis IA** puedes seleccionar una imagen, capturarla con una cámara permitida por el navegador o mostrar imágenes de un puente de cámara. La vista optimiza la imagen en el navegador; el análisis solo se ejecuta al solicitarlo y requiere la Edge Function `analyze-crop` y un proveedor compatible con la API OpenAI Chat Completions, entrada visual por `image_url` y `response_format: { "type": "json_object" }`.
+
+1. Vincula el proyecto con `supabase link --project-ref <project-ref>`.
+2. Aplica la migración con `supabase db push`. El límite es 20 análisis diarios por usuario activo.
+3. Configura los secretos **en Supabase**, nunca en variables `VITE_*` ni en el navegador:
+
+   ```sh
+   supabase secrets set AGRONIA_AI_API_URL=https://proveedor.example/v1/chat/completions AGRONIA_AI_API_KEY=... AGRONIA_AI_MODEL=...
+   ```
+
+4. Despliega la función con `supabase functions deploy analyze-crop`.
+5. La URL debe ser el endpoint HTTPS de chat completions del proveedor y el modelo debe aceptar imágenes. La función valida sesión y perfil activo, limita el tamaño de la imagen a 3 MB, valida el formato estructurado de salida y no almacena la imagen. Se necesita configurar Supabase en la aplicación y ejecutar la migración de perfiles existente.
+6. La cámara del dron no es un protocolo universal. Para mostrar sus imágenes, conecta un puente compatible con el SDK del fabricante en **Análisis IA → Conectar cámara del dron por puente**. El puente debe aceptar WebSocket desde el navegador y enviar tramas binarias individuales JPEG, PNG o WebP (máximo 3 MB); usa `wss://` si AgronIA está bajo HTTPS. La telemetría MAVLink ya existente no transporta imágenes. La cámara del navegador solo ve cámaras que el sistema operativo exponga como dispositivos de video.
+
+El proveedor de IA procesa la imagen cuando se solicita el análisis; revisa sus condiciones de privacidad y retención antes de usar imágenes sensibles. Los resultados son observaciones asistidas por visión, no diagnósticos agronómicos confirmados ni recomendaciones de dosis/tratamientos. Confirma los hallazgos en campo con personal especialista. No hay un modelo entrenado ni una integración DJI universal incluidos en el repositorio.
 
 ## Comandos
 
 - `npm run dev`: servidor de desarrollo.
 - `npm run build`: verificación de TypeScript y compilación de producción.
+- `npm run test:unit`: pruebas unitarias de validación de resultados de IA.
 - `npm run preview`: vista previa de la compilación.
