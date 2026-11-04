@@ -13,6 +13,12 @@ El inicio de sesión y el registro requieren un proyecto Supabase configurado. A
 
 La clave pública `publishable`/`anon` se utiliza en el cliente. **No uses ni compartas la `service_role` key** en variables `VITE_*`, en el navegador ni en el repositorio.
 
+## Foto de perfil
+
+En **Configuración → Mi Cuenta** cada usuario puede seleccionar una imagen JPG, PNG o WebP de hasta 5 MB, guardarla o quitarla. La imagen se almacena en el bucket público `avatars` de Supabase Storage y su URL se guarda en los metadatos de la cuenta autenticada. Las políticas restringen las cargas y eliminaciones a la carpeta del propio usuario; cualquiera que tenga la URL pública puede ver la imagen.
+
+Antes de usar esta función, ejecuta `supabase_avatar_setup.sql` en el **SQL Editor** del proyecto Supabase. El avatar aparece también en la tarjeta de usuario de la barra lateral.
+
 ## Uso de las tablas de Supabase
 
 En **Datos → Tablas de Supabase** puedes consultar hasta 100 filas por tabla y crear, editar o eliminar registros en `fields`, `crops`, `field_crops`, `devices`, `field_metrics`, `ai_alerts`, `treatments`, `simulations`, `map_elements`, `satellite_imagery` y `map_layers`. El editor de registros utiliza JSON con los nombres y tipos de columna definidos en tu base de datos. Para actualizar o eliminar una fila, la tabla debe tener una columna `id` de tipo texto/UUID.

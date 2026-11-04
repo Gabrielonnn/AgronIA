@@ -84,6 +84,8 @@ const userDisplayName = computed(() => {
     || userEmail.value
 })
 
+const userAvatarUrl = computed(() => store.user?.user_metadata?.avatar_url || '')
+
 const roleColor = computed(() => {
   if (userRole.value === 'Administrador') return 'text-purple-600'
   if (userRole.value === 'Técnico') return 'text-orange-600'
@@ -140,7 +142,13 @@ const roleColor = computed(() => {
     <div class="topo-account-area p-4 border-t border-gray-100">
       <div class="topo-user-card flex items-center gap-3 mb-3 p-2 rounded-lg bg-gray-50">
         <div class="topo-user-avatar w-9 h-9 rounded-full bg-agron-green flex items-center justify-center flex-shrink-0">
-          <span class="text-xs font-bold text-white">{{ userInitials }}</span>
+          <img
+            v-if="userAvatarUrl"
+            :src="userAvatarUrl"
+            :alt="`Foto de perfil de ${userDisplayName}`"
+            class="h-full w-full rounded-full object-cover"
+          />
+          <span v-else class="text-xs font-bold text-white">{{ userInitials }}</span>
         </div>
         <div class="flex-1 min-w-0">
           <p class="topo-user-name text-xs font-bold truncate">{{ userDisplayName }}</p>
