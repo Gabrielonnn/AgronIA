@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { Activity, Battery, Cable, Crosshair, MapPin, Radio, Unplug, Wifi } from 'lucide-vue-next'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
+import { Activity, Battery, Cable, Camera, CameraOff, Crosshair, MapPin, Radio, ShieldCheck, Unplug, Wifi } from 'lucide-vue-next'
 import { MavLinkTelemetryParser, type MavLinkTelemetryMessage } from '../../services/mavlinkTelemetry'
 
 type LinkState = 'disconnected' | 'connecting' | 'connected' | 'error'
@@ -65,6 +65,13 @@ const telemetry = ref<DroneTelemetry>({
   incompatibleFramesSkipped: 0,
 })
 const clock = ref(Date.now())
+const cameraVideo = ref<HTMLVideoElement | null>(null)
+const cameraStream = shallowRef<MediaStream | null>(null)
+const cameraFacingMode = ref<'environment' | 'user'>('environment')
+const cameraStarting = ref(false)
+const cameraActive = ref(false)
+const cameraError = ref('')
+let cameraRequestId = 0
 
 let port: SerialPortLike | null = null
 let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
@@ -74,6 +81,9 @@ let disconnectRequested = false
 let clockInterval: ReturnType<typeof setInterval> | undefined
 
 const serial = computed(() => (navigator as Navigator & { serial?: WebSerialLike }).serial)
+const cameraSupported = computed(() =>
+  typeof navigator !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia)
+)
 const hasHeartbeat = computed(() =>
   telemetry.value.lastMessageAt !== null
   && clock.value - telemetry.value.lastMessageAt < 5000
@@ -493,6 +503,101 @@ const disconnect = async () => {
   }
 }
 
+const stopCamera = () => {
+  cameraRequestId += 1
+  const activeStream = cameraStream.value
+  cameraStream.value = null
+  cameraActive.value = false
+  if (cameraVideo.value) cameraVideo.value.srcObject = null
+  activeStream?.getTracks().forEach(track => {
+    track.onended = null
+    track.stop()
+  })
+}
+
+const startCamera = async () => {
+  if (cameraStarting.value || cameraActive.value) return
+  cameraError.value = ''
+
+  if (!cameraSupported.value) {
+    cameraError.value = 'Este navegador no ofrece acceso a la cámara. Usa una versión reciente de Chrome, Edge o Safari.'
+    return
+  }
+  if (!window.isSecureContext) {
+    cameraError.value = 'El navegador solo permite usar la cámara en HTTPS o localhost. Abre la versión segura de AgronIA.'
+    return
+  }
+
+  const requestId = ++cameraRequestId
+  cameraStarting.value = true
+  let stream: MediaStream | null = null
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        facingMode: { ideal: cameraFacingMode.value },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+      },
+    })
+    if (requestId !== cameraRequestId) {
+      stream.getTracks().forEach(track => track.stop())
+      return
+    }
+
+    cameraStream.value = stream
+    stream.getVideoTracks().forEach(track => {
+      track.onended = () => {
+        if (cameraStream.value !== stream) return
+        cameraStream.value = null
+        cameraActive.value = false
+        if (cameraVideo.value) cameraVideo.value.srcObject = null
+        cameraError.value = 'La cámara se desconectó o se revocó el permiso.'
+      }
+    })
+    await nextTick()
+    if (requestId !== cameraRequestId) {
+      stream.getTracks().forEach(track => track.stop())
+      return
+    }
+    if (!cameraVideo.value) throw new Error('No se encontró el reproductor de cámara.')
+
+    cameraVideo.value.srcObject = stream
+    await cameraVideo.value.play()
+    cameraActive.value = true
+  } catch (error) {
+    if (stream) stream.getTracks().forEach(track => {
+      track.onended = null
+      track.stop()
+    })
+    if (cameraStream.value === stream) cameraStream.value = null
+    cameraActive.value = false
+    if (cameraVideo.value) cameraVideo.value.srcObject = null
+
+    if (error instanceof DOMException && error.name === 'NotAllowedError') {
+      cameraError.value = 'No se concedió permiso para la cámara. Permítelo en el navegador y vuelve a intentar.'
+    } else if (error instanceof DOMException && error.name === 'NotFoundError') {
+      cameraError.value = 'No se encontró una cámara disponible en este dispositivo.'
+    } else if (error instanceof DOMException && error.name === 'NotReadableError') {
+      cameraError.value = 'La cámara está ocupada por otra aplicación. Ciérrala y vuelve a intentar.'
+    } else {
+      cameraError.value = error instanceof Error
+        ? `No se pudo iniciar la cámara: ${error.message}`
+        : 'No se pudo iniciar la cámara por un error inesperado.'
+    }
+  } finally {
+    cameraStarting.value = false
+  }
+}
+
+const switchCamera = async () => {
+  const restart = cameraActive.value
+  stopCamera()
+  cameraError.value = ''
+  cameraFacingMode.value = cameraFacingMode.value === 'environment' ? 'user' : 'environment'
+  if (restart) await startCamera()
+}
+
 const formatValue = (value: number | null, digits = 1) =>
   value === null ? '—' : value.toFixed(digits)
 const formatCoordinate = (value: number | null) =>
@@ -510,6 +615,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  stopCamera()
   if (clockInterval) clearInterval(clockInterval)
   if (webSocket) {
     disconnectRequested = true
@@ -647,6 +753,59 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
+    <section class="drone-link-camera" aria-labelledby="drone-camera-title">
+      <div class="drone-camera-heading">
+        <div>
+          <span class="drone-camera-eyebrow">CÁMARA LOCAL</span>
+          <h3 id="drone-camera-title">Vista de cámara</h3>
+          <p>Usa la cámara de este teléfono o dispositivo; todavía no es el video del dron.</p>
+        </div>
+        <span v-if="cameraActive" class="drone-camera-live"><span></span>En vivo</span>
+      </div>
+      <div class="drone-camera-preview">
+        <video
+          ref="cameraVideo"
+          v-show="cameraActive"
+          class="drone-camera-video"
+          autoplay
+          muted
+          playsinline
+          aria-label="Vista en vivo de la cámara local"
+        ></video>
+        <div v-if="!cameraActive" class="drone-camera-placeholder">
+          <Camera :size="26" />
+          <span>{{ cameraStarting ? 'Iniciando cámara…' : 'La cámara está apagada' }}</span>
+        </div>
+      </div>
+      <div class="drone-camera-controls">
+        <button
+          v-if="!cameraActive"
+          class="drone-link-button"
+          type="button"
+          :disabled="cameraStarting || !cameraSupported"
+          @click="startCamera"
+        >
+          <Camera :size="16" /> {{ cameraStarting ? 'Solicitando permiso…' : 'Iniciar cámara' }}
+        </button>
+        <button v-else class="drone-link-button drone-link-disconnect" type="button" @click="stopCamera">
+          <CameraOff :size="16" /> Detener cámara
+        </button>
+        <button
+          class="drone-camera-switch"
+          type="button"
+          :disabled="cameraStarting"
+          @click="switchCamera"
+        >
+          {{ cameraFacingMode === 'environment' ? 'Usar cámara frontal' : 'Usar cámara trasera' }}
+        </button>
+      </div>
+      <p v-if="cameraError" class="drone-link-error" role="alert">{{ cameraError }}</p>
+      <p class="drone-camera-privacy">
+        El navegador te pedirá permiso. El video solo se muestra aquí; AgronIA no lo transmite ni lo guarda.
+        Para usar la cámara del teléfono, abre esta página desde el propio teléfono.
+      </p>
+    </section>
+
     <footer class="drone-link-footer">
       <span :class="{ 'telemetry-dot-online': hasHeartbeat }"></span>
       <span>{{ telemetry.messagesReceived }} {{ connectionMode === 'dji-bridge' ? 'lecturas del puente recibidas' : 'mensajes MAVLink recibidos' }}</span>
@@ -732,6 +891,26 @@ onBeforeUnmount(() => {
 .drone-link-safety { gap: 0.4rem; margin-top: 0.8rem; color: #909a87; font-size: 0.59rem; line-height: 1.45; }
 .drone-link-safety svg { flex: 0 0 auto; color: #8fc99d; }
 
+.drone-link-camera { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(220px, 0.8fr); gap: 0.8rem 1rem; padding: 1rem 1.15rem; border-top: 1px solid rgba(196, 218, 147, 0.09); }
+.drone-camera-heading { display: flex; grid-column: 1 / -1; align-items: center; justify-content: space-between; gap: 0.8rem; }
+.drone-camera-eyebrow { color: #c1a95f; font-size: 0.55rem; font-weight: 800; letter-spacing: 0.14em; }
+.drone-camera-heading h3 { margin-top: 0.2rem; color: #edf0e5; font-size: 0.82rem; font-weight: 700; }
+.drone-camera-heading p, .drone-camera-privacy { color: #929b88; font-size: 0.62rem; line-height: 1.5; }
+.drone-camera-live { display: inline-flex; align-items: center; gap: 0.4rem; color: #a9dfb5; font-size: 0.62rem; font-weight: 700; }
+.drone-camera-live > span { width: 7px; height: 7px; border-radius: 50%; background: #77ce96; box-shadow: 0 0 9px rgba(119, 206, 150, 0.45); }
+.drone-camera-preview { position: relative; grid-column: 1; overflow: hidden; min-width: 0; aspect-ratio: 16 / 9; border: 1px solid rgba(196, 218, 147, 0.12); border-radius: 10px; background: #070b08; }
+.drone-camera-video { display: block; width: 100%; height: 100%; object-fit: contain; }
+.drone-camera-placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 0.5rem; color: #89927f; font-size: 0.68rem; }
+.drone-camera-placeholder svg { color: #c1a95f; }
+.drone-camera-controls { display: flex; grid-column: 2; align-content: start; align-items: center; flex-wrap: wrap; gap: 0.55rem; }
+.drone-camera-switch { min-height: 36px; padding: 0.45rem 0.65rem; border: 1px solid rgba(196, 218, 147, 0.15); border-radius: 9px; color: #c5cfbd; background: rgba(196, 218, 147, 0.06); font-size: 0.63rem; font-weight: 650; }
+.drone-camera-switch:hover:not(:disabled) { color: #f0e5bd; background: rgba(211, 189, 103, 0.1); }
+.drone-camera-switch:disabled { cursor: wait; opacity: 0.6; }
+.drone-camera-controls .drone-link-button { min-height: 36px; }
+.drone-camera-privacy { grid-column: 2; align-self: start; }
+.drone-link-camera > .drone-link-error { grid-column: 2; margin-top: 0; }
+.drone-camera-switch:focus-visible { outline: 2px solid #d7c16e; outline-offset: 2px; }
+
 .drone-link-telemetry { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); align-content: center; }
 .drone-telemetry-item { min-width: 0; padding: 0.8rem 0.75rem; border-right: 1px solid rgba(196, 218, 147, 0.08); transition: background 0.2s ease; }
 .drone-telemetry-item:last-child { border-right: 0; }
@@ -758,6 +937,8 @@ onBeforeUnmount(() => {
   .drone-link-telemetry { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .drone-telemetry-item:nth-child(3) { border-right: 0; }
   .drone-telemetry-item:nth-child(n + 4) { border-top: 1px solid rgba(196, 218, 147, 0.08); }
+  .drone-link-camera { grid-template-columns: minmax(0, 1fr); }
+  .drone-camera-preview, .drone-camera-controls, .drone-camera-privacy, .drone-link-camera > .drone-link-error { grid-column: 1; }
 }
 
 @media (max-width: 520px) {
@@ -766,6 +947,9 @@ onBeforeUnmount(() => {
   .drone-telemetry-item:nth-child(3) { border-right: 1px solid rgba(196, 218, 147, 0.08); }
   .drone-telemetry-item:nth-child(even) { border-right: 0; }
   .drone-telemetry-item:nth-child(n + 3) { border-top: 1px solid rgba(196, 218, 147, 0.08); }
+  .drone-camera-heading { align-items: flex-start; }
+  .drone-camera-controls { align-items: stretch; flex-direction: column; }
+  .drone-camera-controls > * { width: 100%; }
 }
 
 @media (prefers-reduced-motion: reduce) {
