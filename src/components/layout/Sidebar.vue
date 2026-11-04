@@ -13,10 +13,9 @@ const menuSearchInput = ref<HTMLInputElement | null>(null)
 const userEmail = computed(() => store.user?.email || 'demo@agronia.com')
 const userRole = computed(() => {
   const profileRole = store.user?.profile?.role
-  const metadataRole = store.user?.user_metadata?.role
-  if (profileRole === 'administrador' || metadataRole === 'administrador' || userEmail.value === 'jenone0424@gmail.com') return 'Administrador'
-  if (profileRole === 'tecnico' || metadataRole === 'tecnico') return 'Técnico'
-  const role = profileRole || metadataRole || 'cliente'
+  if (profileRole === 'administrador' && store.user?.profile?.active) return 'Administrador'
+  if (profileRole === 'tecnico') return 'Técnico'
+  const role = profileRole || 'cliente'
   return role.charAt(0).toUpperCase() + role.slice(1)
 })
 

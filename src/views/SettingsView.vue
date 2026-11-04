@@ -37,10 +37,9 @@ const saveAccount = () => {
 
 const userRole = computed(() => {
   const profileRole = store.user?.profile?.role
-  const metadataRole = store.user?.user_metadata?.role
-  if (profileRole === 'administrador' || metadataRole === 'administrador' || store.user?.email === 'jenone0424@gmail.com') return 'administrador'
-  if (profileRole === 'tecnico' || metadataRole === 'tecnico') return 'tecnico'
-  return profileRole || metadataRole || 'cliente'
+  if (profileRole === 'administrador' && store.user?.profile?.active) return 'administrador'
+  if (profileRole === 'tecnico') return 'tecnico'
+  return profileRole || 'cliente'
 })
 
 const roleLabels: Record<string, string> = {

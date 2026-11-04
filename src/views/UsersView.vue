@@ -31,11 +31,11 @@ const loadingUsers = ref(true)
 
 const newUserName = ref('')
 const newUserEmail = ref('')
-const newUserRole = ref<Role>('cliente')
-const newUserPassword = ref('')
+const newUserRole = ref<'cliente' | 'tecnico'>('cliente')
 const addUserMsg = ref('')
 const addErrorMsg = ref('')
 const loadingAdd = ref(false)
+const databaseError = ref('')
 
 const selectedUserLogs = ref<UserLog[]>([])
 const showLogsModal = ref(false)
@@ -55,8 +55,7 @@ const roleColors: Record<Role, string> = {
 
 const isAdmin = computed(() => {
   const profileRole = store.user?.profile?.role
-  const metadataRole = store.user?.user_metadata?.role
-  return profileRole === 'administrador' || metadataRole === 'administrador' || store.user?.email === 'jenone0424@gmail.com'
+  return profileRole === 'administrador' && store.user?.profile?.active === true
 })
 
 const activeUsers = computed(() => users.value.filter(user => user.active).length)
@@ -64,9 +63,19 @@ const pendingUsers = computed(() => users.value.filter(user => user.status === '
 
 const fetchUsers = async () => {
   loadingUsers.value = true
-  const { data } = await supabase!.from('profiles').select('*').order('created_at', { ascending: false })
-  if (data) users.value = data as UserProfile[]
-  loadingUsers.value = false
+  databaseError.value = ''
+  try {
+    if (!supabase) throw new Error('Supabase no está configurado. Añade sus variables a .env.local.')
+    const { data, error } = await supabase.from('profiles').select('*').order('created_at', { ascending: false })
+    if (error) throw error
+    users.value = data as UserProfile[]
+  } catch (error) {
+    databaseError.value = error instanceof Error
+      ? `No se pudieron cargar los perfiles: ${error.message}`
+      : 'No se pudieron cargar los perfiles.'
+  } finally {
+    loadingUsers.value = false
+  }
 }
 
 onMounted(() => {
@@ -74,81 +83,111 @@ onMounted(() => {
 })
 
 const addUser = async () => {
-  if (!newUserName.value || !newUserEmail.value || !newUserPassword.value) return
+  if (!newUserName.value || !newUserEmail.value) return
+  if (!supabase) {
+    addErrorMsg.value = 'Supabase no está configurado. Añade sus variables a .env.local.'
+    return
+  }
   loadingAdd.value = true
   addErrorMsg.value = ''
   addUserMsg.value = ''
-  
-  // Usar signUp para crear la cuenta en Auth
-  const { error: authError } = await supabase!.auth.signUp({
-    email: newUserEmail.value,
-    password: newUserPassword.value,
-    options: {
-      data: {
-        name: newUserName.value,
-        role: newUserRole.value
+  try {
+    const { data, error } = await supabase.functions.invoke('admin-create-user', {
+      body: {
+        email: newUserEmail.value,
+        fullName: newUserName.value,
+        role: newUserRole.value,
+      },
+    })
+    if (error) {
+      if (error.context instanceof Response) {
+        const body = await error.context.clone().json().catch(() => null) as { error?: unknown } | null
+        if (typeof body?.error === 'string') throw new Error(body.error)
       }
+      throw new Error(error.message)
     }
-  })
-
-  if (authError) {
-    if (authError.message.includes('already registered')) {
-      addErrorMsg.value = 'Este correo ya está registrado en AgronIA.'
-    } else {
-      addErrorMsg.value = authError.message
-    }
+    if (data?.invited !== true) throw new Error('Supabase no confirmó el envío de la invitación.')
+    addUserMsg.value = 'Invitación enviada. El usuario quedará pendiente hasta que un administrador active su cuenta.'
+    newUserName.value = ''
+    newUserEmail.value = ''
+    newUserRole.value = 'cliente'
+    await fetchUsers()
+  } catch (error) {
+    addErrorMsg.value = error instanceof Error ? error.message : 'No se pudo enviar la invitación.'
+  } finally {
     loadingAdd.value = false
-    return
   }
-
-  addUserMsg.value = 'Usuario registrado. Se ha enviado correo de confirmación si aplica.'
-  newUserName.value = ''
-  newUserEmail.value = ''
-  newUserPassword.value = ''
-  newUserRole.value = 'cliente'
-  
-  setTimeout(() => { addUserMsg.value = '' }, 4000)
-  
-  // Refrescar lista después de un segundo (para que el trigger tenga tiempo de insertar)
-  setTimeout(fetchUsers, 1000)
-  loadingAdd.value = false
 }
 
 const removeUser = async (id: string) => {
   if (!confirm('¿Seguro que deseas eliminar este perfil? Esto no borra la cuenta en auth, solo su acceso.')) return
-  const { error } = await supabase!.from('profiles').delete().eq('id', id)
-  if (!error) {
+  try {
+    if (!supabase) throw new Error('Supabase no está configurado.')
+    const { data, error } = await supabase.from('profiles').delete().eq('id', id).select('id').maybeSingle()
+    if (error) throw error
+    if (!data) throw new Error('El perfil no existe o no tienes permiso para eliminarlo.')
     users.value = users.value.filter(u => u.id !== id)
-  } else {
-    alert('Error al eliminar usuario. Posiblemente faltan permisos de administrador en la base de datos.')
+    databaseError.value = ''
+  } catch (error) {
+    databaseError.value = error instanceof Error ? `No se pudo eliminar el perfil: ${error.message}` : 'No se pudo eliminar el perfil.'
   }
 }
 
 const toggleUserActive = async (user: UserProfile) => {
   const newStatus = !user.active
-  const { error } = await supabase!.from('profiles').update({ active: newStatus }).eq('id', user.id)
-  if (!error) user.active = newStatus
+  try {
+    if (!supabase) throw new Error('Supabase no está configurado.')
+    const { data, error } = await supabase.from('profiles').update({ active: newStatus }).eq('id', user.id).select('id').maybeSingle()
+    if (error) throw error
+    if (!data) throw new Error('El perfil no existe o no tienes permiso para cambiar su acceso.')
+    user.active = newStatus
+    databaseError.value = ''
+  } catch (error) {
+    databaseError.value = error instanceof Error ? `No se pudo cambiar el acceso: ${error.message}` : 'No se pudo cambiar el acceso.'
+  }
 }
 
 const changeUserRole = async (user: UserProfile, newRole: Role) => {
-  const { error } = await supabase!.from('profiles').update({ role: newRole }).eq('id', user.id)
-  if (!error) user.role = newRole
+  try {
+    if (!supabase) throw new Error('Supabase no está configurado.')
+    const { data, error } = await supabase.from('profiles').update({ role: newRole }).eq('id', user.id).select('id').maybeSingle()
+    if (error) throw error
+    if (!data) throw new Error('El perfil no existe o no tienes permiso para cambiar el rol.')
+    user.role = newRole
+    databaseError.value = ''
+  } catch (error) {
+    databaseError.value = error instanceof Error ? `No se pudo actualizar el rol: ${error.message}` : 'No se pudo actualizar el rol.'
+  }
 }
 
 const updateStatus = async (user: UserProfile, newStatus: 'aprobado' | 'rechazado') => {
   const active = newStatus === 'aprobado'
-  const { error } = await supabase!.from('profiles').update({ status: newStatus, active }).eq('id', user.id)
-  if (!error) {
+  try {
+    if (!supabase) throw new Error('Supabase no está configurado.')
+    const { data, error } = await supabase.from('profiles').update({ status: newStatus, active }).eq('id', user.id).select('id').maybeSingle()
+    if (error) throw error
+    if (!data) throw new Error('El perfil no existe o no tienes permiso para actualizar la solicitud.')
     user.status = newStatus
     user.active = active
+    databaseError.value = ''
+  } catch (error) {
+    databaseError.value = error instanceof Error ? `No se pudo actualizar la solicitud: ${error.message}` : 'No se pudo actualizar la solicitud.'
   }
 }
 
 const viewLogs = async (user: UserProfile) => {
   selectedUserName.value = user.full_name || user.email
   showLogsModal.value = true
-  const { data } = await supabase!.from('user_logs').select('*').eq('user_id', user.id).order('timestamp', { ascending: false }).limit(20)
-  selectedUserLogs.value = data || []
+  try {
+    if (!supabase) throw new Error('Supabase no está configurado.')
+    const { data, error } = await supabase.from('user_logs').select('*').eq('user_id', user.id).order('timestamp', { ascending: false }).limit(20)
+    if (error) throw error
+    selectedUserLogs.value = data || []
+    databaseError.value = ''
+  } catch (error) {
+    selectedUserLogs.value = []
+    databaseError.value = error instanceof Error ? `No se pudieron cargar los registros de actividad: ${error.message}` : 'No se pudieron cargar los registros de actividad.'
+  }
 }
 </script>
 
@@ -162,6 +201,8 @@ const viewLogs = async (user: UserProfile) => {
       </div>
       <span v-if="isAdmin" class="users-admin-badge"><ShieldCheck :size="15" /> Administrador</span>
     </header>
+
+    <div v-if="databaseError" class="users-feedback users-feedback-error" role="alert">{{ databaseError }}</div>
 
     <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
       <div class="users-summary-card">
@@ -183,10 +224,9 @@ const viewLogs = async (user: UserProfile) => {
       <template #header>
         <div class="users-card-heading">
           <span class="users-card-icon"><UserPlus :size="17" /></span>
-          <div><span>GESTIÓN DE ACCESO</span><h3>Registrar usuario</h3></div>
+          <div><span>GESTIÓN DE ACCESO</span><h3>Invitar usuario</h3></div>
         </div>
       </template>
-
       <style scoped>
       .users-page {
         min-width: 0;
@@ -459,6 +499,7 @@ const viewLogs = async (user: UserProfile) => {
       <div class="users-form space-y-4">
         <div v-if="addUserMsg" class="users-feedback users-feedback-success">{{ addUserMsg }}</div>
         <div v-if="addErrorMsg" class="users-feedback users-feedback-error">{{ addErrorMsg }}</div>
+        <p class="text-xs text-gray-400">Supabase enviará un correo de invitación. La cuenta seguirá inactiva hasta que un administrador la apruebe.</p>
         
         <div class="grid grid-cols-2 gap-4">
           <div>
@@ -472,20 +513,15 @@ const viewLogs = async (user: UserProfile) => {
         </div>
         <div class="grid grid-cols-2 gap-4">
           <div>
-            <label class="users-field-label" for="new-user-password">Contraseña</label>
-            <input id="new-user-password" v-model="newUserPassword" type="password" class="users-field" autocomplete="new-password" placeholder="••••••••" />
-          </div>
-          <div>
             <label class="users-field-label" for="new-user-role">Rol inicial</label>
             <select id="new-user-role" v-model="newUserRole" class="users-field">
               <option value="cliente">Cliente</option>
               <option value="tecnico">Técnico</option>
-              <option value="administrador">Administrador</option>
             </select>
           </div>
         </div>
-        <Button class="users-submit" variant="primary" size="sm" @click="addUser" :disabled="!newUserName || !newUserEmail || !newUserPassword || loadingAdd">
-          <UserPlus class="w-4 h-4 mr-2" /> {{ loadingAdd ? 'Registrando...' : 'Registrar Usuario' }}
+        <Button class="users-submit" variant="primary" size="sm" @click="addUser" :disabled="!newUserName || !newUserEmail || loadingAdd">
+          <UserPlus class="w-4 h-4 mr-2" /> {{ loadingAdd ? 'Enviando invitación…' : 'Enviar invitación' }}
         </Button>
       </div>
     </Card>
@@ -512,7 +548,7 @@ const viewLogs = async (user: UserProfile) => {
       <div v-else-if="users.length === 0" class="users-empty">
         <span><Users :size="22" /></span>
         <strong>No hay perfiles para mostrar</strong>
-        No se encontraron perfiles. Por favor ejecuta el script de SQL en Supabase para crear las tablas y triggers.
+        No hay otros perfiles registrados en este proyecto.
       </div>
       
       <div v-else class="users-table-wrap">

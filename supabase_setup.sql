@@ -18,26 +18,46 @@ ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS status text DEFAULT 'pendie
 -- Habilitar RLS (Seguridad a Nivel de Fila)
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 
+-- La base de datos, no el navegador ni user_metadata, es la fuente de autoridad del rol.
+CREATE OR REPLACE FUNCTION public.is_agronia_admin()
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.profiles
+    WHERE id = auth.uid()
+      AND role = 'administrador'
+      AND active = true
+  );
+$$;
+REVOKE ALL ON FUNCTION public.is_agronia_admin() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.is_agronia_admin() TO authenticated;
+
 -- Eliminar políticas si ya existen para poder recrearlas sin error
 DROP POLICY IF EXISTS "Permitir ver perfiles a todos los autenticados" ON public.profiles;
 DROP POLICY IF EXISTS "Permitir actualizar perfiles a admins" ON public.profiles;
 DROP POLICY IF EXISTS "Permitir eliminar perfiles a admins" ON public.profiles;
+DROP POLICY IF EXISTS "Users can view own profile and admins all" ON public.profiles;
+DROP POLICY IF EXISTS "Admins can update profiles" ON public.profiles;
+DROP POLICY IF EXISTS "Admins can delete profiles" ON public.profiles;
 
--- Crear políticas para la tabla de perfiles
--- Cualquier usuario autenticado puede ver los perfiles (o podrías restringirlo solo a administradores)
-CREATE POLICY "Permitir ver perfiles a todos los autenticados" ON public.profiles
-  FOR SELECT USING (auth.role() = 'authenticated');
+CREATE POLICY "Users can view own profile and admins all" ON public.profiles
+  FOR SELECT TO authenticated
+  USING (id = (SELECT auth.uid()) OR (SELECT public.is_agronia_admin()));
 
--- Solo administradores pueden actualizar y eliminar perfiles
-CREATE POLICY "Permitir actualizar perfiles a admins" ON public.profiles
-  FOR UPDATE USING (
-    (SELECT role FROM public.profiles WHERE id = auth.uid()) = 'administrador'
-  );
+CREATE POLICY "Admins can update profiles" ON public.profiles
+  FOR UPDATE TO authenticated
+  USING ((SELECT public.is_agronia_admin()))
+  WITH CHECK ((SELECT public.is_agronia_admin()));
 
-CREATE POLICY "Permitir eliminar perfiles a admins" ON public.profiles
-  FOR DELETE USING (
-    (SELECT role FROM public.profiles WHERE id = auth.uid()) = 'administrador'
-  );
+CREATE POLICY "Admins can delete profiles" ON public.profiles
+  FOR DELETE TO authenticated
+  USING ((SELECT public.is_agronia_admin()));
+GRANT SELECT, UPDATE, DELETE ON public.profiles TO authenticated;
 
 -- 2. Función y Trigger para crear un perfil automáticamente cuando alguien se registra
 CREATE OR REPLACE FUNCTION public.handle_new_user() 
@@ -48,14 +68,13 @@ BEGIN
     new.id, 
     new.email, 
     COALESCE(new.raw_user_meta_data->>'name', 'Usuario AgronIA'),
-    -- Si es jenone0424@gmail.com asignarle admin automáticamente
-    CASE WHEN new.email = 'jenone0424@gmail.com' THEN 'administrador' ELSE COALESCE(new.raw_user_meta_data->>'role', 'cliente') END,
-    CASE WHEN new.email = 'jenone0424@gmail.com' THEN 'aprobado' ELSE 'pendiente' END,
-    CASE WHEN new.email = 'jenone0424@gmail.com' THEN true ELSE false END
+    'cliente',
+    'pendiente',
+    false
   );
   RETURN new;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
 
 -- Eliminar trigger si existe para recrearlo
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
@@ -79,26 +98,18 @@ ALTER TABLE public.user_logs ENABLE ROW LEVEL SECURITY;
 -- Eliminar políticas si ya existen para los logs
 DROP POLICY IF EXISTS "Ver logs" ON public.user_logs;
 DROP POLICY IF EXISTS "Insertar logs" ON public.user_logs;
+DROP POLICY IF EXISTS "Users can view own logs and admins all" ON public.user_logs;
+DROP POLICY IF EXISTS "Users can insert own logs" ON public.user_logs;
 
--- Política: los administradores pueden ver todos los logs, los clientes solo los suyos
-CREATE POLICY "Ver logs" ON public.user_logs
-  FOR SELECT USING (
-    auth.uid() = user_id OR 
-    (SELECT role FROM public.profiles WHERE id = auth.uid()) = 'administrador'
-  );
+CREATE POLICY "Users can view own logs and admins all" ON public.user_logs
+  FOR SELECT TO authenticated
+  USING (user_id = (SELECT auth.uid()) OR (SELECT public.is_agronia_admin()));
 
 -- Permitir insertar logs a cualquier usuario autenticado
-CREATE POLICY "Insertar logs" ON public.user_logs
-  FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can insert own logs" ON public.user_logs
+  FOR INSERT TO authenticated
+  WITH CHECK (user_id = (SELECT auth.uid()));
+GRANT SELECT, INSERT ON public.user_logs TO authenticated;
 
--- 4. Opcional: Insertar perfil para tu usuario existente si ya te habías registrado antes de ejecutar esto
-INSERT INTO public.profiles (id, email, full_name, role, status, active)
-SELECT id, email, 'Jared (Admin)', 'administrador', 'aprobado', true
-FROM auth.users
-WHERE email = 'jenone0424@gmail.com'
-ON CONFLICT (id) DO UPDATE SET role = 'administrador', status = 'aprobado', active = true;
-
--- 5. Migración de datos existentes (Si ya tenías la tabla creada)
--- Ejecutar estas líneas solo si estás actualizando una base de datos que ya estaba funcionando
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS status text DEFAULT 'pendiente';
-UPDATE public.profiles SET status = 'aprobado', active = true WHERE role = 'administrador' OR active = true;
+UPDATE public.profiles SET status = 'aprobado' WHERE active = true AND status = 'pendiente';

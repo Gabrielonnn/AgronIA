@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, shallowRef } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import {
   AlertTriangle, Camera, Check, ChevronRight, CircleHelp, CloudUpload,
   FileImage, Leaf, LoaderCircle, ScanSearch, ShieldCheck, Sparkles, Upload, X,
@@ -10,6 +10,11 @@ import {
   prepareCropImage,
 } from '../services/cropAnalysis'
 import type { CropAnalysisResult, CropIssueCategory } from '../services/cropAnalysisValidation'
+import {
+  listCropAnalysisHistory,
+  saveCropAnalysis,
+  type CropAnalysisHistoryRecord,
+} from '../services/agronomyData'
 
 const cropOptions = [
   { value: 'sin especificar', label: 'Sin especificar' },
@@ -29,6 +34,7 @@ const categoryLabels: Record<CropIssueCategory, string> = {
 }
 
 const imageFile = ref<File | null>(null)
+const imageFileName = ref('')
 const previewUrl = ref('')
 const crop = ref('sin especificar')
 const result = ref<CropAnalysisResult | null>(null)
@@ -36,6 +42,8 @@ const isAnalyzing = ref(false)
 const isCameraOpen = ref(false)
 const errorMessage = ref('')
 const successMessage = ref('')
+const historyError = ref('')
+const analysisHistory = ref<CropAnalysisHistoryRecord[]>([])
 const fileInput = ref<HTMLInputElement | null>(null)
 const videoElement = ref<HTMLVideoElement | null>(null)
 const cameraStream = shallowRef<MediaStream | null>(null)
@@ -62,6 +70,7 @@ const setImage = (file: File) => {
 
   const previousPreviewUrl = previewUrl.value
   imageFile.value = file
+  imageFileName.value = file.name
   previewUrl.value = URL.createObjectURL(file)
   if (previousPreviewUrl) void nextTick(() => URL.revokeObjectURL(previousPreviewUrl))
 }
@@ -242,13 +251,22 @@ const runAnalysis = async () => {
   result.value = null
   isAnalyzing.value = true
   const analyzedFile = imageFile.value
+  const analyzedCrop = crop.value
 
   try {
     const image = await prepareCropImage(analyzedFile)
-    const analysis = await analyzeCropImage(image, crop.value)
+    const analysis = await analyzeCropImage(image, analyzedCrop)
     if (imageFile.value !== analyzedFile) return
     result.value = analysis
     successMessage.value = 'Análisis completado. Valida los hallazgos en campo antes de intervenir.'
+    try {
+      const saved = await saveCropAnalysis(analyzedCrop, analyzedFile.name, analysis)
+      if (imageFile.value === analyzedFile) {
+        analysisHistory.value = [saved, ...analysisHistory.value.filter(item => item.id !== saved.id)].slice(0, 10)
+      }
+    } catch (error) {
+      historyError.value = error instanceof Error ? error.message : 'El análisis se completó, pero no se pudo guardar.'
+    }
   } catch (error) {
     if (imageFile.value === analyzedFile) {
       errorMessage.value = error instanceof Error ? error.message : 'Ocurrió un error durante el análisis.'
@@ -258,11 +276,35 @@ const runAnalysis = async () => {
   }
 }
 
+const refreshHistory = async () => {
+  historyError.value = ''
+  try {
+    analysisHistory.value = await listCropAnalysisHistory()
+  } catch (error) {
+    historyError.value = error instanceof Error ? error.message : 'No se pudo cargar el historial.'
+  }
+}
+
+const showHistoricalResult = (record: CropAnalysisHistoryRecord) => {
+  result.value = {
+    summary: record.summary,
+    imageQuality: record.imageQuality,
+    detections: record.detections,
+  }
+  crop.value = record.crop
+  imageFile.value = null
+  imageFileName.value = record.source_image_name
+  if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
+  previewUrl.value = ''
+  errorMessage.value = ''
+  successMessage.value = `Informe guardado el ${new Date(record.created_at).toLocaleString('es-MX')}. La imagen no se almacena.`
+}
+
 const exportResult = () => {
   if (!result.value) return
   const report = {
     generatedAt: new Date().toISOString(),
-    image: imageFile.value?.name ?? 'captura',
+    image: imageFileName.value || 'captura',
     crop: crop.value,
     ...result.value,
   }
@@ -278,6 +320,7 @@ const clearImage = () => {
   if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
   previewUrl.value = ''
   imageFile.value = null
+  imageFileName.value = ''
   result.value = null
   errorMessage.value = ''
   successMessage.value = ''
@@ -288,6 +331,8 @@ onBeforeUnmount(() => {
   disconnectDroneCamera()
   if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
 })
+
+onMounted(refreshHistory)
 </script>
 
 <template>
@@ -432,7 +477,35 @@ onBeforeUnmount(() => {
       </Card>
     </div>
 
-    <footer class="analysis-footer"><ShieldCheck :size="15" /> Las imágenes se procesan al solicitar el análisis y no se guardan en la base de datos de AgronIA.</footer>
+    <Card class="analysis-card analysis-history">
+      <template #header>
+        <div class="analysis-card-title">
+          <span class="analysis-icon"><FileImage :size="18" /></span>
+          <div><h2>Historial de análisis</h2><p>Últimos 10 informes de esta cuenta</p></div>
+        </div>
+        <button type="button" class="analysis-export" @click="refreshHistory">Actualizar</button>
+      </template>
+      <p v-if="historyError" class="analysis-feedback is-error" role="alert"><AlertTriangle :size="16" /> {{ historyError }}</p>
+      <div v-if="analysisHistory.length" class="analysis-history-list">
+        <button
+          v-for="record in analysisHistory"
+          :key="record.id"
+          type="button"
+          class="analysis-history-item"
+          @click="showHistoricalResult(record)"
+        >
+          <span class="analysis-history-icon"><ScanSearch :size="16" /></span>
+          <span class="analysis-history-copy">
+            <strong>{{ record.crop }} · {{ record.source_image_name }}</strong>
+            <small>{{ new Date(record.created_at).toLocaleString('es-MX') }} · {{ record.detections.length }} hallazgo(s)</small>
+          </span>
+          <ChevronRight :size="16" />
+        </button>
+      </div>
+      <p v-else-if="!historyError" class="analysis-history-empty">No hay informes guardados todavía.</p>
+    </Card>
+
+    <footer class="analysis-footer"><ShieldCheck :size="15" /> La imagen no se guarda en AgronIA; se conserva el informe y sus hallazgos. El proveedor de visión puede procesar la imagen según sus propias condiciones.</footer>
   </div>
 </template>
 
@@ -501,6 +574,15 @@ onBeforeUnmount(() => {
 .analysis-empty p, .analysis-loading p { max-width: 310px; color: #8e9885; font-size: .68rem; line-height: 1.55; }
 .analysis-loading { color: #dfc574; }
 .analysis-export { padding: .4rem .55rem; border: 1px solid rgba(196, 218, 147, .17); border-radius: 7px; color: #d6cb9d; font-size: .62rem; }
+.analysis-history-list { display: grid; gap: .45rem; }
+.analysis-history-item { display: flex; min-width: 0; align-items: center; gap: .65rem; padding: .65rem; border: 1px solid rgba(196, 218, 147, .1); border-radius: 9px; color: #aab29e; text-align: left; background: rgba(5, 10, 7, .18); }
+.analysis-history-item:hover { border-color: rgba(196, 218, 147, .3); background: rgba(5, 10, 7, .35); }
+.analysis-history-icon { display: grid; width: 32px; height: 32px; flex: 0 0 32px; place-items: center; border-radius: 9px; color: #dfc574; background: rgba(223, 197, 116, .08); }
+.analysis-history-copy { display: grid; min-width: 0; flex: 1; gap: .2rem; }
+.analysis-history-copy strong, .analysis-history-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.analysis-history-copy strong { color: #d7ddcb; font-size: .67rem; font-weight: 650; }
+.analysis-history-copy small { color: #909987; font-size: .59rem; }
+.analysis-history-empty { color: #909987; font-size: .68rem; }
 .analysis-result { display: grid; gap: .85rem; }
 .analysis-summary { display: flex; align-items: flex-start; justify-content: space-between; gap: .7rem; padding: .8rem; border: 1px solid rgba(196, 218, 147, .12); border-radius: 10px; background: rgba(5, 10, 7, .22); }
 .analysis-summary > div > span { color: #c1a95f; font-size: .54rem; font-weight: 850; letter-spacing: .13em; }

@@ -90,8 +90,7 @@ router.beforeEach(async (to) => {
 
   if (to.meta.requiresAdmin) {
     const profileRole = store.user?.profile?.role
-    const metadataRole = store.user?.user_metadata?.role
-    const isAdmin = profileRole === 'administrador' || metadataRole === 'administrador' || store.user?.email === 'jenone0424@gmail.com'
+    const isAdmin = profileRole === 'administrador' && store.user?.profile?.active === true
     if (!isAdmin) return { name: 'home' }
   }
 
