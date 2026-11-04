@@ -4,6 +4,8 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { Download, Pause, Play, Wind } from 'lucide-vue-next'
 import DroneConnectionPanel from '../components/simulation/DroneConnectionPanel.vue'
+import { useMainStore } from '../stores'
+import { supabase } from '../services/supabase'
 
 interface PlantData {
   id: string; x: number; z: number; health: number; ndvi: number; temp: number; status: string; stage: number
@@ -36,6 +38,8 @@ const resizeObserver = shallowRef<ResizeObserver | null>(null)
 const raycaster = shallowRef<THREE.Raycaster | null>(null)
 const mouse = shallowRef<THREE.Vector2 | null>(null)
 const animationId = ref<number>(0)
+const savingScenario = ref(false)
+const store = useMainStore()
 
 // Data arrays para InstancedMesh
 let allPlants: PlantData[] = []
@@ -455,14 +459,44 @@ const zoomCamera = (direction: 'in' | 'out') => {
   controls.value.update()
 }
 
-const createNewScenario = () => {
+const createNewScenario = async () => {
   if (droneState.value !== 'IDLE' || simulationPaused.value) return
   if (centinelaGroup) centinelaGroup.visible = false
   currentAction.value = 'NONE'
   particleSystem.visible = false
   generateRandomStressCenters()
   regenerateFieldHealth()
-  setActionFeedback('Nuevo escenario generado. Analiza el cultivo para detectar las zonas de estrés.')
+
+  if (!supabase || !store.user?.id) {
+    setActionFeedback('Escenario generado, pero no se guardó: inicia sesión y configura Supabase.')
+    return
+  }
+
+  savingScenario.value = true
+  const { error } = await supabase.from('simulations').insert({
+    user_id: store.user.id,
+    scenario_title: `Escenario ${new Date().toLocaleString('es-MX')}`,
+    input_parameters: {
+      mode: currentMode.value,
+      plant_count: telemetry.value.plantCount,
+      stress_centers: stressCenters.map(center => ({
+        type: center.type,
+        intensity: Number(center.intensity.toFixed(3)),
+        radius: Number(center.radius.toFixed(2))
+      }))
+    },
+    results: {
+      ...telemetry.value,
+      stress_zones: stressCenters.length
+    }
+  })
+  savingScenario.value = false
+
+  if (error) {
+    setActionFeedback(`Escenario generado, pero no se pudo guardar: ${error.message}`)
+    return
+  }
+  setActionFeedback('Nuevo escenario generado y guardado en Supabase.')
 }
 
 const toggleSimulation = () => {
@@ -922,11 +956,11 @@ onBeforeUnmount(() => {
           <Download :size="15" />
           Exportar CSV
         </button>
-        <button class="simulation-new-scenario" type="button" @click="createNewScenario" :disabled="droneState !== 'IDLE' || simulationPaused">
+        <button class="simulation-new-scenario" type="button" @click="createNewScenario" :disabled="droneState !== 'IDLE' || simulationPaused || savingScenario">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
             <path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.64 5.64l2.12 2.12m8.48 8.48 2.12 2.12m0-12.72-2.12 2.12m-8.48 8.48-2.12 2.12M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6" />
           </svg>
-          Nuevo escenario
+          {{ savingScenario ? 'Guardando…' : 'Nuevo escenario' }}
         </button>
         <div class="simulation-mode-switch flex p-1 rounded-lg gap-1" role="group" aria-label="Capas de visualización">
           <button

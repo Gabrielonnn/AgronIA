@@ -2,6 +2,7 @@
 import { ref, computed } from 'vue'
 import Dropzone from '../components/data/Dropzone.vue'
 import DataTable from '../components/data/DataTable.vue'
+import DatabaseTables from '../components/data/DatabaseTables.vue'
 import Card from '../components/ui/Card.vue'
 import { FileText, Download, Trash2, BarChart3 } from 'lucide-vue-next'
 
@@ -74,6 +75,8 @@ const numericSummary = computed(() => {
         El archivo debe incluir encabezados en la primera fila.
       </div>
     </Card>
+
+    <DatabaseTables />
 
     <template v-if="tableData.length > 0">
       <!-- Barra de acciones -->

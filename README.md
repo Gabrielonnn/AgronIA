@@ -13,6 +13,14 @@ El inicio de sesión y el registro requieren un proyecto Supabase configurado. A
 
 La clave pública `publishable`/`anon` se utiliza en el cliente. **No uses ni compartas la `service_role` key** en variables `VITE_*`, en el navegador ni en el repositorio.
 
+## Uso de las tablas de Supabase
+
+En **Datos → Tablas de Supabase** puedes consultar hasta 100 filas por tabla y crear, editar o eliminar registros en `fields`, `crops`, `field_crops`, `devices`, `field_metrics`, `ai_alerts`, `treatments`, `simulations`, `map_elements`, `satellite_imagery` y `map_layers`. El editor de registros utiliza JSON con los nombres y tipos de columna definidos en tu base de datos. Para actualizar o eliminar una fila, la tabla debe tener una columna `id` de tipo texto/UUID.
+
+La sección **Parcelas y Clientes** guarda las parcelas en `fields`, carga el catálogo desde `crops` y crea el registro relacionado en `field_crops` cuando se selecciona un cultivo. En **Visor satelital**, el botón **Guardar en Supabase** crea o actualiza los elementos dibujados en `map_elements`. En **Simulación**, **Nuevo escenario** guarda sus parámetros y resultados en `simulations`. Estas acciones requieren una sesión activa y las políticas RLS correspondientes.
+
+La interfaz respeta las políticas RLS de Supabase: si una operación no está permitida, muestra el error recibido y no evita la política. `profiles` y `user_logs` se consultan en modo lectura; la administración de perfiles sigue en **Usuarios** y la bitácora la genera la aplicación. Las tablas deben existir previamente en Supabase y tener sus políticas/permisos configurados.
+
 ## Telemetría de dron MAVLink
 
 En **Simulación → Conexión con dron** hay tres modalidades de telemetría de solo lectura:
