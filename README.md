@@ -27,6 +27,25 @@ La sección **Parcelas y Clientes** guarda las parcelas en `fields`, carga el ca
 
 La interfaz respeta las políticas RLS de Supabase: si una operación no está permitida, muestra el error recibido y no evita la política. `profiles` y `user_logs` se consultan en modo lectura; la administración de perfiles sigue en **Usuarios** y la bitácora la genera la aplicación. Las tablas deben existir previamente en Supabase y tener sus políticas/permisos configurados.
 
+## Diagnóstico de enfermedades en plantas
+
+En **Diagnóstico**, los usuarios autenticados pueden seleccionar una imagen JPG, PNG o WebP de hasta 10 MB, o tomar una foto con la cámara del dispositivo. La cámara requiere HTTPS o `localhost` y permiso explícito del navegador. La imagen se envía únicamente al endpoint configurado; AgronIA no la almacena ni genera predicciones simuladas.
+
+Para habilitar el análisis, configura `VITE_PLANT_DIAGNOSIS_API_URL` en `.env.local` con la URL del endpoint `POST` de inferencia y reinicia Vite. El endpoint recibe `multipart/form-data` con un campo `file` y debe responder JSON con este contrato:
+
+```json
+{
+  "disease": "Tomato___healthy",
+  "confidence": 0.97,
+  "cause": "Descripción opcional de la causa.",
+  "recommendation": "Recomendación opcional."
+}
+```
+
+`disease` es texto obligatorio, `confidence` es un número entre `0` y `1`, y `cause` y `recommendation` son opcionales. La URL de la API está disponible en el cliente y no debe contener secretos. AgronIA todavía no incluye ni despliega un servidor de inferencia; sin endpoint configurado se pueden cargar y previsualizar imágenes, pero no se presenta un diagnóstico.
+
+Las alertas por Telegram tampoco están habilitadas en el cliente: requieren un backend que gestione de forma segura el token del bot y envíe la notificación tras la inferencia.
+
 ## Telemetría de dron MAVLink
 
 En **Simulación → Conexión con dron** hay tres modalidades de telemetría de solo lectura:
