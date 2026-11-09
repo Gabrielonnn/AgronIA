@@ -28,6 +28,13 @@ const cameraMessage = ref('')
 const diagnosis = ref<PlantDiagnosis | null>(null)
 const hasEndpoint = computed(() => endpoint.length > 0)
 
+function formatDiseaseName(disease: string) {
+  return disease
+    .replace('___', ' · ')
+    .replaceAll('_', ' ')
+    .replaceAll(',', '')
+}
+
 function clearPreview() {
   if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
   previewUrl.value = ''
@@ -293,7 +300,7 @@ onBeforeUnmount(() => {
               <CheckCircle2 class="h-5 w-5" />
               <span class="text-xs font-bold uppercase tracking-wider">Clasificación recibida</span>
             </div>
-            <h3 class="mt-3 text-2xl font-semibold text-white">{{ diagnosis.disease }}</h3>
+            <h3 class="mt-3 text-2xl font-semibold text-white">{{ formatDiseaseName(diagnosis.disease) }}</h3>
             <div class="mt-4 flex items-center justify-between text-sm">
               <span class="text-stone-300">Confianza del modelo</span>
               <span class="font-semibold text-emerald-200">{{ (diagnosis.confidence * 100).toFixed(1) }}%</span>

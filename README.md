@@ -31,20 +31,30 @@ La interfaz respeta las políticas RLS de Supabase: si una operación no está p
 
 En **Diagnóstico**, los usuarios autenticados pueden seleccionar una imagen JPG, PNG o WebP de hasta 10 MB, o tomar una foto con la cámara del dispositivo. La cámara requiere HTTPS o `localhost` y permiso explícito del navegador. La imagen se envía únicamente al endpoint configurado; AgronIA no la almacena ni genera predicciones simuladas.
 
-Para habilitar el análisis, configura `VITE_PLANT_DIAGNOSIS_API_URL` en `.env.local` con la URL del endpoint `POST` de inferencia y reinicia Vite. El endpoint recibe `multipart/form-data` con un campo `file` y debe responder JSON con este contrato:
+### Ejecutar el modelo con licencia MIT declarada
+
+El backend usa el modelo EfficientNetV2S de [Animesh Kumar](https://huggingface.co/animeshakr/plant-disease-efficientnetv2s), cuya tarjeta declara licencia MIT, fijado a una revisión concreta. No es el modelo sin licencia del repositorio original. Para iniciar el detector en desarrollo:
+
+1. Con Docker instalado y conexión a Internet, desde la raíz de AgronIA ejecuta `docker build -t agronia-diagnosis ./backend`. El build descarga el modelo TFLite de 42 MB desde la revisión fijada y comprueba su SHA-256; no almacena los pesos en Git.
+2. Inicia el servicio con `docker run --rm -p 8000:8000 agronia-diagnosis`.
+3. Copia `.env.example` a `.env.local` (conserva tus credenciales Supabase, si ya las configuraste) y establece `VITE_PLANT_DIAGNOSIS_API_URL=http://localhost:8000/predict`. Reinicia Vite (`npm run dev`) si ya estaba iniciado.
+4. Comprueba que `http://localhost:8000/health` responda `{"status":"ready"}`. La API y Vite deben ejecutarse a la vez.
+
+El API recibe `multipart/form-data` con un campo `file` y responde el nombre de la clase y la confianza:
 
 ```json
 {
-  "disease": "Tomato___healthy",
+  "disease": "Apple___healthy",
   "confidence": 0.97,
-  "cause": "Descripción opcional de la causa.",
-  "recommendation": "Recomendación opcional."
+  "recommendation": "Resultado orientativo. Confirma el diagnóstico y cualquier tratamiento con un especialista agrónomo."
 }
 ```
 
-`disease` es texto obligatorio, `confidence` es un número entre `0` y `1`, y `cause` y `recommendation` son opcionales. La URL de la API está disponible en el cliente y no debe contener secretos. AgronIA todavía no incluye ni despliega un servidor de inferencia; sin endpoint configurado se pueden cargar y previsualizar imágenes, pero no se presenta un diagnóstico.
+El modelo clasifica 38 condiciones en manzana, arándano, cereza, maíz, uva, naranja, durazno, pimiento, papa, frambuesa, soya, calabaza, fresa y tomate. Acepta imágenes RGB de 384×384; el preprocesamiento y el mapa de clases siguen la tarjeta del modelo. La API añade una recomendación de cautela si la confianza es menor de 60%. `/health` verifica que el modelo se haya cargado.
 
-Las alertas por Telegram tampoco están habilitadas en el cliente: requieren un backend que gestione de forma segura el token del bot y envíe la notificación tras la inferencia.
+La licencia MIT está declarada en la tarjeta de Hugging Face; la revisión exacta y la suma de verificación están registradas en [download_model.py](./backend/download_model.py) y la atribución en [THIRD_PARTY_NOTICES.md](./backend/THIRD_PARTY_NOTICES.md). Esa licencia del modelo no sustituye los términos del dataset ni de la arquitectura base. La tarjeta del modelo identifica PlantVillage como datos de entrenamiento, reporta fotos controladas de laboratorio y advierte que no se ha validado la generalización a fotos de campo ni debe usarse para decisiones comerciales de manejo de cultivos. No uses el resultado como diagnóstico agronómico definitivo. Revisa los términos del dataset y obtén asesoría legal antes de cualquier uso comercial.
+
+La API del modelo no envía alertas de Telegram; eso requeriría añadir credenciales de bot solo en el backend. En producción, despliega el backend en un servicio accesible por HTTPS, configura `VITE_PLANT_DIAGNOSIS_API_URL` con la URL pública `/predict` al compilar el frontend y define `PLANT_DIAGNOSIS_ALLOWED_ORIGINS` con el origen exacto del sitio AgronIA. No publiques un endpoint HTTP ni credenciales en variables `VITE_*`.
 
 ## Telemetría de dron MAVLink
 
