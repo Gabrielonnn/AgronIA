@@ -10,6 +10,7 @@ import {
   Crosshair,
   Download,
   Droplets,
+  ExternalLink,
   Eye,
   Flame,
   ImagePlus,
@@ -18,9 +19,11 @@ import {
   LoaderCircle,
   RefreshCw,
   ScanSearch,
+  Search,
   ShieldCheck,
   Sliders,
   Sparkles,
+  Sprout,
   Thermometer,
   Video
 } from 'lucide-vue-next'
@@ -33,6 +36,13 @@ import {
   type SpectrumMode
 } from '../../services/multispectralPlantEngine'
 import { analyzeMultispectralBackend, type PlantDiagnosis } from '../../services/plantDiagnosis'
+import {
+  identifyPlantSpecies,
+  searchBotanicalTaxonOnline,
+  submitImageToGoogleLens,
+  type BotanicalCandidate,
+  type PlantSpeciesIdentificationResult
+} from '../../services/plantSpeciesIdentification'
 
 export interface MultispectralCapturePayload {
   file: File
@@ -40,6 +50,7 @@ export interface MultispectralCapturePayload {
   analysis: MultispectralFrameAnalysis
   preset: SimulationPresetId
   spectrumMode: SpectrumMode
+  species?: BotanicalCandidate
 }
 
 const props = withDefaults(
@@ -103,7 +114,15 @@ const statusMessage = ref('')
 const errorMessage = ref('')
 const fpsCount = ref(30)
 
+// Botanical Species & Google Lens identification state
+const speciesResult = ref<PlantSpeciesIdentificationResult | null>(null)
+const isIdentifyingSpecies = ref(false)
+const autoConnectGoogleLens = ref(true)
+const customSpeciesQuery = ref('')
+const isSearchingTaxon = ref(false)
+
 let rafId = 0
+let cameraSpeciesTimer: number | null = null
 let lastFrameTime = performance.now()
 let frameCounter = 0
 let fpsTimer = performance.now()
@@ -222,7 +241,29 @@ async function startCamera(useSpecificDevice = false) {
     if (detectionMode.value === 'synthetic_plant') {
       detectionMode.value = 'auto_vegetation'
     }
-    statusMessage.value = `Cámara conectada (${activeTrack?.label || 'dispositivo activo'}). Detectando área total de planta en tiempo real.`
+
+    // Automatically identify the plant species once the camera stream warms up
+    window.setTimeout(() => {
+      if (cameraActive.value && videoElement.value) {
+        renderSinglePass(performance.now(), true)
+        void runSpeciesIdentification(videoElement.value, activeTrack?.label || 'camara_en_vivo')
+        if (autoConnectGoogleLens.value) {
+          void connectAndUploadToGoogleLens()
+        }
+      }
+    }, 650)
+
+    // Periodically refresh in-app botanical species identification while camera is active
+    if (cameraSpeciesTimer !== null) {
+      window.clearInterval(cameraSpeciesTimer)
+    }
+    cameraSpeciesTimer = window.setInterval(() => {
+      if (cameraActive.value && videoElement.value && !isIdentifyingSpecies.value) {
+        void runSpeciesIdentification(videoElement.value, activeTrack?.label || 'camara_en_vivo')
+      }
+    }, 5500)
+
+    statusMessage.value = `Cámara conectada (${activeTrack?.label || 'dispositivo activo'}). Identificando tipo y nombre de planta en tiempo real.`
   } catch (error) {
     stopCamera()
     errorMessage.value =
@@ -235,6 +276,10 @@ async function startCamera(useSpecificDevice = false) {
 }
 
 function stopCamera() {
+  if (cameraSpeciesTimer !== null) {
+    window.clearInterval(cameraSpeciesTimer)
+    cameraSpeciesTimer = null
+  }
   cameraStream.value?.getTracks().forEach(track => {
     track.onended = null
     track.stop()
@@ -269,8 +314,106 @@ function activateSyntheticDemo() {
   detectionMode.value = 'synthetic_plant'
   hasAnalyzedImage.value = true
   errorMessage.value = ''
+  renderSinglePass(performance.now(), true)
+  void runSpeciesIdentification(outputCanvas.value, 'solanum_lycopersicum_demo')
   statusMessage.value =
     'Modo Planta Interactiva activo: simulando captura óptica y espectros RGB, NDVI y Térmico a 30 FPS.'
+}
+
+async function runSpeciesIdentification(
+  src?: HTMLVideoElement | HTMLImageElement | HTMLCanvasElement | null,
+  hintName = ''
+) {
+  isIdentifyingSpecies.value = true
+  try {
+    const activeSrc =
+      src ??
+      (sourceMode.value === 'camera' && cameraActive.value
+        ? videoElement.value
+        : sourceMode.value === 'image'
+          ? loadedImage.value
+          : outputCanvas.value)
+
+    const result = await identifyPlantSpecies({
+      source: activeSrc,
+      fileName: hintName || uploadedFileName.value,
+      backendDiseaseLabel: backendDiagnosis.value?.disease || '',
+      boundingBox: liveAnalysis.value?.boundingBox ?? null,
+      polygonContour: liveAnalysis.value?.polygonContour ?? [],
+      plantCoveragePercent: liveAnalysis.value?.plantCoveragePercent ?? 35
+    })
+    speciesResult.value = result
+  } finally {
+    isIdentifyingSpecies.value = false
+  }
+}
+
+async function connectAndUploadToGoogleLens() {
+  errorMessage.value = ''
+  let sourceToSend: File | HTMLVideoElement | HTMLImageElement | HTMLCanvasElement | null = null
+
+  if (sourceMode.value === 'image' && selectedFile.value) {
+    sourceToSend = selectedFile.value
+  } else if (sourceMode.value === 'camera' && cameraActive.value && videoElement.value) {
+    sourceToSend = videoElement.value
+  } else if (loadedImage.value) {
+    sourceToSend = loadedImage.value
+  } else if (outputCanvas.value) {
+    sourceToSend = outputCanvas.value
+  }
+
+  if (!sourceToSend) {
+    errorMessage.value = 'Sube una imagen o enciende la cámara para enviarla a Google Lens.'
+    return
+  }
+
+  const submitted = await submitImageToGoogleLens(sourceToSend)
+  if (submitted) {
+    statusMessage.value =
+      'Imagen enviada a Google Lens para identificación visual de especie y nombre botánico.'
+  }
+}
+
+function selectSpeciesCandidate(candidate: BotanicalCandidate) {
+  if (!speciesResult.value) return
+  const currentPrimary = speciesResult.value.primary
+  const remaining = speciesResult.value.alternatives.filter(alt => alt.id !== candidate.id)
+  if (currentPrimary.id !== candidate.id) {
+    remaining.unshift(currentPrimary)
+  }
+  speciesResult.value = {
+    ...speciesResult.value,
+    primary: candidate,
+    alternatives: remaining.slice(0, 3)
+  }
+  statusMessage.value = `Planta seleccionada: ${candidate.commonName} (${candidate.scientificName}) · ${candidate.plantType}.`
+}
+
+async function handleCustomTaxonSearch() {
+  const query = customSpeciesQuery.value.trim()
+  if (!query) return
+  isSearchingTaxon.value = true
+  try {
+    const found = await searchBotanicalTaxonOnline(query)
+    if (found && speciesResult.value) {
+      speciesResult.value = {
+        ...speciesResult.value,
+        identifiedAt: new Date().toLocaleTimeString(),
+        source: 'google-lens-sync',
+        primary: found,
+        alternatives: [
+          speciesResult.value.primary,
+          ...speciesResult.value.alternatives.filter(a => a.id !== found.id)
+        ].slice(0, 3)
+      }
+      customSpeciesQuery.value = ''
+      statusMessage.value = `Especie sincronizada: ${found.commonName} (${found.scientificName}) · ${found.plantType}.`
+    } else {
+      errorMessage.value = `No se encontró el taxón "${query}". Prueba con el nombre común o científico (ej. Tomate, Monstera, Rosa, Maíz).`
+    }
+  } finally {
+    isSearchingTaxon.value = false
+  }
 }
 
 function loadFileImage(file: File) {
@@ -301,7 +444,13 @@ function loadFileImage(file: File) {
     }
     hasAnalyzedImage.value = true
     renderSinglePass(performance.now(), true)
-    statusMessage.value = `Foto "${file.name}" cargada. Haz clic en "Analizar imagen" o alterna los espectros (RGB, NDVI, Térmico) y presets.`
+    void runSpeciesIdentification(img, file.name)
+    if (autoConnectGoogleLens.value) {
+      void submitImageToGoogleLens(file)
+      statusMessage.value = `Foto "${file.name}" cargada y enviada a Google Lens. Tipo y nombre de planta identificados automáticamente.`
+    } else {
+      statusMessage.value = `Foto "${file.name}" cargada. Tipo y nombre de planta identificados. Haz clic en "Subir a Google Lens" o "Analizar imagen".`
+    }
   }
   img.onerror = () => {
     URL.revokeObjectURL(objectUrl)
@@ -352,6 +501,10 @@ function renderSinglePass(now: number, forceUpdate = false) {
     effectiveDetectionMode = 'synthetic_plant'
   }
 
+  const hudLabel = speciesResult.value
+    ? `${speciesResult.value.primary.commonName} (${speciesResult.value.primary.scientificName}) · ${speciesResult.value.primary.plantType}`
+    : undefined
+
   const analysis = processMultispectralFrame(activeSource, canvas, {
     spectrumMode: spectrumMode.value,
     preset: activePreset.value,
@@ -363,7 +516,8 @@ function renderSinglePass(now: number, forceUpdate = false) {
     showHotspots: showHotspots.value,
     ambientTempC: ambientTempC.value,
     pointerNorm: pointerNorm.value,
-    timeSec: now * 0.001
+    timeSec: now * 0.001,
+    plantLabelHud: hudLabel
   })
 
   if (forceUpdate || now - lastAnalysisUpdate > 90 || !liveAnalysis.value) {
@@ -419,13 +573,16 @@ async function analyzeImage() {
           presetIntensity.value,
           ambientTempC.value
         )
+        await runSpeciesIdentification(undefined, uploadedFileName.value)
         statusMessage.value =
-          'Análisis completado: área total de la planta segmentada y datos multiespectrales (RGB, NDVI, Térmico) generados.'
+          'Análisis completado: especie identificada, área total segmentada y datos multiespectrales (RGB, NDVI, Térmico) generados.'
         return
       } catch {
         // Fallback seamlessly to local AI + Multispectral engine when backend is unreachable
       }
     }
+
+    await runSpeciesIdentification(undefined, uploadedFileName.value)
 
     if (liveAnalysis.value) {
       backendDiagnosis.value = {
@@ -440,7 +597,7 @@ async function analyzeImage() {
         plantCoveragePercent: liveAnalysis.value.plantCoveragePercent
       }
       statusMessage.value =
-        'Análisis completado: área total de la planta detectada con interpretación RGB, NDVI, Térmica y simulación de presets.'
+        'Análisis completado: tipo y nombre de planta identificados junto con datos RGB, NDVI, Térmicos y presets.'
     }
   } catch (error) {
     errorMessage.value =
@@ -482,9 +639,14 @@ async function downloadSnapshotPng() {
 function exportTelemetryCsv() {
   const a = liveAnalysis.value
   if (!a) return
+  const sp = speciesResult.value?.primary
   const rows = [
     [
       'Timestamp',
+      'Nombre Planta',
+      'Nombre Cientifico',
+      'Tipo de Planta',
+      'Familia Botanica',
       'Modo Espectral',
       'Preset Simulado',
       'Intensidad Preset (%)',
@@ -512,6 +674,10 @@ function exportTelemetryCsv() {
     ],
     [
       new Date().toISOString(),
+      sp?.commonName || 'En identificacion',
+      sp?.scientificName || 'Plantae',
+      sp?.plantType || 'Cultivo Vegetal',
+      sp?.family || 'Angiospermae',
       spectrumMode.value.toUpperCase(),
       currentPresetConfig.value.name,
       Math.round(presetIntensity.value * 100),
@@ -549,7 +715,7 @@ function exportTelemetryCsv() {
   link.download = `agronia-telemetria-multiespectral-${new Date().toISOString().slice(0, 10)}.csv`
   link.click()
   setTimeout(() => URL.revokeObjectURL(url), 0)
-  statusMessage.value = 'Reporte CSV de telemetría multiespectral exportado.'
+  statusMessage.value = 'Reporte CSV de telemetría multiespectral y especie botánica exportado.'
 }
 
 async function sendToFieldScouting() {
@@ -562,10 +728,11 @@ async function sendToFieldScouting() {
       previewUrl,
       analysis: liveAnalysis.value,
       preset: activePreset.value,
-      spectrumMode: spectrumMode.value
+      spectrumMode: spectrumMode.value,
+      species: speciesResult.value?.primary
     })
     statusMessage.value =
-      'Captura multiespectral y diagnóstico transferidos al formulario de Registro de Campo.'
+      'Captura multiespectral, especie botánica y diagnóstico transferidos al formulario de Registro de Campo.'
   } catch (error) {
     errorMessage.value =
       error instanceof Error ? error.message : 'No se pudo transferir la captura.'
@@ -575,6 +742,9 @@ async function sendToFieldScouting() {
 onMounted(() => {
   void refreshCameraDevices()
   startRenderLoop()
+  window.setTimeout(() => {
+    void runSpeciesIdentification(outputCanvas.value, 'solanum_lycopersicum_demo')
+  }, 150)
 })
 
 onBeforeUnmount(() => {
@@ -643,6 +813,29 @@ onBeforeUnmount(() => {
             <ScanSearch v-else class="h-4 w-4" />
             {{ isAnalyzing ? 'Analizando…' : 'Analizar imagen' }}
           </button>
+
+          <!-- GOOGLE LENS DIRECT UPLOAD BUTTON -->
+          <button
+            type="button"
+            class="inline-flex items-center gap-1.5 rounded-xl border border-sky-400/40 bg-sky-500/15 px-3.5 py-2 text-xs font-bold text-sky-200 shadow transition hover:bg-sky-500/25"
+            title="Subir imagen o fotograma actual de la cámara a Google Lens para identificar el tipo y nombre de la planta"
+            @click="connectAndUploadToGoogleLens"
+          >
+            <ExternalLink class="h-4 w-4 text-sky-300" />
+            Identificar en Google Lens
+          </button>
+
+          <label
+            class="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-white/10 bg-black/30 px-2.5 py-2 text-[11px] font-medium text-stone-300"
+            title="Al subir una imagen o encender la cámara, conectarse y subir automáticamente a Google Lens"
+          >
+            <input
+              v-model="autoConnectGoogleLens"
+              type="checkbox"
+              class="h-3.5 w-3.5 rounded accent-sky-400"
+            />
+            <span>Auto Google Lens</span>
+          </label>
 
           <!-- Camera Device Selector -->
           <div class="flex items-center gap-1.5 rounded-xl border border-white/10 bg-black/30 px-2.5 py-1.5">
@@ -1109,6 +1302,136 @@ onBeforeUnmount(() => {
 
       <!-- Right Column: Real-Time Multispectral Interpretation & Preset Simulation Table -->
       <section class="flex flex-col gap-4">
+        <!-- Card 0: Botanical Species & Google Lens Identification Card -->
+        <div
+          class="rounded-2xl border border-sky-400/25 bg-[#131d19]/95 p-4 shadow-xl sm:p-5"
+        >
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div class="flex items-center gap-2.5">
+              <div class="rounded-xl bg-sky-400/15 p-2 text-sky-300">
+                <Sprout class="h-5 w-5" />
+              </div>
+              <div>
+                <span class="text-[10px] font-bold uppercase tracking-widest text-sky-300">
+                  GOOGLE LENS · TAXONOMÍA Y RECONOCIMIENTO BOTÁNICO
+                </span>
+                <h3 class="text-base font-semibold text-white">
+                  Tipo de Planta y Nombre de la Especie
+                </h3>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              class="inline-flex items-center gap-1.5 rounded-xl border border-sky-400/40 bg-sky-500/20 px-3 py-1.5 text-xs font-bold text-sky-100 transition hover:bg-sky-500/30"
+              @click="connectAndUploadToGoogleLens"
+            >
+              <ExternalLink class="h-3.5 w-3.5 text-sky-300" />
+              {{ cameraActive ? 'Subir cámara a Google Lens' : 'Abrir en Google Lens' }}
+            </button>
+          </div>
+
+          <div v-if="speciesResult" class="mt-3.5 space-y-3">
+            <!-- Primary Identified Plant Banner -->
+            <div
+              class="flex flex-col justify-between gap-3 rounded-xl border border-sky-300/25 bg-black/35 p-3.5 sm:flex-row sm:items-center"
+            >
+              <div class="space-y-1">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span
+                    class="rounded-md bg-sky-400/20 px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wider text-sky-200"
+                  >
+                    {{ speciesResult.primary.plantType }}
+                  </span>
+                  <span
+                    class="rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-semibold text-stone-300"
+                  >
+                    Familia: {{ speciesResult.primary.family }}
+                  </span>
+                  <span
+                    class="rounded-md bg-emerald-400/15 px-2 py-0.5 text-[10px] font-bold text-emerald-300"
+                  >
+                    Coincidencia {{ Math.round(speciesResult.primary.confidence * 100) }}%
+                  </span>
+                </div>
+
+                <h4 class="text-xl font-extrabold text-white">
+                  {{ speciesResult.primary.commonName }}
+                </h4>
+                <p class="text-xs italic text-sky-200/90">
+                  Nombre científico: <strong class="font-semibold">{{ speciesResult.primary.scientificName }}</strong>
+                </p>
+              </div>
+
+              <img
+                v-if="speciesResult.primary.thumbnailUrl"
+                :src="speciesResult.primary.thumbnailUrl"
+                :alt="speciesResult.primary.commonName"
+                class="h-16 w-16 shrink-0 rounded-xl border border-white/15 object-cover shadow"
+              />
+            </div>
+
+            <!-- Morphological & Botanical Summary -->
+            <div class="rounded-xl border border-white/10 bg-black/25 p-3 text-xs text-stone-300 space-y-1.5">
+              <p class="leading-relaxed">
+                {{ speciesResult.primary.summary }}
+              </p>
+              <div class="grid gap-1.5 pt-1 text-[11px] sm:grid-cols-2">
+                <div class="rounded-lg bg-white/5 px-2.5 py-1.5">
+                  <span class="block text-[10px] uppercase text-stone-400">Morfología Foliar Detectada</span>
+                  <strong class="text-stone-100">{{ speciesResult.primary.leafMorphology }}</strong>
+                </div>
+                <div class="rounded-lg bg-white/5 px-2.5 py-1.5">
+                  <span class="block text-[10px] uppercase text-stone-400">Parámetros Ideales de Especie</span>
+                  <strong class="text-emerald-300">
+                    NDVI {{ speciesResult.primary.idealNdviRange[0] }}–{{ speciesResult.primary.idealNdviRange[1] }}
+                    · {{ speciesResult.primary.idealTempRangeC[0] }}–{{ speciesResult.primary.idealTempRangeC[1] }}°C
+                    · Riego {{ speciesResult.primary.waterDemand }}
+                  </strong>
+                </div>
+              </div>
+            </div>
+
+            <!-- Alternative Species Candidates -->
+            <div v-if="speciesResult.alternatives.length > 0" class="flex flex-wrap items-center gap-1.5 text-[11px]">
+              <span class="text-stone-400">Otras posibles especies:</span>
+              <button
+                v-for="alt in speciesResult.alternatives"
+                :key="alt.id"
+                type="button"
+                class="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 font-medium text-stone-200 transition hover:border-sky-300/40 hover:bg-sky-400/15 hover:text-white"
+                @click="selectSpeciesCandidate(alt)"
+              >
+                {{ alt.commonName }} ({{ Math.round(alt.confidence * 100) }}%)
+              </button>
+            </div>
+
+            <!-- Live Taxon Search / Sync with Google Lens Result -->
+            <form
+              class="flex items-center gap-2 pt-1"
+              @submit.prevent="handleCustomTaxonSearch"
+            >
+              <div class="relative flex-1">
+                <Search class="pointer-events-none absolute left-2.5 top-2 h-3.5 w-3.5 text-stone-400" />
+                <input
+                  v-model="customSpeciesQuery"
+                  type="text"
+                  placeholder="¿Google Lens indicó otra especie? Escríbela aquí (ej. Monstera, Maíz, Bugambilia)…"
+                  class="w-full rounded-xl border border-white/15 bg-black/40 py-1.5 pl-8 pr-3 text-xs text-white placeholder-stone-400 focus:border-sky-400 focus:outline-none"
+                />
+              </div>
+              <button
+                type="submit"
+                :disabled="isSearchingTaxon || !customSpeciesQuery.trim()"
+                class="inline-flex items-center gap-1 rounded-xl border border-sky-400/40 bg-sky-400/15 px-3 py-1.5 text-xs font-bold text-sky-200 transition hover:bg-sky-400/25 disabled:opacity-50"
+              >
+                <LoaderCircle v-if="isSearchingTaxon" class="h-3.5 w-3.5 animate-spin" />
+                <span>Fijar planta</span>
+              </button>
+            </form>
+          </div>
+        </div>
+
         <!-- Card 1: AI Recognition & Physiological Classification -->
         <div class="rounded-2xl border border-white/10 bg-[#141d16]/95 p-4 shadow-xl sm:p-5">
           <div class="flex items-center justify-between gap-2">

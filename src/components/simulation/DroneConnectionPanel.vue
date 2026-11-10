@@ -915,8 +915,11 @@ const handleMultispectralCapture = (payload: MultispectralCapturePayload) => {
   const presetMeta = SIMULATION_PRESETS[payload.preset]
   issueType.value = presetMeta.defaultIssueType
   issueSeverity.value = presetMeta.defaultSeverity
-  observationNotes.value = `[Escaneo ${payload.spectrumMode.toUpperCase()} · ${payload.analysis.aiClassification.label}] NDVI prom: ${payload.analysis.ndvi.mean.toFixed(2)} | Temp foliar: ${payload.analysis.thermal.meanTempC.toFixed(1)}°C (CWSI ${payload.analysis.thermal.cwsi.toFixed(2)}) | Área planta: ${payload.analysis.plantCoveragePercent}%`
-  observationMessage.value = 'Captura multiespectral cargada en el formulario de Registro de campo.'
+  const speciesTag = payload.species
+    ? `Planta: ${payload.species.commonName} (${payload.species.scientificName}) · ${payload.species.plantType} | `
+    : ''
+  observationNotes.value = `[Escaneo ${payload.spectrumMode.toUpperCase()} · ${payload.analysis.aiClassification.label}] ${speciesTag}NDVI prom: ${payload.analysis.ndvi.mean.toFixed(2)} | Temp foliar: ${payload.analysis.thermal.meanTempC.toFixed(1)}°C (CWSI ${payload.analysis.thermal.cwsi.toFixed(2)}) | Área planta: ${payload.analysis.plantCoveragePercent}%`
+  observationMessage.value = 'Captura multiespectral y especie botánica cargadas en el formulario de Registro de campo.'
   observationError.value = ''
 }
 

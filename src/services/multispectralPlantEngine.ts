@@ -127,6 +127,7 @@ export interface ProcessFrameOptions {
   ambientTempC: number
   pointerNorm: { x: number; y: number } | null
   timeSec: number
+  plantLabelHud?: string
 }
 
 export const SIMULATION_PRESETS: Record<SimulationPresetId, SimulationPresetConfig> = {
@@ -1500,7 +1501,9 @@ function drawPrimaryHudOverlay(
     ctx.stroke()
 
     // Top bounding box header tag
-    const tagText = `ÁREA TOTAL PLANTA · ${(box.width * box.height * 100).toFixed(0)}% DOSEL`
+    const tagText = options.plantLabelHud
+      ? `${options.plantLabelHud.toUpperCase()} · ${(box.width * box.height * 100).toFixed(0)}% DOSEL`
+      : `ÁREA TOTAL PLANTA · ${(box.width * box.height * 100).toFixed(0)}% DOSEL`
     ctx.font = 'bold 11px Inter, sans-serif'
     const textWidth = ctx.measureText(tagText).width
     const tagY = Math.max(6, by - 24)
