@@ -4,7 +4,7 @@ import { supabase } from '../services/supabase'
 import { useMainStore } from '../stores'
 import Card from '../components/ui/Card.vue'
 import Button from '../components/ui/Button.vue'
-import { Users, UserPlus, Trash2, List, ShieldCheck, UserCheck, Clock3, RefreshCw } from 'lucide-vue-next'
+import { Users, UserPlus, Trash2, List, ShieldCheck, UserCheck, Clock3, RefreshCw, Search } from 'lucide-vue-next'
 
 const store = useMainStore()
 
@@ -40,6 +40,8 @@ const databaseError = ref('')
 const selectedUserLogs = ref<UserLog[]>([])
 const showLogsModal = ref(false)
 const selectedUserName = ref('')
+const searchQuery = ref('')
+const statusFilter = ref<'all' | 'pendiente' | 'aprobado' | 'rechazado'>('all')
 
 const roleLabels: Record<Role, string> = {
   cliente: 'Cliente',
@@ -60,6 +62,15 @@ const isAdmin = computed(() => {
 
 const activeUsers = computed(() => users.value.filter(user => user.active).length)
 const pendingUsers = computed(() => users.value.filter(user => user.status === 'pendiente').length)
+const filteredUsers = computed(() => {
+  const query = searchQuery.value.trim().toLocaleLowerCase()
+  return users.value.filter(user => {
+    const matchesStatus = statusFilter.value === 'all' || user.status === statusFilter.value
+    const matchesQuery = !query
+      || `${user.full_name} ${user.email} ${roleLabels[user.role]}`.toLocaleLowerCase().includes(query)
+    return matchesStatus && matchesQuery
+  })
+})
 
 const fetchUsers = async () => {
   loadingUsers.value = true
@@ -533,13 +544,30 @@ const viewLogs = async (user: UserProfile) => {
           <div class="users-card-heading">
             <span class="users-card-icon"><Users :size="17" /></span>
             <div><span>DIRECTORIO</span><h3>Usuarios del sistema</h3></div>
-            <span class="users-count">{{ users.length }}</span>
+            <span class="users-count">{{ filteredUsers.length }}</span>
           </div>
           <Button class="users-refresh" variant="outline" size="sm" :disabled="loadingUsers" @click="fetchUsers">
             <RefreshCw :size="14" :class="{ 'users-refreshing': loadingUsers }" /> Actualizar
           </Button>
         </div>
       </template>
+
+      <div class="mb-4 flex flex-wrap items-center gap-3">
+        <label class="relative min-w-[220px] flex-1">
+          <span class="sr-only">Buscar usuario</span>
+          <Search class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+          <input v-model="searchQuery" class="users-field pl-10" type="search" placeholder="Buscar por nombre, correo o rol">
+        </label>
+        <label>
+          <span class="sr-only">Filtrar por estado de solicitud</span>
+          <select v-model="statusFilter" class="users-field min-w-44">
+            <option value="all">Todos los estados</option>
+            <option value="pendiente">Pendientes</option>
+            <option value="aprobado">Aprobados</option>
+            <option value="rechazado">Rechazados</option>
+          </select>
+        </label>
+      </div>
       
       <div v-if="loadingUsers" class="users-loading" role="status" aria-label="Cargando usuarios">
         <div class="users-spinner"></div>
@@ -549,6 +577,12 @@ const viewLogs = async (user: UserProfile) => {
         <span><Users :size="22" /></span>
         <strong>No hay perfiles para mostrar</strong>
         No hay otros perfiles registrados en este proyecto.
+      </div>
+
+      <div v-else-if="filteredUsers.length === 0" class="users-empty">
+        <span><Search :size="22" /></span>
+        <strong>No encontramos coincidencias</strong>
+        Ajusta la búsqueda o el filtro de estado.
       </div>
       
       <div v-else class="users-table-wrap">
@@ -563,7 +597,7 @@ const viewLogs = async (user: UserProfile) => {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="user in users" :key="user.id">
+            <tr v-for="user in filteredUsers" :key="user.id">
               <td>
                 <div class="flex items-center gap-3">
                   <div class="users-avatar">
