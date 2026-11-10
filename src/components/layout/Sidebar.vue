@@ -101,20 +101,10 @@ const roleColor = computed(() => {
 <template>
   <aside class="app-sidebar topo-sidebar w-64 bg-white border-r border-gray-200 h-screen flex flex-col" aria-label="Navegación principal">
     <div class="topo-drone-scene" aria-hidden="true">
-      <svg class="topo-drone topo-drone-a" viewBox="0 0 48 32" fill="none">
+      <svg v-for="drone in 4" :key="drone" class="topo-drone" :class="`topo-drone-${drone}`" viewBox="0 0 48 32" fill="none">
         <path d="M24 13 13 5M24 13l11-8M24 18 13 27m11-9 11 9" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
         <rect x="18" y="12" width="12" height="8" rx="3" fill="currentColor" />
-        <path d="M7 3h7v4H7zm27 0h7v4h-7zM7 25h7v4H7zm27 0h7v4h-7z" fill="currentColor" />
-      </svg>
-      <svg class="topo-drone topo-drone-b" viewBox="0 0 48 32" fill="none">
-        <path d="M24 13 13 5M24 13l11-8M24 18 13 27m11-9 11 9" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
-        <rect x="18" y="12" width="12" height="8" rx="3" fill="currentColor" />
-        <path d="M7 3h7v4H7zm27 0h7v4h-7zM7 25h7v4H7zm27 0h7v4h-7z" fill="currentColor" />
-      </svg>
-      <svg class="topo-drone topo-drone-c" viewBox="0 0 48 32" fill="none">
-        <path d="M24 13 13 5M24 13l11-8M24 18 13 27m11-9 11 9" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
-        <rect x="18" y="12" width="12" height="8" rx="3" fill="currentColor" />
-        <path d="M7 3h7v4H7zm27 0h7v4h-7zM7 25h7v4H7zm27 0h7v4h-7z" fill="currentColor" />
+        <path class="topo-drone-rotor" d="M7 5h7m20 0h7M7 27h7m20 0h7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" />
       </svg>
     </div>
     <div class="topo-brand h-16 flex items-center px-6 border-b border-gray-100">

@@ -88,10 +88,7 @@
   background-color: #10150e;
   background-image:
     radial-gradient(ellipse at 8% 4%, rgba(120, 150, 76, 0.15), transparent 34%),
-    radial-gradient(ellipse at 92% 92%, rgba(245, 138, 0, 0.09), transparent 38%),
-    linear-gradient(rgba(255, 196, 0, 0.025) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 196, 0, 0.025) 1px, transparent 1px);
-  background-size: auto, auto, 52px 52px, 52px 52px;
+    radial-gradient(ellipse at 92% 92%, rgba(245, 138, 0, 0.09), transparent 38%);
 }
 
 .app-sidebar {
@@ -104,8 +101,9 @@
   overflow: hidden;
   animation: sidebar-arrive 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
   color: #e8eddf;
+  background-color: #10231e;
   background:
-    radial-gradient(ellipse at 50% 0, rgba(120, 150, 76, 0.12), transparent 48%),
+    radial-gradient(ellipse at 50% 0, rgba(120, 150, 76, 0.1), transparent 54%),
     linear-gradient(155deg, #10201b 0%, #10231f 46%, #13241d 100%);
   border-color: rgba(255, 196, 0, 0.12);
   box-shadow: 12px 0 40px rgba(0, 0, 0, 0.2);
@@ -121,16 +119,18 @@
 
 .topo-drone {
   position: absolute;
-  width: 25px;
-  height: 18px;
-  color: rgba(195, 220, 159, 0.42);
-  filter: drop-shadow(0 0 9px rgba(155, 215, 164, 0.28));
-  animation: sidebar-drone-flight 17s ease-in-out infinite;
+  width: 30px;
+  height: 22px;
+  color: rgba(195, 220, 159, 0.62);
+  filter: drop-shadow(0 0 8px rgba(155, 215, 164, 0.3));
+  animation: sidebar-drone-flight 15s ease-in-out infinite;
 }
 
-.topo-drone-a { top: 20%; left: -32px; animation-delay: -2s; }
-.topo-drone-b { top: 52%; left: -32px; width: 19px; opacity: 0.65; animation-delay: -9s; }
-.topo-drone-c { top: 78%; left: -32px; width: 22px; opacity: 0.5; animation-delay: -14s; }
+.topo-drone-1 { top: 17%; left: -34px; animation-delay: -2s; }
+.topo-drone-2 { top: 39%; left: -34px; width: 24px; opacity: 0.68; animation-delay: -8s; animation-duration: 19s; }
+.topo-drone-3 { top: 62%; left: -34px; width: 27px; opacity: 0.76; animation-delay: -12s; animation-duration: 17s; }
+.topo-drone-4 { top: 83%; left: -34px; width: 21px; opacity: 0.58; animation-delay: -5s; animation-duration: 21s; }
+.topo-drone-rotor { transform-box: fill-box; transform-origin: center; animation: sidebar-drone-rotor 0.18s linear infinite; }
 
 .app-sidebar > :not(.topo-drone-scene) { position: relative; z-index: 1; }
 
@@ -498,11 +498,16 @@
 }
 
 @keyframes sidebar-drone-flight {
-  0% { transform: translate3d(-30px, 0, 0) rotate(-5deg); opacity: 0; }
-  12% { opacity: 0.72; }
-  48% { transform: translate3d(210px, -10px, 0) rotate(3deg); opacity: 0.48; }
-  82% { opacity: 0.62; }
-  100% { transform: translate3d(290px, 8px, 0) rotate(-3deg); opacity: 0; }
+  0% { transform: translate3d(-12px, 8px, 0) rotate(-7deg); opacity: 0; }
+  10% { opacity: 0.72; }
+  34% { transform: translate3d(82px, -5px, 0) rotate(2deg); opacity: 0.78; }
+  63% { transform: translate3d(176px, 12px, 0) rotate(-3deg); opacity: 0.62; }
+  90% { opacity: 0.58; }
+  100% { transform: translate3d(270px, -7px, 0) rotate(5deg); opacity: 0; }
+}
+
+@keyframes sidebar-drone-rotor {
+  to { transform: rotate(360deg); }
 }
 
 @media (max-width: 767px) {
