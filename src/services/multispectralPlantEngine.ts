@@ -58,6 +58,16 @@ export interface SpotReading {
   tissueState: string
 }
 
+export interface PresetComparisonItem {
+  id: SimulationPresetId
+  shortLabel: string
+  accentColor: string
+  ndviMean: number
+  tempMeanC: number
+  foliarMoisturePct: number
+  affectedAreaPct: number
+}
+
 export interface MultispectralFrameAnalysis {
   plantDetected: boolean
   detectionConfidence: number
@@ -100,6 +110,7 @@ export interface MultispectralFrameAnalysis {
   }
   hotspots: PlantLesionCluster[]
   spotReading: SpotReading | null
+  presetComparison: PresetComparisonItem[]
 }
 
 export interface ProcessFrameOptions {
@@ -1245,6 +1256,46 @@ export function processMultispectralFrame(
         ? Math.round(clamp(60 - intensity * 25, 25, 80))
         : Math.round(clamp(45 + meanNdvi * 50, 20, 96))
 
+  const baseOpticalNdvi = plantDetected ? clamp(0.45 + (sumGreenness / safeCount) * 0.45, 0.35, 0.84) : 0.62
+  const presetComparison: PresetComparisonItem[] = [
+    {
+      id: 'sin_plagas',
+      shortLabel: SIMULATION_PRESETS.sin_plagas.shortLabel,
+      accentColor: SIMULATION_PRESETS.sin_plagas.accentColor,
+      ndviMean: Number(clamp(baseOpticalNdvi * 0.35 + 0.56, 0.75, 0.89).toFixed(2)),
+      tempMeanC: Number((options.ambientTempC - 2.3).toFixed(1)),
+      foliarMoisturePct: 82,
+      affectedAreaPct: 2.1
+    },
+    {
+      id: 'estres_hidrico',
+      shortLabel: SIMULATION_PRESETS.estres_hidrico.shortLabel,
+      accentColor: SIMULATION_PRESETS.estres_hidrico.accentColor,
+      ndviMean: Number(clamp(baseOpticalNdvi - 0.32 * intensity, 0.22, 0.48).toFixed(2)),
+      tempMeanC: Number((options.ambientTempC + 5.6 * intensity + 1.2).toFixed(1)),
+      foliarMoisturePct: Math.round(clamp(60 - intensity * 38, 16, 52)),
+      affectedAreaPct: Number(clamp(28 + intensity * 44, 18, 78).toFixed(1))
+    },
+    {
+      id: 'sobre_hidratacion',
+      shortLabel: SIMULATION_PRESETS.sobre_hidratacion.shortLabel,
+      accentColor: SIMULATION_PRESETS.sobre_hidratacion.accentColor,
+      ndviMean: Number(clamp(baseOpticalNdvi - 0.21 * intensity, 0.31, 0.56).toFixed(2)),
+      tempMeanC: Number((options.ambientTempC - 3.9 * intensity - 0.8).toFixed(1)),
+      foliarMoisturePct: Math.round(clamp(80 + intensity * 16, 78, 97)),
+      affectedAreaPct: Number(clamp(22 + intensity * 35, 15, 64).toFixed(1))
+    },
+    {
+      id: 'con_plagas',
+      shortLabel: SIMULATION_PRESETS.con_plagas.shortLabel,
+      accentColor: SIMULATION_PRESETS.con_plagas.accentColor,
+      ndviMean: Number(clamp(baseOpticalNdvi - 0.27 * intensity, 0.25, 0.53).toFixed(2)),
+      tempMeanC: Number((options.ambientTempC + 3.1 * intensity + 0.7).toFixed(1)),
+      foliarMoisturePct: Math.round(clamp(64 - intensity * 22, 34, 66)),
+      affectedAreaPct: Number(clamp(24 + intensity * 39, 16, 68).toFixed(1))
+    }
+  ]
+
   return {
     plantDetected,
     detectionConfidence,
@@ -1288,7 +1339,8 @@ export function processMultispectralFrame(
       affectedAreaPct
     },
     hotspots,
-    spotReading
+    spotReading,
+    presetComparison
   }
 }
 
