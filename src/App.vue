@@ -115,6 +115,9 @@ onUnmounted(() => {
         { 'app-workspace': !route.meta.public }
       ]"
     >
+      <div v-if="store.authError" class="mx-4 mt-4 rounded-lg border border-amber-400/30 bg-amber-900/20 px-4 py-3 text-sm text-amber-100" role="alert">
+        {{ store.authError }}
+      </div>
       <RouterView v-slot="{ Component }">
         <component v-if="route.meta.public" :is="Component" :key="route.path" />
         <Transition v-else name="page" mode="in-out">

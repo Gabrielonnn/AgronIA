@@ -1,22 +1,25 @@
 <script setup lang="ts">
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { Home, Map, MapPin, PieChart, Database, Settings, LogOut, MonitorPlay, Search, ShieldCheck, Users, X } from 'lucide-vue-next'
+import { Home, Map, MapPin, PieChart, Database, Settings, LogOut, MonitorPlay, ShieldCheck, Users, ScanSearch, Sprout } from 'lucide-vue-next'
 import { useMainStore } from '../../stores'
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { supabase } from '../../services/supabase'
+import { computed } from 'vue'
 
 const route = useRoute()
 const router = useRouter()
 const store = useMainStore()
-const menuSearch = ref('')
-const menuSearchInput = ref<HTMLInputElement | null>(null)
 
 const userEmail = computed(() => store.user?.email || 'demo@agronia.com')
+const avatarUrl = computed(() => {
+  const path = store.user?.profile?.avatar_path
+  if (path && supabase) return supabase.storage.from('avatars').getPublicUrl(path).data.publicUrl
+  return store.user?.user_metadata?.avatar_url || ''
+})
 const userRole = computed(() => {
   const profileRole = store.user?.profile?.role
-  const metadataRole = store.user?.user_metadata?.role
-  if (profileRole === 'administrador' || metadataRole === 'administrador' || userEmail.value === 'jenone0424@gmail.com') return 'Administrador'
-  if (profileRole === 'tecnico' || metadataRole === 'tecnico') return 'Técnico'
-  const role = profileRole || metadataRole || 'cliente'
+  if (profileRole === 'administrador' && store.user?.profile?.active) return 'Administrador'
+  if (profileRole === 'tecnico') return 'Técnico'
+  const role = profileRole || 'cliente'
   return role.charAt(0).toUpperCase() + role.slice(1)
 })
 
@@ -25,39 +28,22 @@ const menuItems = computed(() => [
   { name: 'Mapas', path: '/mapas', icon: Map, group: 'OPERACIÓN', accent: 'blue' },
   { name: 'Dashboards', path: '/dashboards', icon: PieChart, group: 'OPERACIÓN', accent: 'violet' },
   { name: 'Datos', path: '/datos', icon: Database, group: 'OPERACIÓN', accent: 'cyan' },
+  { name: 'Análisis IA', path: '/analisis', icon: ScanSearch, group: 'OPERACIÓN', accent: 'violet' },
+  { name: 'Diagnóstico', path: '/diagnostico', icon: ScanSearch, group: 'OPERACIÓN', accent: 'green' },
   { name: 'Simulación', path: '/simulacion', icon: MonitorPlay, group: 'OPERACIÓN', accent: 'gold' },
   { name: 'Usuarios', path: '/usuarios', icon: Users, group: 'GESTIÓN', accent: 'pink' },
   { name: 'Parcelas', path: '/parcelas', icon: MapPin, group: 'GESTIÓN', accent: 'orange' },
+  { name: 'Campos y registros', path: '/campos', icon: Sprout, group: 'GESTIÓN', accent: 'green' },
   { name: 'Configuración', path: '/configuracion', icon: Settings, group: 'GESTIÓN', accent: 'slate' },
 ].filter(item => item.path !== '/usuarios' || userRole.value === 'Administrador'))
 
 const isActive = (path: string) => route.path === path
 const menuGroups = computed(() => {
-  const query = menuSearch.value.trim().toLocaleLowerCase()
   return ['OPERACIÓN', 'GESTIÓN'].map(name => ({
     name,
-    items: menuItems.value.filter(item =>
-      item.group === name && (!query || item.name.toLocaleLowerCase().includes(query))
-    )
-  })).filter(group => group.items.length > 0)
+    items: menuItems.value.filter(item => item.group === name)
+  }))
 })
-
-const handleMenuShortcut = (event: KeyboardEvent) => {
-  const target = event.target
-  const isTyping = target instanceof HTMLElement
-    && (target.isContentEditable || target.matches('input, textarea, select'))
-
-  if (event.key === '/' && !isTyping && !event.metaKey && !event.ctrlKey && !event.altKey) {
-    event.preventDefault()
-    menuSearchInput.value?.focus()
-  } else if (event.key === 'Escape' && document.activeElement === menuSearchInput.value) {
-    menuSearch.value = ''
-    menuSearchInput.value?.blur()
-  }
-}
-
-onMounted(() => window.addEventListener('keydown', handleMenuShortcut))
-onUnmounted(() => window.removeEventListener('keydown', handleMenuShortcut))
 
 const handleLogout = async () => {
   await store.signOut()
@@ -93,6 +79,13 @@ const roleColor = computed(() => {
 
 <template>
   <aside class="app-sidebar topo-sidebar w-64 bg-white border-r border-gray-200 h-screen flex flex-col" aria-label="Navegación principal">
+    <div class="topo-drone-scene" aria-hidden="true">
+      <svg v-for="drone in 4" :key="drone" class="topo-drone" :class="`topo-drone-${drone}`" viewBox="0 0 48 32" fill="none">
+        <path d="M24 13 13 5M24 13l11-8M24 18 13 27m11-9 11 9" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
+        <rect x="18" y="12" width="12" height="8" rx="3" fill="currentColor" />
+        <path class="topo-drone-rotor" d="M7 5h7m20 0h7M7 27h7m20 0h7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" />
+      </svg>
+    </div>
     <div class="topo-brand h-16 flex items-center px-6 border-b border-gray-100">
       <div class="topo-brand-content flex items-center gap-2">
         <div class="topo-brand-mark w-8 h-8 rounded-lg bg-agron-green flex items-center justify-center shadow-sm">
@@ -107,15 +100,6 @@ const roleColor = computed(() => {
     </div>
     
     <nav class="topo-navigation flex-1 overflow-y-auto py-4" aria-label="Secciones de AgronIA">
-      <label class="topo-menu-search">
-        <Search :size="15" aria-hidden="true" />
-        <input ref="menuSearchInput" v-model="menuSearch" type="search" placeholder="Filtrar secciones" aria-label="Filtrar secciones del menú" />
-        <button v-if="menuSearch" type="button" aria-label="Limpiar búsqueda" @click="menuSearch = ''">
-          <X :size="14" />
-        </button>
-        <kbd v-else>/</kbd>
-      </label>
-
       <section v-for="group in menuGroups" :key="group.name" class="topo-menu-group">
         <p class="topo-menu-title text-[10px] font-bold text-gray-400 uppercase tracking-widest px-6 mb-2">{{ group.name }}</p>
         <ul class="space-y-0.5 px-3">
@@ -134,13 +118,18 @@ const roleColor = computed(() => {
           </li>
         </ul>
       </section>
-      <p v-if="menuGroups.length === 0" class="topo-menu-empty">No se encontraron secciones.</p>
     </nav>
     
     <div class="topo-account-area p-4 border-t border-gray-100">
       <div class="topo-user-card flex items-center gap-3 mb-3 p-2 rounded-lg bg-gray-50">
         <div class="topo-user-avatar w-9 h-9 rounded-full bg-agron-green flex items-center justify-center flex-shrink-0">
-          <span class="text-xs font-bold text-white">{{ userInitials }}</span>
+          <img
+            v-if="avatarUrl"
+            :src="avatarUrl"
+            :alt="`Foto de perfil de ${userDisplayName}`"
+            class="h-full w-full rounded-full object-cover"
+          />
+          <span v-else class="text-xs font-bold text-white">{{ userInitials }}</span>
         </div>
         <div class="flex-1 min-w-0">
           <p class="topo-user-name text-xs font-bold truncate">{{ userDisplayName }}</p>

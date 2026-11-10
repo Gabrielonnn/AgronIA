@@ -1,16 +1,31 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import Dropzone from '../components/data/Dropzone.vue'
 import DataTable from '../components/data/DataTable.vue'
 import Card from '../components/ui/Card.vue'
-import { FileText, Download, Trash2, BarChart3 } from 'lucide-vue-next'
+import { FileText, Download, Trash2, BarChart3, Database, LoaderCircle } from 'lucide-vue-next'
+import { listFields, saveFieldMetrics, type FieldRecord, type FieldMetricInput } from '../services/agronomyData'
 
 const tableData = ref<any[]>([])
 const columnHeaders = ref<string[]>([])
 const fileName = ref('')
+const fields = ref<FieldRecord[]>([])
+const selectedFieldId = ref('')
+const saving = ref(false)
+const saveStatus = ref('')
+const fieldLoadError = ref('')
+
+onMounted(async () => {
+  try {
+    fields.value = await listFields()
+  } catch (error) {
+    fieldLoadError.value = error instanceof Error ? error.message : 'No se pudieron cargar los campos.'
+  }
+})
 
 const handleDataLoaded = (data: any[]) => {
   tableData.value = data
+  saveStatus.value = ''
   if (data.length > 0) {
     columnHeaders.value = Object.keys(data[0])
   }
@@ -24,6 +39,57 @@ const clearData = () => {
   tableData.value = []
   columnHeaders.value = []
   fileName.value = ''
+  saveStatus.value = ''
+}
+
+const normalizeHeader = (header: string) => header
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase()
+  .replace(/[^a-z0-9]/g, '')
+
+const numericColumn = (row: Record<string, unknown>, names: string[]) => {
+  const expected = new Set(names.map(normalizeHeader))
+  const key = Object.keys(row).find(header => expected.has(normalizeHeader(header)))
+  if (!key || row[key] === null || row[key] === undefined || row[key] === '') return null
+  const value = Number(String(row[key]).trim().replace(',', '.'))
+  return Number.isFinite(value) ? value : null
+}
+
+const recordDate = (row: Record<string, unknown>) => {
+  const dateHeaders = new Set(['date', 'recorddate', 'fecha', 'fecharegistro'])
+  const header = Object.keys(row).find(key => dateHeaders.has(normalizeHeader(key)))
+  if (!header || !row[header]) return undefined
+  const parsedDate = new Date(String(row[header]))
+  return Number.isNaN(parsedDate.getTime()) ? undefined : parsedDate.toISOString()
+}
+
+const saveToDatabase = async () => {
+  if (!selectedFieldId.value || tableData.value.length === 0 || saving.value) return
+  saving.value = true
+  saveStatus.value = ''
+  const metrics: FieldMetricInput[] = tableData.value.map((row: Record<string, unknown>) => ({
+    field_id: selectedFieldId.value,
+    record_date: recordDate(row),
+    soil_humidity: numericColumn(row, ['soil_humidity', 'humedad_suelo', 'humedad']),
+    temperature: numericColumn(row, ['temperature', 'temperatura', 'temp']),
+    sustainability_index: numericColumn(row, ['sustainability_index', 'indice_sostenibilidad']),
+    raw_data: Object.fromEntries(
+      Object.entries(row).map(([key, value]) => [
+        key,
+        value === null || value === undefined ? null : String(value),
+      ]),
+    ),
+  }))
+
+  try {
+    await saveFieldMetrics(metrics)
+    saveStatus.value = `${metrics.length} registro(s) guardado(s) en las métricas del campo.`
+  } catch (error) {
+    saveStatus.value = error instanceof Error ? error.message : 'No se pudieron guardar los registros.'
+  } finally {
+    saving.value = false
+  }
 }
 
 const downloadCSV = () => {
@@ -74,6 +140,7 @@ const numericSummary = computed(() => {
         El archivo debe incluir encabezados en la primera fila.
       </div>
     </Card>
+    <p v-if="fieldLoadError" class="text-sm text-red-600" role="alert">{{ fieldLoadError }}</p>
 
     <template v-if="tableData.length > 0">
       <!-- Barra de acciones -->
@@ -89,7 +156,25 @@ const numericSummary = computed(() => {
             Archivo: <span class="font-medium text-gray-700">{{ fileName }}</span>
           </span>
         </div>
-        <div class="flex gap-2">
+        <div class="flex flex-wrap gap-2">
+          <select
+            v-model="selectedFieldId"
+            class="rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-700"
+            aria-label="Campo donde guardar las mediciones"
+          >
+            <option value="">Selecciona un campo</option>
+            <option v-for="field in fields" :key="field.id" :value="field.id">{{ field.name }}</option>
+          </select>
+          <button
+            type="button"
+            :disabled="!selectedFieldId || saving"
+            @click="saveToDatabase"
+            class="flex items-center gap-1.5 text-xs font-semibold text-agron-green-dark hover:text-agron-green border border-agron-green hover:bg-agron-green-light px-3 py-1.5 rounded-lg transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <LoaderCircle v-if="saving" class="w-3.5 h-3.5 animate-spin" />
+            <Database v-else class="w-3.5 h-3.5" />
+            {{ saving ? 'Guardando…' : 'Guardar en el campo' }}
+          </button>
           <button @click="downloadCSV" class="flex items-center gap-1.5 text-xs font-semibold text-gray-600 hover:text-agron-green-dark border border-gray-200 hover:border-agron-green px-3 py-1.5 rounded-lg transition-colors">
             <Download class="w-3.5 h-3.5" /> Exportar CSV
           </button>
@@ -98,6 +183,7 @@ const numericSummary = computed(() => {
           </button>
         </div>
       </div>
+      <p v-if="saveStatus" class="text-sm text-gray-600" role="status">{{ saveStatus }}</p>
 
       <!-- Resumen estadístico -->
       <Card v-if="numericSummary.length > 0">

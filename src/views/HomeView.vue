@@ -6,60 +6,133 @@ import {
   TitleComponent, TooltipComponent, LegendComponent, GridComponent
 } from 'echarts/components'
 import VChart from 'vue-echarts'
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount, shallowRef, watch } from 'vue'
 import { Satellite, Droplets, Bug, Wind, ArrowRight, TrendingUp } from 'lucide-vue-next'
 import { RouterLink } from 'vue-router'
+import { useMainStore } from '../stores'
+import { listFieldMetrics, listFields, type FieldMetricRecord, type FieldRecord } from '../services/agronomyData'
 
 use([CanvasRenderer, LineChart, BarChart, GaugeChart, TitleComponent, TooltipComponent, LegendComponent, GridComponent])
 
-
-
-// Telemetría en tiempo real (simulada)
-const humidity = ref(62)
-const pestIndex = ref(12)
-const temperature = ref(27.4)
-const windSpeed = ref(14)
-
-let telemetryInterval: ReturnType<typeof setInterval>
-
-onMounted(() => {
-  telemetryInterval = setInterval(() => {
-    humidity.value = Math.max(30, Math.min(95, humidity.value + (Math.random() - 0.5) * 3))
-    pestIndex.value = Math.max(0, Math.min(100, pestIndex.value + (Math.random() - 0.5) * 2))
-    temperature.value = parseFloat((Math.max(18, Math.min(40, temperature.value + (Math.random() - 0.5) * 0.5))).toFixed(1))
-    windSpeed.value = Math.max(0, Math.min(50, windSpeed.value + (Math.random() - 0.5) * 2))
-  }, 2000)
+const store = useMainStore()
+const userName = computed(() => {
+  const name = store.user?.profile?.full_name ?? store.user?.user_metadata?.full_name
+  const firstName = typeof name === 'string' ? name.trim().split(/\s+/)[0] : ''
+  return firstName || 'productor'
 })
 
-onBeforeUnmount(() => clearInterval(telemetryInterval))
+const fields = shallowRef<FieldRecord[]>([])
+const selectedFieldId = ref('')
+const metrics = shallowRef<FieldMetricRecord[]>([])
+const dataError = ref('')
+const latestMetric = computed(() => metrics.value[0])
+const hasSimulationMetrics = computed(() => metrics.value.some(metric =>
+  metric.raw_data !== null
+  && typeof metric.raw_data === 'object'
+  && !Array.isArray(metric.raw_data)
+  && metric.raw_data.source === 'simulation',
+))
+const rawMetricValue = (key: string, metric?: FieldMetricRecord) => {
+  const rawData = metric?.raw_data
+  if (!rawData || typeof rawData !== 'object' || Array.isArray(rawData)) return null
+  const value = rawData[key]
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsedValue = Number(value)
+    if (Number.isFinite(parsedValue)) return parsedValue
+  }
+  return null
+}
+const latestMetricWith = (value: (metric: FieldMetricRecord) => number | null) =>
+  metrics.value.find(metric => value(metric) !== null)
+const humidity = computed(() => latestMetricWith(metric => metric.soil_humidity)?.soil_humidity ?? null)
+const pestIndex = computed(() => {
+  const metric = latestMetricWith(row => rawMetricValue('pest_index', row))
+  return metric ? rawMetricValue('pest_index', metric) : null
+})
+const temperature = computed(() => latestMetricWith(metric => metric.temperature)?.temperature ?? null)
+const speedMetric = computed(() => latestMetricWith(row =>
+  rawMetricValue('ground_speed_mps', row) ?? rawMetricValue('wind_speed_kmh', row),
+))
+const windSpeed = computed(() => {
+  const metric = speedMetric.value
+  if (!metric) return null
+  const metersPerSecond = rawMetricValue('ground_speed_mps', metric)
+  if (metersPerSecond !== null) return metersPerSecond * 3.6
+  return rawMetricValue('wind_speed_kmh', metric)
+})
+const speedLabel = computed(() => speedMetric.value && rawMetricValue('ground_speed_mps', speedMetric.value) !== null
+  ? 'Velocidad del dron'
+  : 'Velocidad del viento')
 
-// Gráfico de humedad de suelo semanal
-const humidityChartOptions = {
+const loadMetrics = async () => {
+  if (!selectedFieldId.value) {
+    metrics.value = []
+    return
+  }
+  metrics.value = await listFieldMetrics(selectedFieldId.value)
+  dataError.value = ''
+}
+
+const loadFields = async () => {
+  fields.value = await listFields()
+  if (!fields.value.some(field => field.id === selectedFieldId.value)) {
+    selectedFieldId.value = fields.value[0]?.id ?? ''
+  }
+  dataError.value = ''
+}
+
+watch(selectedFieldId, () => {
+  void loadMetrics().catch(error => {
+    dataError.value = error instanceof Error ? error.message : 'No se pudieron cargar las mediciones.'
+  })
+})
+
+let telemetryInterval: ReturnType<typeof setInterval> | undefined
+onMounted(async () => {
+  try {
+    await loadFields()
+  } catch (error) {
+    dataError.value = error instanceof Error ? error.message : 'No se pudieron cargar los datos del campo.'
+  }
+  telemetryInterval = setInterval(() => {
+    void loadMetrics().catch(error => {
+      dataError.value = error instanceof Error ? error.message : 'No se pudieron actualizar las mediciones.'
+    })
+  }, 10_000)
+})
+onBeforeUnmount(() => {
+  if (telemetryInterval) clearInterval(telemetryInterval)
+})
+
+const chartRecords = computed(() => [...metrics.value].slice(0, 7).reverse())
+const humidityChartOptions = computed(() => ({
   tooltip: { trigger: 'axis' },
   grid: { left: '3%', right: '4%', bottom: '10%', top: '10%', containLabel: true },
-  xAxis: { type: 'category', data: ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'], axisLine: { lineStyle: { color: '#d1fae5' } }, axisLabel: { color: '#6ee7b7' } },
+  xAxis: { type: 'category', data: chartRecords.value.map(row => new Date(row.record_date).toLocaleDateString('es-MX', { weekday: 'short' })), axisLine: { lineStyle: { color: '#d1fae5' } }, axisLabel: { color: '#6ee7b7' } },
   yAxis: { type: 'value', axisLabel: { color: '#6ee7b7', formatter: '{value}%' }, splitLine: { lineStyle: { color: '#064e3b30' } } },
   series: [{
     name: 'Humedad Suelo',
     type: 'line',
     smooth: true,
-    data: [58, 54, 49, 65, 70, 67, 62],
+    data: chartRecords.value.map(row => row.soil_humidity),
     itemStyle: { color: '#10B981' },
     areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: '#10B98155' }, { offset: 1, color: '#10B98105' }] } },
     lineStyle: { width: 2, color: '#10B981' }
   }]
-}
+}))
 
-// Gráfico de índice de plagas semanal
-const pestChartOptions = {
+const pestChartOptions = computed(() => ({
   tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
   grid: { left: '3%', right: '4%', bottom: '10%', top: '10%', containLabel: true },
-  xAxis: { type: 'category', data: ['Sec A', 'Sec B', 'Sec C', 'Sec D', 'Sec E'], axisLabel: { color: '#fcd34d' } },
+  xAxis: { type: 'category', data: chartRecords.value.map(row => new Date(row.record_date).toLocaleDateString('es-MX', { month: 'numeric', day: 'numeric' })), axisLabel: { color: '#fcd34d' } },
   yAxis: { type: 'value', axisLabel: { color: '#fcd34d', formatter: '{value}%' }, splitLine: { lineStyle: { color: '#78350f30' } } },
   series: [{
     name: 'Índice de Plagas',
     type: 'bar',
-    data: [8, 22, 12, 35, 5],
+    data: chartRecords.value.map(row => {
+      return rawMetricValue('pest_index', row)
+    }),
     itemStyle: {
       color: (params: any) => {
         const v = params.data
@@ -70,59 +143,68 @@ const pestChartOptions = {
       borderRadius: [4, 4, 0, 0]
     }
   }]
-}
+}))
 
 const services = [
   {
     title: 'Análisis Multiespectral',
-    description: 'Imágenes NDVI y térmicas de alta resolución para detectar estrés hídrico y plagas antes de que sean visibles.',
+    description: 'Registra imágenes satelitales y consulta valores NDVI asociados a tus campos.',
     img: 'https://images.unsplash.com/photo-1500382017468-9049fed747ef?w=800&auto=format&fit=crop',
-    badge: 'IA Activa'
+    badge: 'Registro disponible'
   },
   {
     title: 'Drones Autónomos',
-    description: 'Flota de UAVs para fumigación e irrigación de precisión, reduciendo el consumo de agroquímicos hasta un 40%.',
+    description: 'Conecta telemetría de solo lectura para visualizar la posición, rumbo y altitud relativa del dron.',
     img: 'https://images.unsplash.com/photo-1473968512647-3e447244af8f?w=800&auto=format&fit=crop',
-    badge: 'Automatizado'
+    badge: 'Seguimiento GPS'
   },
   {
     title: 'Sensores IoT en Suelo',
-    description: 'Red de sondas conectadas para medir en tiempo real la humedad, conductividad y temperatura de la raíz.',
+    description: 'Importa registros CSV o guarda mediciones de campo para consultar su evolución.',
     img: 'https://images.unsplash.com/photo-1530836369250-ef71a3f5e43d?w=800&auto=format&fit=crop',
-    badge: 'Tiempo Real'
+    badge: 'Datos del campo'
   },
   {
     title: 'Dashboards Analíticos',
-    description: 'Visualiza reportes detallados y series de tiempo con recomendaciones prescriptivas generadas por IA.',
+    description: 'Explora indicadores y tendencias calculados a partir de las mediciones guardadas para cada campo.',
     img: 'https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=800&auto=format&fit=crop',
-    badge: 'Big Data'
+    badge: 'Supabase'
   }
 ]
 
-const stats = [
-  { label: 'Agricultores atendidos', value: '1,240+', icon: '🌾' },
-  { label: 'Hectáreas monitoreadas', value: '38,500', icon: '🛰️' },
-  { label: 'Ahorro en agua', value: '34%', icon: '💧' },
-  { label: 'Reducción de plagas', value: '51%', icon: '🐛' },
-]
+const stats = computed(() => [
+  { label: 'Campos registrados', value: String(fields.value.length), icon: '🌾' },
+  { label: 'Mediciones recientes', value: String(metrics.value.length), icon: '🛰️' },
+  { label: 'Última humedad registrada', value: humidity.value === null ? '—' : `${humidity.value}%`, icon: '💧' },
+  { label: 'Último registro', value: latestMetric.value ? new Date(latestMetric.value.record_date).toLocaleString('es-MX') : '—', icon: '📊' },
+])
 </script>
 
 <template>
-  <div class="home-page space-y-8">
+  <div class="home-page space-y-7">
+    <header class="home-heading">
+      <div>
+        <span class="home-eyebrow">CENTRO DE OPERACIONES</span>
+        <h1>Hola, {{ userName }}<span class="home-heading-period">.</span></h1>
+        <p>Una vista clara de lo que sucede en tu campo.</p>
+      </div>
+      <span class="home-heading-tag"><span></span> AGRONIA · SINALOA</span>
+    </header>
+
     <!-- Hero Banner -->
     <section class="home-hero relative rounded-2xl overflow-hidden min-h-[320px] flex items-end shadow-xl">
       <img src="https://images.unsplash.com/photo-1625246333195-78d9c38ad449?auto=format&fit=crop&q=80&w=1600" alt="Campos agrícolas de Sinaloa" class="home-hero-image absolute inset-0 w-full h-full object-cover" />
       <div class="home-hero-overlay absolute inset-0"></div>
       <div class="home-hero-content relative z-10 p-8 text-white w-full">
-        <span class="home-status inline-flex items-center gap-1.5 bg-agron-green/90 text-white text-xs font-semibold px-3 py-1 rounded-full mb-3">
+        <span class="home-status inline-flex items-center gap-1.5 text-white text-xs font-semibold px-3 py-1 rounded-full mb-3">
           <span class="w-2 h-2 rounded-full bg-white animate-pulse"></span>
-          Sistema Activo — Culiacán, Sinaloa
+          AGRICULTURA DE PRECISIÓN
         </span>
         <h1 class="home-title text-4xl font-extrabold leading-tight mb-2">
-          Bienvenido a <span class="text-agron-green">AgronIA</span>
+          Tu campo, con una nueva <span class="text-agron-green">perspectiva.</span>
         </h1>
         <p class="home-description text-gray-200 text-lg max-w-xl">
-          La plataforma satelital de agricultura de precisión para el agro sinaloense.
+          Datos, mapas e inteligencia agrícola para tomar decisiones con confianza.
         </p>
         <div class="home-actions flex gap-3 mt-5">
           <RouterLink to="/mapas" class="home-action-primary inline-flex items-center gap-2 bg-agron-green hover:bg-agron-green-dark text-white font-semibold px-5 py-2.5 rounded-lg transition-colors text-sm">
@@ -137,14 +219,20 @@ const stats = [
 
     <!-- Servicios ofrecidos (Movido arriba) -->
     <div>
-      <h2 class="home-section-title text-xl font-bold text-gray-900 mb-4">Nuestros Servicios</h2>
+      <div class="home-section-heading">
+        <div>
+          <span class="home-eyebrow">HERRAMIENTAS</span>
+          <h2 class="home-section-title">Todo tu campo, en un solo lugar</h2>
+        </div>
+        <span class="home-section-caption">Explora las capacidades de AgronIA</span>
+      </div>
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div v-for="service in services" :key="service.title"
-        class="home-service-card group relative rounded-xl overflow-hidden shadow-sm border border-gray-100 hover:shadow-md transition-shadow cursor-default">
+        class="home-service-card group relative rounded-xl overflow-hidden shadow-sm border hover:shadow-md transition-shadow cursor-default">
           <div class="relative h-48 overflow-hidden">
             <img :src="service.img" :alt="service.title" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
             <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
-            <span class="absolute top-3 right-3 bg-agron-green text-white text-xs font-bold px-2.5 py-1 rounded-full">{{ service.badge }}</span>
+            <span class="home-service-badge absolute top-3 right-3 text-xs font-bold px-2.5 py-1 rounded-full">{{ service.badge }}</span>
           </div>
           <div class="home-service-copy p-5 bg-white">
             <h3 class="font-bold text-gray-900 text-lg mb-2">{{ service.title }}</h3>
@@ -156,54 +244,71 @@ const stats = [
 
     <!-- Telemetría en tiempo real (Movido abajo) -->
     <div>
-      <div class="flex items-center justify-between mb-3">
-        <h2 class="home-section-title text-xl font-bold text-gray-900">Telemetría en Tiempo Real</h2>
-        <span class="home-live-label flex items-center gap-1.5 text-xs text-agron-green font-medium">
-          <span class="w-2 h-2 rounded-full bg-agron-green animate-pulse"></span>
-          Actualización cada 2s
-        </span>
+      <div class="home-section-heading">
+        <div>
+          <span class="home-eyebrow">ESTADO DEL CULTIVO</span>
+          <h2 class="home-section-title">Resumen de condiciones</h2>
+        </div>
+        <div class="flex flex-wrap items-center justify-end gap-3">
+          <label class="sr-only" for="home-field-select">Campo para consultar</label>
+          <select id="home-field-select" v-model="selectedFieldId" class="rounded-lg border border-white/10 bg-[#182019] px-3 py-2 text-sm text-white" :disabled="fields.length === 0">
+            <option value="" disabled>Selecciona un campo</option>
+            <option v-for="field in fields" :key="field.id" :value="field.id">{{ field.name }}</option>
+          </select>
+          <span class="home-live-label"><span></span> Datos guardados · consulta cada 10 s</span>
+        </div>
       </div>
+      <p v-if="dataError" role="alert" class="mb-3 text-sm text-red-400">{{ dataError }}</p>
+      <p v-else-if="hasSimulationMetrics" class="mb-3 text-sm text-amber-300">
+        El historial incluye registros generados por el simulador; no son mediciones de sensores.
+      </p>
+      <p v-else-if="!fields.length" class="mb-3 text-sm text-gray-400">
+        Aún no tienes campos registrados. <RouterLink to="/mapas" class="text-agron-green underline">Dibuja o guarda uno en el mapa.</RouterLink>
+      </p>
+      <p v-else-if="!metrics.length" class="mb-3 text-sm text-gray-400">
+        Este campo todavía no tiene mediciones guardadas; aquí aparecerán cuando conectes sensores o registres datos.
+      </p>
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div class="bg-white rounded-xl p-5 shadow-sm border border-gray-100 flex flex-col gap-2">
+        <div class="home-metric-card rounded-xl p-5 shadow-sm border flex flex-col gap-2">
           <div class="flex items-center gap-2 text-blue-500">
             <Droplets class="w-5 h-5" />
-            <span class="text-sm font-medium text-gray-600">Humedad del Suelo</span>
+            <span class="home-metric-label">Humedad del suelo</span>
           </div>
-          <div class="text-3xl font-extrabold text-gray-900">{{ humidity.toFixed(0) }}<span class="text-lg font-medium text-gray-400">%</span></div>
-          <div class="w-full bg-gray-100 rounded-full h-1.5">
-            <div class="h-1.5 rounded-full bg-blue-400 transition-all duration-700" :style="`width: ${humidity}%`"></div>
+          <div class="home-metric-value">{{ humidity === null ? '—' : humidity.toFixed(0) }}<span v-if="humidity !== null">%</span></div>
+          <div class="home-meter">
+            <div class="h-1.5 rounded-full bg-blue-400 transition-all duration-700" :style="{ width: `${humidity ?? 0}%` }"></div>
           </div>
         </div>
-        <div class="bg-white rounded-xl p-5 shadow-sm border border-gray-100 flex flex-col gap-2">
+        <div class="home-metric-card rounded-xl p-5 shadow-sm border flex flex-col gap-2">
           <div class="flex items-center gap-2 text-orange-500">
             <Bug class="w-5 h-5" />
-            <span class="text-sm font-medium text-gray-600">Índice de Plagas</span>
+            <span class="home-metric-label">Índice de plagas</span>
           </div>
-          <div class="text-3xl font-extrabold" :class="pestIndex > 30 ? 'text-red-500' : pestIndex > 15 ? 'text-orange-500' : 'text-agron-green'">
-            {{ pestIndex.toFixed(0) }}<span class="text-lg font-medium text-gray-400">%</span>
+          <div class="home-metric-value" :class="pestIndex === null ? '' : pestIndex > 30 ? 'text-red-400' : pestIndex > 15 ? 'text-orange-400' : 'text-agron-green'">
+            {{ pestIndex === null ? '—' : pestIndex.toFixed(0) }}<span v-if="pestIndex !== null">%</span>
           </div>
-          <div class="w-full bg-gray-100 rounded-full h-1.5">
-            <div class="h-1.5 rounded-full transition-all duration-700" :class="pestIndex > 30 ? 'bg-red-500' : pestIndex > 15 ? 'bg-orange-400' : 'bg-agron-green'" :style="`width: ${pestIndex}%`"></div>
+          <div class="home-meter">
+            <div class="h-1.5 rounded-full transition-all duration-700" :class="pestIndex === null ? 'bg-gray-500' : pestIndex > 30 ? 'bg-red-500' : pestIndex > 15 ? 'bg-orange-400' : 'bg-agron-green'" :style="{ width: `${pestIndex ?? 0}%` }"></div>
           </div>
         </div>
-        <div class="bg-white rounded-xl p-5 shadow-sm border border-gray-100 flex flex-col gap-2">
+        <div class="home-metric-card rounded-xl p-5 shadow-sm border flex flex-col gap-2">
           <div class="flex items-center gap-2 text-agron-alert">
             <TrendingUp class="w-5 h-5" />
-            <span class="text-sm font-medium text-gray-600">Temperatura</span>
+            <span class="home-metric-label">Temperatura</span>
           </div>
-          <div class="text-3xl font-extrabold text-gray-900">{{ temperature }}<span class="text-lg font-medium text-gray-400">°C</span></div>
-          <div class="w-full bg-gray-100 rounded-full h-1.5">
-            <div class="h-1.5 rounded-full bg-orange-400 transition-all duration-700" :style="`width: ${((temperature - 18) / 22) * 100}%`"></div>
+          <div class="home-metric-value">{{ temperature === null ? '—' : temperature.toFixed(1) }}<span v-if="temperature !== null">°C</span></div>
+          <div class="home-meter">
+            <div class="h-1.5 rounded-full bg-orange-400 transition-all duration-700" :style="{ width: `${temperature === null ? 0 : Math.max(0, Math.min(100, ((temperature - 18) / 22) * 100))}%` }"></div>
           </div>
         </div>
-        <div class="bg-white rounded-xl p-5 shadow-sm border border-gray-100 flex flex-col gap-2">
+        <div class="home-metric-card rounded-xl p-5 shadow-sm border flex flex-col gap-2">
           <div class="flex items-center gap-2 text-cyan-500">
             <Wind class="w-5 h-5" />
-            <span class="text-sm font-medium text-gray-600">Velocidad del Viento</span>
+            <span class="home-metric-label">{{ speedLabel }}</span>
           </div>
-          <div class="text-3xl font-extrabold text-gray-900">{{ windSpeed.toFixed(0) }}<span class="text-lg font-medium text-gray-400"> km/h</span></div>
-          <div class="w-full bg-gray-100 rounded-full h-1.5">
-            <div class="h-1.5 rounded-full bg-cyan-400 transition-all duration-700" :style="`width: ${(windSpeed / 50) * 100}%`"></div>
+          <div class="home-metric-value">{{ windSpeed === null ? '—' : windSpeed.toFixed(0) }}<span v-if="windSpeed !== null"> km/h</span></div>
+          <div class="home-meter">
+            <div class="h-1.5 rounded-full bg-cyan-400 transition-all duration-700" :style="{ width: `${windSpeed === null ? 0 : Math.max(0, Math.min(100, (windSpeed / 50) * 100))}%` }"></div>
           </div>
         </div>
       </div>
@@ -211,14 +316,14 @@ const stats = [
 
     <!-- Gráficos analíticos -->
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <div class="bg-agron-green-dark rounded-xl p-5 shadow-sm">
-        <h3 class="font-semibold text-white mb-4">Humedad del Suelo — Semana Actual</h3>
+      <div class="home-chart-card rounded-xl p-5 shadow-sm">
+        <h3 class="home-chart-title">Humedad del suelo <span>· Últimos registros</span></h3>
         <div class="h-52">
           <v-chart :option="humidityChartOptions" autoresize class="h-full w-full" />
         </div>
       </div>
-      <div class="bg-[#1c1007] rounded-xl p-5 shadow-sm">
-        <h3 class="font-semibold text-white mb-4">Índice de Plagas por Sector</h3>
+      <div class="home-chart-card home-chart-warm rounded-xl p-5 shadow-sm">
+        <h3 class="home-chart-title">Índice de plagas <span>· Historial registrado</span></h3>
         <div class="h-52">
           <v-chart :option="pestChartOptions" autoresize class="h-full w-full" />
         </div>
@@ -226,8 +331,9 @@ const stats = [
     </div>
 
     <!-- Estadísticas de impacto -->
-    <div class="bg-gradient-to-r from-agron-green-dark to-emerald-700 rounded-2xl p-8 text-white">
-      <h2 class="text-xl font-bold mb-6 text-center">Impacto AgronIA en Sinaloa</h2>
+    <div class="home-impact rounded-2xl p-8 text-white">
+      <span class="home-eyebrow">RESULTADOS</span>
+      <h2 class="text-xl font-bold mb-6 text-center">Datos de tu operación</h2>
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-6">
         <div v-for="stat in stats" :key="stat.label" class="text-center">
           <div class="text-3xl mb-1">{{ stat.icon }}</div>
@@ -245,9 +351,87 @@ const stats = [
   animation: home-enter 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+.home-heading,
+.home-section-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.home-heading { padding: 0.25rem 0 0.2rem; }
+
+.home-heading h1 {
+  margin-top: 0.35rem;
+  color: #f0f1e9;
+  font-size: clamp(1.65rem, 3vw, 2.25rem);
+  font-weight: 750;
+  letter-spacing: -0.055em;
+}
+
+.home-heading > div > p {
+  margin-top: 0.35rem;
+  color: #a7ad9a;
+  font-size: 0.9rem;
+}
+
+.home-heading-period { color: #d9bd68; }
+
+.home-heading-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid rgba(211, 189, 103, 0.18);
+  border-radius: 999px;
+  color: #c9bd8f;
+  background: rgba(211, 189, 103, 0.055);
+  font-size: 0.58rem;
+  font-weight: 750;
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+}
+
+.home-heading-tag > span,
+.home-live-label > span {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #72d59f;
+  box-shadow: 0 0 12px rgba(114, 213, 159, 0.55);
+  animation: home-pulse 2s ease-in-out infinite;
+}
+
+.home-eyebrow {
+  display: block;
+  color: #c0a95d;
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+}
+
+.home-section-heading { margin-bottom: 1rem; }
+
+.home-section-title {
+  margin-top: 0.35rem;
+  color: #edf0e5;
+  font-size: clamp(1.1rem, 2vw, 1.35rem);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+
+.home-section-caption {
+  padding-bottom: 0.15rem;
+  color: #909986;
+  font-size: 0.72rem;
+}
+
 .home-hero {
-  min-height: clamp(320px, 36vw, 440px);
+  min-height: clamp(330px, 37vw, 460px);
   isolation: isolate;
+  border-radius: 22px;
   border: 1px solid rgba(255, 255, 255, 0.13);
   box-shadow: 0 22px 54px rgba(0, 0, 0, 0.28), inset 0 1px rgba(255, 255, 255, 0.12);
 }
@@ -272,9 +456,11 @@ const stats = [
 .home-status {
   padding: 0.55rem 0.9rem;
   border: 1px solid rgba(160, 255, 208, 0.26);
-  background: rgba(9, 115, 83, 0.78);
+  background: rgba(9, 45, 34, 0.66);
   box-shadow: 0 7px 24px rgba(0, 0, 0, 0.18);
   backdrop-filter: blur(10px);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
   animation: home-enter 0.6s 0.08s both;
 }
 
@@ -325,15 +511,11 @@ const stats = [
 .home-action-primary:hover { box-shadow: 0 14px 30px rgba(8, 151, 99, 0.42); }
 .home-action-secondary { background: rgba(255, 255, 255, 0.13); }
 
-.home-section-title {
-  letter-spacing: -0.035em;
-  text-wrap: balance;
-}
-
 .home-service-card {
+  min-width: 0;
   border-color: rgba(196, 218, 147, 0.14);
-  background: linear-gradient(145deg, rgba(31, 38, 24, 0.92), rgba(21, 25, 18, 0.9));
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.14);
+  background: linear-gradient(145deg, rgba(28, 36, 25, 0.96), rgba(19, 25, 19, 0.96));
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.18);
   transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.28s ease, border-color 0.28s ease;
 }
 
@@ -348,12 +530,137 @@ const stats = [
 .home-service-card:hover img { transform: scale(1.045); filter: saturate(1.08); }
 
 .home-service-copy { background: transparent; }
-.home-service-copy h3 { letter-spacing: -0.025em; }
-.home-live-label { white-space: nowrap; }
+.home-service-copy h3 {
+  color: #edf0e5;
+  letter-spacing: -0.025em;
+}
+.home-service-copy p { color: #a5ad9b; }
+
+.home-service-badge {
+  border: 1px solid rgba(187, 230, 164, 0.25);
+  color: #d8efc4;
+  background: rgba(16, 45, 32, 0.78);
+  backdrop-filter: blur(12px);
+}
+
+.home-live-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  color: #9da690;
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+.home-metric-card {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  border-color: rgba(196, 218, 147, 0.13);
+  background:
+    radial-gradient(ellipse at 100% 0, rgba(157, 179, 100, 0.09), transparent 48%),
+    linear-gradient(145deg, rgba(29, 36, 25, 0.94), rgba(19, 24, 18, 0.96));
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.14);
+  transition: transform 0.24s ease, border-color 0.24s ease, box-shadow 0.24s ease;
+  animation: home-enter 0.5s both;
+}
+
+.home-metric-card:nth-child(2) { animation-delay: 0.05s; }
+.home-metric-card:nth-child(3) { animation-delay: 0.1s; }
+.home-metric-card:nth-child(4) { animation-delay: 0.15s; }
+
+.home-metric-card:hover {
+  transform: translateY(-3px);
+  border-color: rgba(211, 189, 103, 0.3);
+  box-shadow: 0 18px 35px rgba(0, 0, 0, 0.22);
+}
+
+.home-metric-label {
+  min-width: 0;
+  color: #aab19f;
+  font-size: 0.76rem;
+  font-weight: 550;
+}
+
+.home-metric-value {
+  color: #f0f1e9;
+  font-size: clamp(1.7rem, 3vw, 2.1rem);
+  font-weight: 800;
+  letter-spacing: -0.06em;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.home-metric-value > span {
+  margin-left: 0.15rem;
+  color: #929b88;
+  font-size: 0.9rem;
+  font-weight: 550;
+  letter-spacing: -0.01em;
+}
+
+.home-meter {
+  width: 100%;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(231, 237, 216, 0.08);
+}
+
+.home-meter > div { height: 100%; }
+
+.home-chart-card {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid rgba(196, 218, 147, 0.14);
+  background:
+    radial-gradient(ellipse at 5% 0, rgba(32, 116, 76, 0.19), transparent 56%),
+    linear-gradient(145deg, rgba(25, 34, 25, 0.98), rgba(17, 23, 18, 0.98));
+  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.18);
+}
+
+.home-chart-warm {
+  background:
+    radial-gradient(ellipse at 95% 0, rgba(172, 111, 33, 0.14), transparent 54%),
+    linear-gradient(145deg, rgba(32, 30, 22, 0.98), rgba(20, 22, 18, 0.98));
+}
+
+.home-chart-title {
+  margin-bottom: 0.9rem;
+  color: #e9eddf;
+  font-size: 0.92rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.home-chart-title > span {
+  color: #89927f;
+  font-size: 0.75rem;
+  font-weight: 450;
+}
+
+.home-impact {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(216, 192, 111, 0.2);
+  background:
+    radial-gradient(ellipse at 50% -20%, rgba(145, 167, 92, 0.3), transparent 60%),
+    linear-gradient(120deg, #18271e, #12221c 58%, #202719);
+  box-shadow: 0 20px 44px rgba(0, 0, 0, 0.2), inset 0 1px rgba(255, 255, 255, 0.04);
+}
+
+.home-impact > .home-eyebrow { text-align: center; }
+.home-impact h2 { margin-top: 0.5rem; color: #f0f0e5; }
+.home-impact .text-3xl { color: #f0e8c9; }
+.home-impact .text-emerald-200 { color: #b6c5a2; }
 
 @keyframes home-enter {
   from { opacity: 0; transform: translateY(12px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes home-pulse {
+  50% { opacity: 0.48; box-shadow: 0 0 4px rgba(114, 213, 159, 0.25); }
 }
 
 @keyframes field-drift {
@@ -361,8 +668,16 @@ const stats = [
   to { transform: scale(1.075) translateX(-0.7%); }
 }
 
+@media (max-width: 760px) {
+  .home-section-caption { display: none; }
+  .home-live-label { max-width: 45%; white-space: normal; text-align: right; }
+}
+
 @media (max-width: 640px) {
   .home-hero { min-height: 360px; }
+  .home-heading { align-items: flex-start; }
+  .home-heading-tag { margin-top: 0.15rem; font-size: 0.5rem; }
+  .home-heading > div > p { max-width: 28ch; }
   .home-hero-overlay {
     background:
       linear-gradient(90deg, rgba(8, 22, 13, 0.82), rgba(8, 22, 13, 0.26)),
@@ -371,15 +686,19 @@ const stats = [
   .home-title { max-width: 14ch; }
   .home-actions { display: grid; grid-template-columns: 1fr; }
   .home-actions a { width: 100%; }
-  .home-live-label { font-size: 0.66rem; }
+  .home-live-label { max-width: 42%; font-size: 0.61rem; }
+  .home-metric-card { padding: 1rem; }
+  .home-metric-label { font-size: 0.68rem; }
+  .home-impact { padding: 1.5rem; }
 }
 
 @media (max-width: 380px) {
-  .home-live-label { display: none; }
+  .home-heading-tag { display: none; }
+  .home-live-label { max-width: 38%; font-size: 0.56rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .home-page, .home-hero-image, .home-status, .home-title, .home-description, .home-actions { animation: none; }
-  .home-service-card, .home-service-card img, .home-action-primary, .home-action-secondary { transition: none; }
+  .home-page, .home-heading-tag > span, .home-live-label > span, .home-hero-image, .home-status, .home-title, .home-description, .home-actions, .home-metric-card { animation: none; }
+  .home-service-card, .home-service-card img, .home-metric-card, .home-action-primary, .home-action-secondary { transition: none; }
 }
 </style>

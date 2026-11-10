@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import L from 'leaflet'
 import '@geoman-io/leaflet-geoman-free'
 import 'leaflet/dist/leaflet.css'
@@ -11,6 +11,9 @@ const CULIACAN_COORDS: [number, number] = [24.7994, -107.3939]
 const DEFAULT_ZOOM = 13
 
 const mapContainer = ref<HTMLElement | null>(null)
+const props = defineProps<{
+  initialFeatures?: GeoJSON.Feature[]
+}>()
 const locationStatus = ref<'idle' | 'requesting' | 'tracking' | 'denied'>('idle')
 const userLat = ref<number | null>(null)
 const userLng = ref<number | null>(null)
@@ -190,6 +193,7 @@ onMounted(() => {
     drawnLayers.delete(event.layer)
     updateGeoJson()
   })
+  installInitialFeatures(props.initialFeatures ?? [])
 })
 
 const updateGeoJson = () => {
@@ -202,6 +206,30 @@ const updateGeoJson = () => {
   }
   emit('update:geojson', geojson)
 }
+
+const installInitialFeatures = (features: GeoJSON.Feature[]) => {
+  if (!map) return
+
+  drawnLayers.forEach(layer => map?.removeLayer(layer))
+  drawnLayers.clear()
+  if (features.length === 0) return
+
+  const savedCollection: GeoJSON.FeatureCollection = {
+    type: 'FeatureCollection',
+    features
+  }
+  const savedLayers = L.geoJSON(savedCollection as GeoJSON.GeoJsonObject)
+  savedLayers.eachLayer(layer => {
+    drawnLayers.add(layer)
+    layer.addTo(map!)
+    layer.on('pm:edit', updateGeoJson)
+    layer.on('pm:dragend', updateGeoJson)
+  })
+}
+
+watch(() => props.initialFeatures, features => {
+  if (features) installInitialFeatures(features)
+})
 
 const scheduleMapResize = () => {
   if (!map || mapResizeFrame) return

@@ -88,10 +88,7 @@
   background-color: #10150e;
   background-image:
     radial-gradient(ellipse at 8% 4%, rgba(120, 150, 76, 0.15), transparent 34%),
-    radial-gradient(ellipse at 92% 92%, rgba(245, 138, 0, 0.09), transparent 38%),
-    linear-gradient(rgba(255, 196, 0, 0.025) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 196, 0, 0.025) 1px, transparent 1px);
-  background-size: auto, auto, 52px 52px, 52px 52px;
+    radial-gradient(ellipse at 92% 92%, rgba(245, 138, 0, 0.09), transparent 38%);
 }
 
 .app-sidebar {
@@ -104,45 +101,38 @@
   overflow: hidden;
   animation: sidebar-arrive 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
   color: #e8eddf;
+  background-color: #10231e;
   background:
-    radial-gradient(ellipse at 50% 0, rgba(120, 150, 76, 0.12), transparent 48%),
+    radial-gradient(ellipse at 50% 0, rgba(120, 150, 76, 0.1), transparent 54%),
     linear-gradient(155deg, #10201b 0%, #10231f 46%, #13241d 100%);
   border-color: rgba(255, 196, 0, 0.12);
   box-shadow: 12px 0 40px rgba(0, 0, 0, 0.2);
 }
 
-.app-sidebar::before,
-.app-sidebar::after {
+.topo-drone-scene {
   position: absolute;
-  z-index: -1;
+  z-index: 0;
   inset: 0;
-  content: "";
   pointer-events: none;
+  overflow: hidden;
 }
 
-.app-sidebar::before {
-  opacity: 0.68;
-  background:
-    repeating-radial-gradient(
-      ellipse at 16% 42%,
-      transparent 0 12px,
-      rgba(185, 205, 144, 0.15) 13px 14px,
-      transparent 15px 26px
-    ),
-    repeating-radial-gradient(
-      ellipse at 92% 83%,
-      transparent 0 16px,
-      rgba(185, 205, 144, 0.09) 17px 18px,
-      transparent 19px 33px
-    );
-  background-size: 150% 150%, 180% 180%;
-  animation: topo-drift 44s ease-in-out infinite alternate;
-  mask-image: linear-gradient(160deg, transparent 0%, #000 24%, #000 84%, transparent 100%);
+.topo-drone {
+  position: absolute;
+  width: 30px;
+  height: 22px;
+  color: rgba(195, 220, 159, 0.62);
+  filter: drop-shadow(0 0 8px rgba(155, 215, 164, 0.3));
+  animation: sidebar-drone-flight 15s ease-in-out infinite;
 }
 
-.app-sidebar::after {
-  background: linear-gradient(90deg, transparent 88%, rgba(255, 196, 0, 0.045));
-}
+.topo-drone-1 { top: 17%; left: -34px; animation-delay: -2s; }
+.topo-drone-2 { top: 39%; left: -34px; width: 24px; opacity: 0.68; animation-delay: -8s; animation-duration: 19s; }
+.topo-drone-3 { top: 62%; left: -34px; width: 27px; opacity: 0.76; animation-delay: -12s; animation-duration: 17s; }
+.topo-drone-4 { top: 83%; left: -34px; width: 21px; opacity: 0.58; animation-delay: -5s; animation-duration: 21s; }
+.topo-drone-rotor { transform-box: fill-box; transform-origin: center; animation: sidebar-drone-rotor 0.18s linear infinite; }
+
+.app-sidebar > :not(.topo-drone-scene) { position: relative; z-index: 1; }
 
 .topo-brand {
   position: relative;
@@ -197,55 +187,7 @@
 }
 
 .topo-navigation { scrollbar-width: thin; scrollbar-color: rgba(213, 185, 91, 0.25) transparent; }
-.topo-menu-search {
-  display: flex;
-  height: 38px;
-  align-items: center;
-  gap: 9px;
-  margin: 0 12px 18px;
-  padding: 0 10px;
-  border: 1px solid rgba(196, 218, 147, 0.13);
-  border-radius: 10px;
-  color: #889582;
-  background: rgba(4, 12, 10, 0.3);
-  transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
-}
-
-.topo-menu-search:focus-within {
-  border-color: rgba(224, 194, 100, 0.48);
-  background: rgba(4, 12, 10, 0.48);
-  box-shadow: 0 0 0 3px rgba(224, 194, 100, 0.08);
-}
-
-.topo-menu-search > svg { flex: 0 0 auto; color: #b4a363; }
-.topo-menu-search input {
-  width: 100%;
-  min-width: 0;
-  border: 0;
-  outline: 0;
-  color: #e9ecdf;
-  background: transparent;
-  font-size: 0.7rem;
-}
-.topo-menu-search input::placeholder { color: #858f7b; }
-.topo-menu-search input::-webkit-search-cancel-button { display: none; }
-.topo-menu-search kbd,
-.topo-menu-search button {
-  display: grid;
-  width: 20px;
-  height: 20px;
-  flex: 0 0 auto;
-  place-items: center;
-  border: 1px solid rgba(196, 218, 147, 0.12);
-  border-radius: 5px;
-  color: #89927f;
-  background: rgba(255, 255, 255, 0.035);
-  font: inherit;
-  font-size: 0.63rem;
-}
-.topo-menu-search button:hover { color: #f1d47c; background: rgba(255, 255, 255, 0.08); }
 .topo-menu-group + .topo-menu-group { margin-top: 15px; }
-.topo-menu-empty { padding: 12px 14px; color: #929d86; font-size: 0.7rem; }
 
 .app-sidebar .topo-menu-title {
   display: flex;
@@ -357,10 +299,12 @@
 .topo-user-avatar {
   width: 33px;
   height: 33px;
+  overflow: hidden;
   color: #3c3215;
   background: linear-gradient(145deg, #f4e6b2, #b8a46a);
   box-shadow: 0 0 0 2px rgba(245, 225, 157, 0.11);
 }
+.topo-user-avatar img { width: 100%; height: 100%; object-fit: cover; }
 .app-sidebar .topo-user-name {
   max-width: 100%;
   margin: 0;
@@ -505,9 +449,17 @@
   50% { box-shadow: 0 0 0 5px rgba(255, 196, 0, 0); }
 }
 
-@keyframes topo-drift {
-  from { background-position: 0 0, 20% 20%; }
-  to { background-position: 8% 5%, 8% 14%; }
+@keyframes sidebar-drone-flight {
+  0% { transform: translate3d(-12px, 8px, 0) rotate(-7deg); opacity: 0; }
+  10% { opacity: 0.72; }
+  34% { transform: translate3d(82px, -5px, 0) rotate(2deg); opacity: 0.78; }
+  63% { transform: translate3d(176px, 12px, 0) rotate(-3deg); opacity: 0.62; }
+  90% { opacity: 0.58; }
+  100% { transform: translate3d(270px, -7px, 0) rotate(5deg); opacity: 0; }
+}
+
+@keyframes sidebar-drone-rotor {
+  to { transform: rotate(360deg); }
 }
 
 @media (max-width: 767px) {
@@ -930,8 +882,6 @@
   .page-leave-active {
     transition-duration: 0.01ms !important;
   }
-
-  .app-sidebar::before { animation: none; }
 
   .app-workspace .app-card,
   .app-workspace .app-card:hover,
