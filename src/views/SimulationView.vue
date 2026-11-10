@@ -2,7 +2,7 @@
 import { computed, ref, onMounted, onBeforeUnmount, shallowRef } from 'vue'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { Download, Pause, Play, Wind } from 'lucide-vue-next'
+import { Download, LocateFixed, Maximize2, Minimize2, Move, Pause, Play, Wind } from 'lucide-vue-next'
 import DroneConnectionPanel from '../components/simulation/DroneConnectionPanel.vue'
 import {
   createAlert,
@@ -56,6 +56,9 @@ const droneState = ref<'IDLE' | 'SCANNING' | 'FLYING' | 'ACTION' | 'RETURNING' |
 const currentAction = ref<'NONE' | 'WATER' | 'FUMIGATE' | 'CENTINELAS'>('NONE')
 const simulationPaused = ref(false)
 const windEnabled = ref(true)
+const cameraFollowEnabled = ref(true)
+const cameraPanMode = ref(false)
+const isFullscreen = ref(false)
 
 // Datos de interacción
 const hoveredPlant = ref<PlantData | null>(null)
@@ -165,9 +168,30 @@ const clearLiveDroneTrail = () => {
   liveDroneTrail = null
 }
 
+const frameCameraOnField = () => {
+  if (!camera.value || !controls.value) return
+
+  const geometry = selectedFieldGeometry.value
+  controls.value.target.set(0, 0, 0)
+  if (!geometry) {
+    camera.value.position.set(0, 29, 42)
+    controls.value.minDistance = 3
+    controls.value.maxDistance = 180
+  } else {
+    const maxDimension = Math.max(geometry.widthMeters, geometry.depthMeters)
+    const fitDepth = Math.max(geometry.depthMeters, geometry.widthMeters / (camera.value.aspect || 1))
+    const distance = fitDepth / (2 * Math.tan(THREE.MathUtils.degToRad(camera.value.fov / 2))) * 1.18
+    camera.value.position.set(0, distance * 0.58, distance * 0.82)
+    controls.value.minDistance = 3
+    controls.value.maxDistance = Math.max(120, maxDimension * 4)
+  }
+  controls.value.update()
+}
+
 const applySelectedField = () => {
   const field = fields.value.find(item => item.id === selectedFieldId.value)
   selectedFieldGeometry.value = field ? projectFieldGeometry(field.geojson_data) : null
+  cameraFollowEnabled.value = true
   liveDronePath = []
   fallbackGpsOrigin = null
   clearLiveDroneTrail()
@@ -180,6 +204,7 @@ const applySelectedField = () => {
     cropGroup.scale.set(1, 1, 1)
     DRONE_BASE.set(-15, 0.5, 15)
     if (droneGroupReady) droneGroup.position.copy(DRONE_BASE)
+    frameCameraOnField()
     return
   }
 
@@ -208,13 +233,7 @@ const applySelectedField = () => {
     })
   }
 
-  const maxDimension = Math.max(geometry.widthMeters, geometry.depthMeters)
-  camera.value?.position.set(0, Math.max(18, maxDimension * 0.7), Math.max(35, maxDimension * 0.95))
-  if (controls.value) {
-    controls.value.target.set(0, 0, 0)
-    controls.value.maxDistance = Math.max(75, maxDimension * 2)
-    controls.value.update()
-  }
+  frameCameraOnField()
 }
 
 const updateLiveDrone = () => {
@@ -296,6 +315,25 @@ const updateLiveDrone = () => {
         : 'Telemetría recibida, pero no se pudo guardar.')
     })
   }
+}
+
+const updateCameraFollow = () => {
+  if (!cameraFollowEnabled.value || !controls.value || !camera.value) return
+  const targetDrone = liveDroneGroup?.visible
+    ? liveDroneGroup
+    : droneState.value !== 'IDLE'
+      ? droneGroup
+      : null
+  if (!targetDrone) return
+
+  const nextTarget = new THREE.Vector3(
+    targetDrone.position.x,
+    Math.max(0, targetDrone.position.y * 0.65),
+    targetDrone.position.z,
+  )
+  const delta = nextTarget.sub(controls.value.target).multiplyScalar(0.055)
+  controls.value.target.add(delta)
+  camera.value.position.add(delta)
 }
 
 const handleDroneTelemetry = (snapshot: {
@@ -767,9 +805,8 @@ const handleAction = (action: 'ANALYZE' | 'WATER' | 'FUMIGATE' | 'CENTINELAS') =
 
 const resetCamera = () => {
   if (!camera.value || !controls.value) return
-  camera.value.position.set(0, 18, 35)
-  controls.value.target.set(0, 0, 0)
-  controls.value.update()
+  cameraFollowEnabled.value = false
+  frameCameraOnField()
 }
 
 const zoomCamera = (direction: 'in' | 'out') => {
@@ -777,6 +814,45 @@ const zoomCamera = (direction: 'in' | 'out') => {
   if (direction === 'in') controls.value.dollyIn(1.2)
   else controls.value.dollyOut(1.2)
   controls.value.update()
+}
+
+const toggleCameraFollow = () => {
+  cameraFollowEnabled.value = !cameraFollowEnabled.value
+  setActionFeedback(cameraFollowEnabled.value
+    ? 'Seguimiento de dron activado. La cámara seguirá su posición y altura.'
+    : 'Seguimiento desactivado. Puedes explorar el campo libremente.')
+}
+
+const toggleCameraPanMode = () => {
+  cameraPanMode.value = !cameraPanMode.value
+  if (controls.value) {
+    controls.value.mouseButtons.LEFT = cameraPanMode.value ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE
+  }
+  setActionFeedback(cameraPanMode.value
+    ? 'Modo desplazar activado. Arrastra para recorrer el campo.'
+    : 'Modo orbitar activado. Arrastra para girar la vista.')
+}
+
+const onFullscreenChange = () => {
+  isFullscreen.value = document.fullscreenElement === containerRef.value
+  onWindowResize()
+}
+
+const toggleFullscreen = async () => {
+  const stage = containerRef.value
+  if (!stage) return
+
+  try {
+    if (document.fullscreenElement === stage) {
+      await document.exitFullscreen()
+    } else {
+      await stage.requestFullscreen()
+    }
+  } catch (error) {
+    setActionFeedback(error instanceof Error
+      ? `No se pudo cambiar a pantalla completa: ${error.message}`
+      : 'No se pudo cambiar a pantalla completa.')
+  }
 }
 
 const createNewScenario = async () => {
@@ -841,18 +917,23 @@ const initThree = () => {
   renderer.value.toneMappingExposure = 1.12
 
   scene.value = new THREE.Scene()
-  scene.value.background = new THREE.Color(0xb4c2aa)
-  scene.value.fog = new THREE.FogExp2(0xb4c2aa, 0.007)
+  scene.value.background = new THREE.Color(0x9fc6d7)
 
   camera.value = new THREE.PerspectiveCamera(60, width / height, 0.1, 1000)
-  camera.value.position.set(0, 18, 35)
+  camera.value.position.set(0, 29, 42)
   controls.value = new OrbitControls(camera.value, renderer.value.domElement)
   controls.value.target.set(0, 0, 0)
   controls.value.enableDamping = true
   controls.value.dampingFactor = 0.075
-  controls.value.minDistance = 12
-  controls.value.maxDistance = 75
-  controls.value.maxPolarAngle = Math.PI / 2.05
+  controls.value.enablePan = true
+  controls.value.screenSpacePanning = true
+  controls.value.mouseButtons.LEFT = THREE.MOUSE.ROTATE
+  controls.value.minDistance = 3
+  controls.value.maxDistance = 180
+  controls.value.maxPolarAngle = Math.PI / 2.02
+  controls.value.addEventListener('start', () => {
+    cameraFollowEnabled.value = false
+  })
 
   scene.value.add(new THREE.HemisphereLight(0xeaf1df, 0x493b2c, 1.45))
   const dirLight = new THREE.DirectionalLight(0xfff0d2, 2.1)
@@ -1027,6 +1108,7 @@ const initThree = () => {
     animationId.value = requestAnimationFrame(animate)
     controls.value?.update()
     updateLiveDrone()
+    updateCameraFollow()
     if (simulationPaused.value) {
       if (renderer.value && scene.value && camera.value) renderer.value.render(scene.value, camera.value)
       return
@@ -1197,6 +1279,7 @@ const initThree = () => {
   window.addEventListener('resize', onWindowResize)
   resizeObserver.value = new ResizeObserver(onWindowResize)
   resizeObserver.value.observe(canvasRef.value)
+  resizeObserver.value.observe(containerRef.value)
   containerRef.value.addEventListener('pointermove', onMouseMove)
 }
 
@@ -1224,6 +1307,7 @@ const onWindowResize = () => {
 }
 
 onMounted(async () => {
+  document.addEventListener('fullscreenchange', onFullscreenChange)
   try {
     fields.value = await listFields()
     selectedFieldId.value = fields.value[0]?.id ?? ''
@@ -1238,6 +1322,7 @@ onMounted(async () => {
 })
 onBeforeUnmount(() => {
   cancelAnimationFrame(animationId.value); window.removeEventListener('resize', onWindowResize)
+  document.removeEventListener('fullscreenchange', onFullscreenChange)
   if (feedbackTimeout) clearTimeout(feedbackTimeout)
   resizeObserver.value?.disconnect()
   if (containerRef.value) containerRef.value.removeEventListener('pointermove', onMouseMove)
@@ -1339,7 +1424,10 @@ onBeforeUnmount(() => {
     
     <div ref="containerRef" class="simulation-stage flex-1 relative bg-gray-900 cursor-crosshair">
       <canvas ref="canvasRef" class="w-full h-full outline-none" role="img" aria-label="Vista tridimensional interactiva del cultivo. Usa el ratón o gestos para explorar."></canvas>
-      <p class="simulation-touch-hint">Arrastra para explorar · Pellizca para acercar</p>
+      <p class="simulation-touch-hint">
+        <span class="desktop-camera-hint">Arrastra para orbitar · botón derecho para desplazar · rueda para zoom</span>
+        <span class="mobile-camera-hint">Un dedo: orbitar · dos dedos: desplazar y zoom</span>
+      </p>
       <div class="simulation-demo-badge" :aria-label="selectedFieldGeometry ? 'Geometría real del campo a escala métrica; cultivo visual demostrativo' : 'Entorno demostrativo'">
         <span class="simulation-demo-dot"></span>
         <span>{{ selectedFieldGeometry ? 'GEOMETRÍA REAL · ESCALA 1:1' : 'ENTORNO DEMOSTRATIVO · DATOS SIMULADOS' }}</span>
@@ -1352,6 +1440,24 @@ onBeforeUnmount(() => {
           : 'Esperando telemetría real' }}
       </div>
       <div class="simulation-camera-tools" role="group" aria-label="Controles de cámara">
+        <button
+          type="button"
+          @click="toggleCameraPanMode"
+          :aria-pressed="cameraPanMode"
+          :aria-label="cameraPanMode ? 'Cambiar a modo orbitar' : 'Cambiar a modo desplazar'"
+          :title="cameraPanMode ? 'Modo desplazar activo' : 'Activar modo desplazar'"
+        >
+          <Move />
+        </button>
+        <button
+          type="button"
+          @click="toggleCameraFollow"
+          :aria-pressed="cameraFollowEnabled"
+          :aria-label="cameraFollowEnabled ? 'Desactivar seguimiento del dron' : 'Seguir al dron'"
+          :title="cameraFollowEnabled ? 'Desactivar seguimiento del dron' : 'Seguir al dron'"
+        >
+          <LocateFixed />
+        </button>
         <button type="button" @click="zoomCamera('out')" aria-label="Alejar vista" title="Alejar">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8" /><path d="m16 16 4.5 4.5M7.8 10.8h6" stroke-linecap="round" /></svg>
         </button>
@@ -1361,6 +1467,15 @@ onBeforeUnmount(() => {
         <button type="button" @click="resetCamera" aria-label="Restablecer vista de cámara" title="Restablecer vista">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M3 12a9 9 0 1 0 2.64-6.36L3 8m0-5v5h5" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" /></svg>
           <span>Restablecer</span>
+        </button>
+        <button
+          type="button"
+          @click="toggleFullscreen"
+          :aria-label="isFullscreen ? 'Salir de pantalla completa' : 'Expandir simulador a pantalla completa'"
+          :title="isFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa'"
+        >
+          <Minimize2 v-if="isFullscreen" />
+          <Maximize2 v-else />
         </button>
       </div>
 
@@ -1753,8 +1868,9 @@ onBeforeUnmount(() => {
       }
 
       .simulation-stage {
-        min-height: clamp(560px, 72vh, 850px);
-        min-height: clamp(560px, 72dvh, 850px);
+        height: clamp(560px, 72vh, 850px);
+        height: clamp(560px, 72dvh, 850px);
+        flex: 0 0 auto;
         overflow: hidden;
         border: 1px solid rgba(196, 218, 147, 0.14);
         border-radius: 18px;
@@ -1767,12 +1883,32 @@ onBeforeUnmount(() => {
 
       .simulation-stage > canvas {
         display: block;
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
         touch-action: none;
         cursor: grab;
       }
 
       .simulation-stage > canvas:active { cursor: grabbing; }
-      .simulation-touch-hint { display: none; }
+      .simulation-touch-hint {
+        position: absolute;
+        z-index: 3;
+        bottom: 1.05rem;
+        left: 1rem;
+        display: block;
+        margin: 0;
+        padding: 7px 10px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 9px;
+        color: #e4ecdf;
+        background: rgba(13, 20, 16, 0.76);
+        backdrop-filter: blur(10px);
+        font-size: 0.62rem;
+        pointer-events: none;
+      }
+      .mobile-camera-hint { display: none; }
 
       .simulation-demo-badge {
         position: absolute;
@@ -1884,6 +2020,56 @@ onBeforeUnmount(() => {
       }
 
       .simulation-camera-tools svg { width: 16px; height: 16px; }
+      .simulation-camera-tools button[aria-pressed="true"] {
+        border-color: rgba(85, 230, 208, 0.45);
+        color: #8af0dd;
+        background: rgba(38, 161, 140, 0.18);
+      }
+
+      .simulation-stage:fullscreen {
+        width: 100vw;
+        height: 100vh;
+        height: 100dvh;
+        min-height: 100vh;
+        min-height: 100dvh;
+        max-height: 100dvh;
+        flex: none;
+        padding: 0;
+        border: 0;
+        border-radius: 0;
+        background: #9fc6d7;
+      }
+
+      .simulation-stage:fullscreen > canvas {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        border: 0;
+        border-radius: 0;
+      }
+
+      .simulation-stage:fullscreen > .simulation-panel {
+        position: absolute;
+        inset: 1rem 1rem auto auto;
+        width: min(300px, calc(100vw - 2rem));
+        max-height: calc(100dvh - 2rem);
+        overflow: auto;
+      }
+
+      .simulation-stage:fullscreen > .simulation-camera-tools {
+        top: auto;
+        right: auto;
+        bottom: 1rem;
+        left: 50%;
+        transform: translateX(-50%);
+      }
+
+      .simulation-stage:fullscreen > .simulation-touch-hint {
+        top: auto;
+        bottom: 1.1rem;
+        left: 1rem;
+      }
 
       .simulation-panel {
         border: 1px solid rgba(196, 218, 147, 0.18);
@@ -2062,6 +2248,7 @@ onBeforeUnmount(() => {
           flex: none;
           flex-direction: column;
           gap: 0.6rem;
+          height: auto;
           min-height: 0;
           padding-top: clamp(260px, 44vh, 390px);
           padding-top: clamp(260px, 44dvh, 390px);
@@ -2083,7 +2270,6 @@ onBeforeUnmount(() => {
         }
 
         .simulation-touch-hint {
-          display: block;
           position: absolute;
           top: calc(clamp(260px, 44vh, 390px) - 2.65rem);
           top: calc(clamp(260px, 44dvh, 390px) - 2.65rem);
@@ -2102,6 +2288,8 @@ onBeforeUnmount(() => {
           transform: translateX(-50%);
           pointer-events: none;
         }
+        .desktop-camera-hint { display: none; }
+        .mobile-camera-hint { display: inline; }
 
         .simulation-stage > .simulation-panel {
           position: relative;
@@ -2136,7 +2324,51 @@ onBeforeUnmount(() => {
         }
 
         .simulation-camera-tools button { min-width: 42px; min-height: 42px; }
-        .simulation-camera-tools button span { display: inline; }
+        .simulation-camera-tools button span { display: none; }
+        .simulation-stage:fullscreen {
+          display: block;
+          height: 100vh;
+          height: 100dvh;
+          min-height: 100vh;
+          min-height: 100dvh;
+          max-height: 100dvh;
+          padding: 0;
+          overflow: hidden;
+          border: 0;
+          border-radius: 0;
+          background: #9fc6d7;
+          box-shadow: none;
+        }
+        .simulation-stage:fullscreen > canvas {
+          position: absolute;
+          inset: 0;
+          width: 100%;
+          height: 100%;
+          border: 0;
+          border-radius: 0;
+        }
+        .simulation-stage:fullscreen > .simulation-panel {
+          position: absolute;
+          inset: 1rem 1rem auto auto;
+          width: min(300px, calc(100vw - 2rem));
+          max-height: calc(100dvh - 2rem);
+          overflow: auto;
+          padding-top: 0.85rem;
+        }
+        .simulation-stage:fullscreen > .simulation-camera-tools {
+          position: absolute;
+          top: auto;
+          right: auto;
+          bottom: 1rem;
+          left: 50%;
+          transform: translateX(-50%);
+        }
+        .simulation-stage:fullscreen > .simulation-touch-hint {
+          top: auto;
+          bottom: 4.5rem;
+          left: 50%;
+          transform: translateX(-50%);
+        }
         .simulation-panel { border-radius: 14px; }
         .simulation-panel-heading { flex-wrap: wrap; }
         .simulation-panel-icon { width: 34px; height: 34px; }
