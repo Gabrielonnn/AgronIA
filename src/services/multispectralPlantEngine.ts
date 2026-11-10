@@ -74,6 +74,7 @@ export interface MultispectralFrameAnalysis {
   plantCoveragePercent: number
   boundingBox: PlantBoundingBox | null
   polygonContour: Array<{ x: number; y: number }>
+  polygonContours: Array<Array<{ x: number; y: number }>>
   ndvi: {
     mean: number
     min: number
@@ -215,6 +216,19 @@ export const SIMULATION_PRESETS: Record<SimulationPresetId, SimulationPresetConf
 
 const ANALYSIS_WIDTH = 240
 const ANALYSIS_HEIGHT = 180
+const CONTOUR_NEIGHBORS = [
+  { x: 0, y: -1 },
+  { x: 1, y: -1 },
+  { x: 1, y: 0 },
+  { x: 1, y: 1 },
+  { x: 0, y: 1 },
+  { x: -1, y: 1 },
+  { x: -1, y: 0 },
+  { x: -1, y: -1 }
+]
+
+let componentVisited = new Uint8Array(0)
+let componentQueue = new Int32Array(0)
 
 let offscreenSourceCanvas: HTMLCanvasElement | null = null
 let offscreenSourceCtx: CanvasRenderingContext2D | null = null
@@ -266,6 +280,117 @@ function ensureBuffers() {
 
 function clamp(val: number, min: number, max: number): number {
   return val < min ? min : val > max ? max : val
+}
+
+export function tracePlantContours(mask: Uint8Array, width: number, height: number) {
+  const pixelCount = width * height
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 3 || height < 3 || mask.length !== pixelCount) {
+    throw new Error('La máscara de planta debe tener dimensiones válidas.')
+  }
+
+  if (componentVisited.length < pixelCount) {
+    componentVisited = new Uint8Array(pixelCount)
+    componentQueue = new Int32Array(pixelCount)
+  } else {
+    componentVisited.fill(0, 0, pixelCount)
+  }
+
+  const minComponentArea = Math.max(8, Math.floor(pixelCount * 0.00025))
+  const components: Array<{ area: number; startX: number; startY: number }> = []
+
+  for (let index = 0; index < pixelCount; index++) {
+    if (mask[index] !== 1 || componentVisited[index] === 1) continue
+
+    let head = 0
+    let tail = 0
+    let startX = width
+    let startY = height
+    componentQueue[tail++] = index
+    componentVisited[index] = 1
+
+    while (head < tail) {
+      const current = componentQueue[head++]
+      const x = current % width
+      const y = Math.floor(current / width)
+      if (y < startY || (y === startY && x < startX)) {
+        startX = x
+        startY = y
+      }
+
+      for (const neighbor of CONTOUR_NEIGHBORS) {
+        const nx = x + neighbor.x
+        const ny = y + neighbor.y
+        if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue
+        const neighborIndex = ny * width + nx
+        if (mask[neighborIndex] !== 1 || componentVisited[neighborIndex] === 1) continue
+        componentVisited[neighborIndex] = 1
+        componentQueue[tail++] = neighborIndex
+      }
+    }
+
+    if (tail >= minComponentArea) {
+      components.push({ area: tail, startX, startY })
+    }
+  }
+
+  components.sort((a, b) => b.area - a.area)
+  const contours: Array<Array<{ x: number; y: number }>> = []
+
+  for (const component of components.slice(0, 48)) {
+    let x = component.startX
+    let y = component.startY
+    let backtrackX = x - 1
+    let backtrackY = y
+    let firstNextX = -1
+    let firstNextY = -1
+    const contour: Array<{ x: number; y: number }> = []
+    const maxSteps = Math.min(pixelCount * 2, component.area * 8 + 8)
+
+    for (let step = 0; step < maxSteps; step++) {
+      contour.push({ x: (x + 0.5) / width, y: (y + 0.5) / height })
+
+      let backtrackDirection = CONTOUR_NEIGHBORS.findIndex(
+        direction => direction.x === backtrackX - x && direction.y === backtrackY - y
+      )
+      if (backtrackDirection < 0) backtrackDirection = 6
+
+      let nextDirection = -1
+      for (let offset = 1; offset <= CONTOUR_NEIGHBORS.length; offset++) {
+        const directionIndex = (backtrackDirection + offset) % CONTOUR_NEIGHBORS.length
+        const direction = CONTOUR_NEIGHBORS[directionIndex]
+        const nx = x + direction.x
+        const ny = y + direction.y
+        if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue
+        if (mask[ny * width + nx] !== 1) continue
+        nextDirection = directionIndex
+        break
+      }
+
+      if (nextDirection < 0) break
+      const next = CONTOUR_NEIGHBORS[nextDirection]
+      const nextX = x + next.x
+      const nextY = y + next.y
+
+      if (firstNextX < 0) {
+        firstNextX = nextX
+        firstNextY = nextY
+      } else if (x === component.startX && y === component.startY
+        && nextX === firstNextX && nextY === firstNextY) {
+        contour.pop()
+        break
+      }
+
+      const previous = CONTOUR_NEIGHBORS[(nextDirection + CONTOUR_NEIGHBORS.length - 1) % CONTOUR_NEIGHBORS.length]
+      backtrackX = x + previous.x
+      backtrackY = y + previous.y
+      x = nextX
+      y = nextY
+    }
+
+    if (contour.length >= 3) contours.push(contour)
+  }
+
+  return contours
 }
 
 /**
@@ -699,6 +824,7 @@ export function processMultispectralFrame(
 
   let boundingBox: PlantBoundingBox | null = null
   const polygonContour: Array<{ x: number; y: number }> = []
+  let polygonContours: Array<Array<{ x: number; y: number }>> = []
 
   if (plantDetected) {
     const bw = Math.max(4, maxX - minX + 1)
@@ -719,27 +845,8 @@ export function processMultispectralFrame(
       pHeight: Math.round((bh / h) * outHeight)
     }
 
-    // Build 28-ray radial hull around the plant center to outline the entire plant area smoothly
-    const numRays = 28
-    const maxRayLen = Math.hypot(bw, bh) * 0.75
-    for (let i = 0; i < numRays; i++) {
-      const angle = (i / numRays) * Math.PI * 2
-      const dx = Math.cos(angle)
-      const dy = Math.sin(angle)
-      let farthestDist = 4
-      for (let r = 2; r <= maxRayLen; r += 1.5) {
-        const rx = Math.round(cx + dx * r)
-        const ry = Math.round(cy + dy * r)
-        if (rx < 0 || rx >= w || ry < 0 || ry >= h) break
-        if (mask[ry * w + rx] === 1) {
-          farthestDist = r
-        }
-      }
-      polygonContour.push({
-        x: clamp((cx + dx * (farthestDist + 2)) / w, 0.01, 0.99),
-        y: clamp((cy + dy * (farthestDist + 2)) / h, 0.01, 0.99)
-      })
-    }
+    polygonContours = tracePlantContours(mask, w, h)
+    polygonContour.push(...(polygonContours[0] ?? []))
   }
 
   // Generate deterministic pest/stress focal clusters anchored to the plant bounding box
@@ -1097,19 +1204,19 @@ export function processMultispectralFrame(
 
       // Top-Left: RGB
       outCtx.drawImage(mapRgbCanvas!, 0, 0, halfW, halfH)
-      drawSubOverlay(outCtx, 0, 0, halfW, halfH, 'RGB · RECONOCIMIENTO IA', '#10b981', boundingBox, polygonContour, hotspots, options)
+      drawSubOverlay(outCtx, 0, 0, halfW, halfH, 'RGB · RECONOCIMIENTO IA', '#10b981', boundingBox, polygonContours, hotspots, options)
 
       // Top-Right: NDVI
       outCtx.drawImage(mapNdviCanvas!, halfW, 0, halfW, halfH)
-      drawSubOverlay(outCtx, halfW, 0, halfW, halfH, 'NDVI · VIGOR CLOROFÍLICO', '#84cc16', boundingBox, polygonContour, hotspots, options)
+      drawSubOverlay(outCtx, halfW, 0, halfW, halfH, 'NDVI · VIGOR CLOROFÍLICO', '#84cc16', boundingBox, polygonContours, hotspots, options)
 
       // Bottom-Left: Thermal
       outCtx.drawImage(mapThermalCanvas!, 0, halfH, halfW, halfH)
-      drawSubOverlay(outCtx, 0, halfH, halfW, halfH, 'TÉRMICO · LWIR (°C)', '#f97316', boundingBox, polygonContour, hotspots, options)
+      drawSubOverlay(outCtx, 0, halfH, halfW, halfH, 'TÉRMICO · LWIR (°C)', '#f97316', boundingBox, polygonContours, hotspots, options)
 
       // Bottom-Right: Mask & Stress Map
       outCtx.drawImage(mapMaskCanvas!, halfW, halfH, halfW, halfH)
-      drawSubOverlay(outCtx, halfW, halfH, halfW, halfH, 'MÁSCARA IA · ZONIFICACIÓN', '#38bdf8', boundingBox, polygonContour, hotspots, options)
+      drawSubOverlay(outCtx, halfW, halfH, halfW, halfH, 'MÁSCARA IA · ZONIFICACIÓN', '#38bdf8', boundingBox, polygonContours, hotspots, options)
 
       // Grid dividers
       outCtx.strokeStyle = 'rgba(255, 255, 255, 0.25)'
@@ -1134,7 +1241,7 @@ export function processMultispectralFrame(
         outWidth,
         outHeight,
         boundingBox,
-        polygonContour,
+        polygonContours,
         hotspots,
         hottestPoint,
         coolestPoint,
@@ -1303,6 +1410,7 @@ export function processMultispectralFrame(
     plantCoveragePercent,
     boundingBox,
     polygonContour,
+    polygonContours,
     ndvi: {
       mean: meanNdvi,
       min: plantDetected ? Number(minNdvi.toFixed(2)) : 0,
@@ -1354,25 +1462,28 @@ function drawSubOverlay(
   title: string,
   color: string,
   box: PlantBoundingBox | null,
-  contour: Array<{ x: number; y: number }>,
+  contours: Array<Array<{ x: number; y: number }>>,
   hotspots: PlantLesionCluster[],
   options: ProcessFrameOptions
 ) {
   ctx.save()
 
   // Whole-plant contour
-  if (options.showContours && contour.length > 2) {
+  if (options.showContours && contours.length > 0) {
     ctx.strokeStyle = color
     ctx.lineWidth = 1.6
-    ctx.beginPath()
-    contour.forEach((pt, idx) => {
-      const px = ox + pt.x * w
-      const py = oy + pt.y * h
-      if (idx === 0) ctx.moveTo(px, py)
-      else ctx.lineTo(px, py)
-    })
-    ctx.closePath()
-    ctx.stroke()
+    for (const outline of contours) {
+      if (outline.length < 3) continue
+      ctx.beginPath()
+      outline.forEach((pt, idx) => {
+        const px = ox + pt.x * w
+        const py = oy + pt.y * h
+        if (idx === 0) ctx.moveTo(px, py)
+        else ctx.lineTo(px, py)
+      })
+      ctx.closePath()
+      ctx.stroke()
+    }
   }
 
   // Bounding box
@@ -1418,7 +1529,7 @@ function drawPrimaryHudOverlay(
   w: number,
   h: number,
   box: PlantBoundingBox | null,
-  contour: Array<{ x: number; y: number }>,
+  contours: Array<Array<{ x: number; y: number }>>,
   hotspots: PlantLesionCluster[],
   hottestPoint: { x: number; y: number } | null,
   coolestPoint: { x: number; y: number } | null,
@@ -1429,7 +1540,7 @@ function drawPrimaryHudOverlay(
   ctx.save()
 
   // 1) Whole-plant polygon contour
-  if (options.showContours && contour.length > 2) {
+  if (options.showContours && contours.length > 0) {
     ctx.strokeStyle =
       options.spectrumMode === 'rgb'
         ? 'rgba(52, 211, 153, 0.9)'
@@ -1442,25 +1553,28 @@ function drawPrimaryHudOverlay(
         ? 'rgba(16, 185, 129, 0.08)'
         : 'rgba(255, 255, 255, 0.03)'
 
-    ctx.beginPath()
-    for (let i = 0; i < contour.length; i++) {
-      const curr = contour[i]
-      const next = contour[(i + 1) % contour.length]
-      const cx = curr.x * w
-      const cy = curr.y * h
-      const nx = next.x * w
-      const ny = next.y * h
-      const midX = (cx + nx) * 0.5
-      const midY = (cy + ny) * 0.5
-      if (i === 0) {
-        ctx.moveTo(midX, midY)
-      } else {
-        ctx.quadraticCurveTo(cx, cy, midX, midY)
+    for (const contour of contours) {
+      if (contour.length < 3) continue
+      ctx.beginPath()
+      for (let i = 0; i < contour.length; i++) {
+        const curr = contour[i]
+        const next = contour[(i + 1) % contour.length]
+        const cx = curr.x * w
+        const cy = curr.y * h
+        const nx = next.x * w
+        const ny = next.y * h
+        const midX = (cx + nx) * 0.5
+        const midY = (cy + ny) * 0.5
+        if (i === 0) {
+          ctx.moveTo(midX, midY)
+        } else {
+          ctx.quadraticCurveTo(cx, cy, midX, midY)
+        }
       }
+      ctx.closePath()
+      ctx.fill()
+      ctx.stroke()
     }
-    ctx.closePath()
-    ctx.fill()
-    ctx.stroke()
   }
 
   // 2) Whole-plant corner-bracket bounding box
