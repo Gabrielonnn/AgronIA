@@ -40,6 +40,15 @@ El backend usa el modelo EfficientNetV2S de [Animesh Kumar](https://huggingface.
 3. Copia `.env.example` a `.env.local` (conserva tus credenciales Supabase, si ya las configuraste) y establece `VITE_PLANT_DIAGNOSIS_API_URL=http://localhost:8000/predict`. Reinicia Vite (`npm run dev`) si ya estaba iniciado.
 4. Comprueba que `http://localhost:8000/health` responda `{"status":"ready"}`. La API y Vite deben ejecutarse a la vez.
 
+### Publicar el diagnóstico en la web
+
+GitHub Pages sirve la interfaz, pero no puede ejecutar el modelo Python. El archivo `render.yaml` configura el backend Docker en Render y permite que la web publicada (`https://jarednn.github.io`) se comunique con él.
+
+1. En Render, crea un **Blueprint** conectado a este repositorio y acepta el servicio `agronia-plant-diagnosis` definido en `render.yaml`. El primer despliegue descarga y verifica el modelo.
+2. Espera a que el despliegue esté listo y confirma que `https://<tu-servicio>.onrender.com/health` responda `{"status":"ready"}`.
+3. En GitHub, abre **Settings → Secrets and variables → Actions**, crea el secreto `VITE_PLANT_DIAGNOSIS_API_URL` con el valor `https://<tu-servicio>.onrender.com/predict` y vuelve a ejecutar el workflow **Deploy static content to Pages**. El servicio Render autoriza el origen de GitHub Pages mediante `PLANT_DIAGNOSIS_ALLOWED_ORIGINS`.
+4. Cuando termine la publicación, recarga la página de AgronIA y prueba **Diagnóstico**. En el plan gratuito de Render, el servicio puede suspenderse por inactividad; la primera solicitud después de una suspensión puede tardar mientras arranca.
+
 El API recibe `multipart/form-data` con un campo `file` y responde el nombre de la clase y la confianza:
 
 ```json
