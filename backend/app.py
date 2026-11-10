@@ -89,7 +89,7 @@ app.add_middleware(
 @app.get("/health")
 def health() -> dict[str, str]:
     if app.state.interpreter is None:
-        return {"status": "model_unavailable"}
+        raise HTTPException(status_code=503, detail="El modelo no está disponible.")
     return {"status": "ready"}
 
 
