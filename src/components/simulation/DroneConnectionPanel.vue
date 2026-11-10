@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import { Activity, Battery, Cable, Camera, CameraOff, Crosshair, ExternalLink, MapPin, Radio, Save, ShieldCheck, Unplug, Wifi } from 'lucide-vue-next'
 import { MavLinkTelemetryParser, type MavLinkTelemetryMessage } from '../../services/mavlinkTelemetry'
+import MultispectralPlantScanner from '../diagnosis/MultispectralPlantScanner.vue'
 
 type LinkState = 'disconnected' | 'connecting' | 'connected' | 'error'
 type ConnectionMode = 'usb' | 'mavlink-bridge' | 'dji-bridge'
@@ -805,11 +806,18 @@ onBeforeUnmount(() => {
     <section class="drone-link-camera" aria-labelledby="drone-camera-title">
       <div class="drone-camera-heading">
         <div>
-          <span class="drone-camera-eyebrow">CÁMARA LOCAL</span>
-          <h3 id="drone-camera-title">Vista de cámara</h3>
-          <p>Usa la cámara de este teléfono o dispositivo; todavía no es el video del dron.</p>
+          <span class="drone-camera-eyebrow">CÁMARA LOCAL Y ESCÁNER MULTIESPECTRAL IA</span>
+          <h3 id="drone-camera-title">Reconocimiento de Planta y Simulación Espectral (RGB · NDVI · Térmico)</h3>
+          <p>Conecta la cámara del dispositivo deseado para detectar el área total de la planta y simular presets fisiológicos.</p>
         </div>
         <span v-if="cameraActive" class="drone-camera-live"><span></span>En vivo</span>
+      </div>
+
+      <div class="col-span-full mb-2">
+        <MultispectralPlantScanner
+          :compact="true"
+          :show-field-scouting-action="false"
+        />
       </div>
       <div class="drone-camera-preview">
         <img
