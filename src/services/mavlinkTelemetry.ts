@@ -61,12 +61,13 @@ const decodePayload = (
     case 'GLOBAL_POSITION_INT': {
       const latitude = int32(4)
       const longitude = int32(8)
-      const altitude = int32(16)
+      const altitude = int32(12)
+      const relativeAltitude = int32(16)
       const velocityX = int16(20)
       const velocityY = int16(22)
       return latitude === null || longitude === null || altitude === null
         ? null
-        : { latitude, longitude, altitude, velocityX, velocityY, heading: uint16(26) }
+        : { latitude, longitude, altitude, relativeAltitude, velocityX, velocityY, heading: uint16(26) }
     }
     case 'VFR_HUD':
       return {

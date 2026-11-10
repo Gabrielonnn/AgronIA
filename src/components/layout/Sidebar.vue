@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { Home, Map, MapPin, PieChart, Database, Settings, LogOut, MonitorPlay, Search, ShieldCheck, Users, X, ScanSearch } from 'lucide-vue-next'
+import { Home, Map, MapPin, PieChart, Database, Settings, LogOut, MonitorPlay, Search, ShieldCheck, Users, X, ScanSearch, Sprout } from 'lucide-vue-next'
 import { useMainStore } from '../../stores'
 import { supabase } from '../../services/supabase'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
@@ -34,6 +34,7 @@ const menuItems = computed(() => [
   { name: 'Simulación', path: '/simulacion', icon: MonitorPlay, group: 'OPERACIÓN', accent: 'gold' },
   { name: 'Usuarios', path: '/usuarios', icon: Users, group: 'GESTIÓN', accent: 'pink' },
   { name: 'Parcelas', path: '/parcelas', icon: MapPin, group: 'GESTIÓN', accent: 'orange' },
+  { name: 'Campos y registros', path: '/campos', icon: Sprout, group: 'GESTIÓN', accent: 'green' },
   { name: 'Configuración', path: '/configuracion', icon: Settings, group: 'GESTIÓN', accent: 'slate' },
 ].filter(item => item.path !== '/usuarios' || userRole.value === 'Administrador'))
 
@@ -99,6 +100,23 @@ const roleColor = computed(() => {
 
 <template>
   <aside class="app-sidebar topo-sidebar w-64 bg-white border-r border-gray-200 h-screen flex flex-col" aria-label="Navegación principal">
+    <div class="topo-drone-scene" aria-hidden="true">
+      <svg class="topo-drone topo-drone-a" viewBox="0 0 48 32" fill="none">
+        <path d="M24 13 13 5M24 13l11-8M24 18 13 27m11-9 11 9" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
+        <rect x="18" y="12" width="12" height="8" rx="3" fill="currentColor" />
+        <path d="M7 3h7v4H7zm27 0h7v4h-7zM7 25h7v4H7zm27 0h7v4h-7z" fill="currentColor" />
+      </svg>
+      <svg class="topo-drone topo-drone-b" viewBox="0 0 48 32" fill="none">
+        <path d="M24 13 13 5M24 13l11-8M24 18 13 27m11-9 11 9" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
+        <rect x="18" y="12" width="12" height="8" rx="3" fill="currentColor" />
+        <path d="M7 3h7v4H7zm27 0h7v4h-7zM7 25h7v4H7zm27 0h7v4h-7z" fill="currentColor" />
+      </svg>
+      <svg class="topo-drone topo-drone-c" viewBox="0 0 48 32" fill="none">
+        <path d="M24 13 13 5M24 13l11-8M24 18 13 27m11-9 11 9" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
+        <rect x="18" y="12" width="12" height="8" rx="3" fill="currentColor" />
+        <path d="M7 3h7v4H7zm27 0h7v4h-7zM7 25h7v4H7zm27 0h7v4h-7z" fill="currentColor" />
+      </svg>
+    </div>
     <div class="topo-brand h-16 flex items-center px-6 border-b border-gray-100">
       <div class="topo-brand-content flex items-center gap-2">
         <div class="topo-brand-mark w-8 h-8 rounded-lg bg-agron-green flex items-center justify-center shadow-sm">

@@ -1,9 +1,17 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, shallowRef } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount, shallowRef } from 'vue'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { Download, Pause, Play, Wind } from 'lucide-vue-next'
 import DroneConnectionPanel from '../components/simulation/DroneConnectionPanel.vue'
+import {
+  createAlert,
+  createSimulation,
+  listFields,
+  saveFieldMetric,
+  type FieldRecord,
+} from '../services/agronomyData'
+import { projectFieldGeometry, type FieldPoint, type ProjectedField } from '../services/fieldGeometry'
 
 interface PlantData {
   id: string; x: number; z: number; health: number; ndvi: number; temp: number; status: string; stage: number
@@ -15,6 +23,31 @@ interface StressCenter {
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 const containerRef = ref<HTMLDivElement | null>(null)
+const fields = shallowRef<FieldRecord[]>([])
+const selectedFieldGeometry = shallowRef<ProjectedField | null>(null)
+const selectedFieldId = ref('')
+const savingSnapshot = ref(false)
+const liveDrone = ref<{
+  connected: boolean
+  hasHeartbeat: boolean
+  armed: boolean | null
+  latitude: number | null
+  longitude: number | null
+  altitude: number | null
+  relativeAltitude: number | null
+  groundSpeed: number | null
+  heading: number | null
+}>({
+  connected: false,
+  hasHeartbeat: false,
+  armed: null,
+  latitude: null,
+  longitude: null,
+  altitude: null,
+  relativeAltitude: null,
+  groundSpeed: null,
+  heading: null,
+})
 const currentMode = ref<'rgb' | 'ndvi' | 'thermal'>('rgb')
 const droneState = ref<'IDLE' | 'SCANNING' | 'FLYING' | 'ACTION' | 'RETURNING' | 'CENTINELAS'>('IDLE')
 const currentAction = ref<'NONE' | 'WATER' | 'FUMIGATE' | 'CENTINELAS'>('NONE')
@@ -45,6 +78,8 @@ let leafToPlantMap: number[] = []; let tasselToPlantMap: number[] = []; let earT
 let trunkMesh: THREE.InstancedMesh, leafMesh: THREE.InstancedMesh
 let tasselMesh: THREE.InstancedMesh, earMesh: THREE.InstancedMesh, hitboxMesh: THREE.InstancedMesh
 let groundMaterial: THREE.MeshLambertMaterial
+let cropGroup: THREE.Group | null = null
+let parcelOutlineGroup: THREE.Group | null = null
 let leafWindUniform: { value: number } | null = null
 let leafWindStrengthUniform: { value: number } | null = null
 let sectorFalloffTexture: THREE.CanvasTexture | null = null
@@ -53,6 +88,13 @@ let simulationTime = 0
 // Dron y Analisis
 let stressCenters: StressCenter[] = []
 let droneGroup: THREE.Group
+let droneGroupReady = false
+let liveDroneGroup: THREE.Group | null = null
+let liveDroneTrail: THREE.Line | null = null
+let liveDronePath: FieldPoint[] = []
+let fallbackGpsOrigin: { latitude: number; longitude: number } | null = null
+let pendingDroneSnapshot: typeof liveDrone.value | null = null
+let lastDroneMetricSavedAt = 0
 let propellers: THREE.Mesh[] = []
 let sectorMarkers: THREE.Mesh[] = []
 let particleSystem: THREE.Points
@@ -71,6 +113,8 @@ let centinelaFrameCounter = 0
 
 const DRONE_BASE = new THREE.Vector3(-15, 0.5, 15)
 const FLIGHT_HEIGHT = 8
+const BASE_CROP_WIDTH = 46
+const BASE_CROP_DEPTH = 44
 const PARTICLE_COUNT = 500
 const particlePositions = new Float32Array(PARTICLE_COUNT * 3)
 const particleVelocities = new Float32Array(PARTICLE_COUNT * 3)
@@ -91,6 +135,189 @@ const telemetry = ref({
   plantCount: 0,
   stressZones: 0
 })
+
+const fieldDimensionsLabel = computed(() => {
+  const field = selectedFieldGeometry.value
+  if (!field) return ''
+  return `${field.widthMeters.toFixed(1)} m × ${field.depthMeters.toFixed(1)} m · ${field.areaHectares.toFixed(2)} ha`
+})
+
+const disposeGroupChildren = (group: THREE.Group) => {
+  for (const child of [...group.children]) {
+    group.remove(child)
+    if (child instanceof THREE.Mesh || child instanceof THREE.Line) {
+      child.geometry.dispose()
+      const materials = Array.isArray(child.material) ? child.material : [child.material]
+      materials.forEach(material => material.dispose())
+    }
+  }
+}
+
+const clearLiveDroneTrail = () => {
+  if (!liveDroneTrail) return
+  scene.value?.remove(liveDroneTrail)
+  liveDroneTrail.geometry.dispose()
+  const materials = Array.isArray(liveDroneTrail.material) ? liveDroneTrail.material : [liveDroneTrail.material]
+  materials.forEach(material => material.dispose())
+  liveDroneTrail = null
+}
+
+const applySelectedField = () => {
+  const field = fields.value.find(item => item.id === selectedFieldId.value)
+  selectedFieldGeometry.value = field ? projectFieldGeometry(field.geojson_data) : null
+  liveDronePath = []
+  fallbackGpsOrigin = null
+  clearLiveDroneTrail()
+  if (!scene.value || !cropGroup || !parcelOutlineGroup) return
+  const outlineGroup = parcelOutlineGroup
+
+  disposeGroupChildren(outlineGroup)
+  const geometry = selectedFieldGeometry.value
+  if (!geometry) {
+    cropGroup.scale.set(1, 1, 1)
+    DRONE_BASE.set(-15, 0.5, 15)
+    if (droneGroupReady) droneGroup.position.copy(DRONE_BASE)
+    return
+  }
+
+  DRONE_BASE.set(-geometry.widthMeters * 0.3, 0.5, geometry.depthMeters * 0.3)
+  if (droneGroupReady) droneGroup.position.copy(DRONE_BASE)
+  cropGroup.scale.set(
+    geometry.widthMeters / BASE_CROP_WIDTH,
+    1,
+    geometry.depthMeters / BASE_CROP_DEPTH,
+  )
+
+  for (const polygon of geometry.polygons) {
+    polygon.rings.forEach((ring, ringIndex) => {
+      const points = ring.map(point => new THREE.Vector3(point.x, 0.09, point.z))
+      const line = new THREE.LineLoop(
+        new THREE.BufferGeometry().setFromPoints(points),
+        new THREE.LineBasicMaterial({
+          color: ringIndex === 0 ? 0xf2cf68 : 0xd7e6bd,
+          linewidth: 2,
+          transparent: true,
+          opacity: 0.95,
+        }),
+      )
+      line.renderOrder = 2
+      outlineGroup.add(line)
+    })
+  }
+
+  const maxDimension = Math.max(geometry.widthMeters, geometry.depthMeters)
+  camera.value?.position.set(0, Math.max(18, maxDimension * 0.7), Math.max(35, maxDimension * 0.95))
+  if (controls.value) {
+    controls.value.target.set(0, 0, 0)
+    controls.value.maxDistance = Math.max(75, maxDimension * 2)
+    controls.value.update()
+  }
+}
+
+const updateLiveDrone = () => {
+  const snapshot = pendingDroneSnapshot
+  pendingDroneSnapshot = null
+  if (snapshot) liveDrone.value = snapshot
+
+  const state = liveDrone.value
+  const hasPosition = state.connected
+    && state.hasHeartbeat
+    && state.latitude !== null
+    && state.longitude !== null
+  if (!liveDroneGroup) return
+  liveDroneGroup.visible = hasPosition
+  if (!hasPosition) {
+    if (liveDronePath.length) {
+      liveDronePath = []
+      fallbackGpsOrigin = null
+      clearLiveDroneTrail()
+    }
+    return
+  }
+
+  const latitude = state.latitude!
+  const longitude = state.longitude!
+  let point: FieldPoint
+  if (selectedFieldGeometry.value) {
+    point = selectedFieldGeometry.value.projectGps(latitude, longitude)
+  } else {
+    fallbackGpsOrigin ??= { latitude, longitude }
+    point = {
+      x: (longitude - fallbackGpsOrigin.longitude) * 111_320 * Math.cos(fallbackGpsOrigin.latitude * Math.PI / 180),
+      z: -(latitude - fallbackGpsOrigin.latitude) * 110_540,
+    }
+  }
+
+  const altitude = state.relativeAltitude
+  liveDroneGroup.position.set(
+    point.x,
+    altitude === null ? (state.armed ? FLIGHT_HEIGHT : 0.6) : Math.max(0.6, altitude),
+    point.z,
+  )
+  if (state.heading !== null) liveDroneGroup.rotation.y = state.heading * Math.PI / 180
+
+  const previousPoint = liveDronePath[liveDronePath.length - 1]
+  if (!previousPoint || Math.hypot(point.x - previousPoint.x, point.z - previousPoint.z) >= 0.75) {
+    liveDronePath.push(point)
+    if (liveDronePath.length > 1000) liveDronePath.shift()
+    clearLiveDroneTrail()
+    liveDroneTrail = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(
+        liveDronePath.map(pathPoint => new THREE.Vector3(pathPoint.x, 0.18, pathPoint.z)),
+      ),
+      new THREE.LineBasicMaterial({ color: 0x55e6d0, transparent: true, opacity: 0.9 }),
+    )
+    liveDroneTrail.renderOrder = 3
+    scene.value?.add(liveDroneTrail)
+  }
+
+  const now = Date.now()
+  if (selectedFieldId.value && now - lastDroneMetricSavedAt >= 5000) {
+    lastDroneMetricSavedAt = now
+    void saveFieldMetric({
+      field_id: selectedFieldId.value,
+      record_date: new Date(now).toISOString(),
+      raw_data: {
+        source: 'drone_telemetry',
+        latitude,
+        longitude,
+        altitude_msl: state.altitude,
+        relative_altitude_m: state.relativeAltitude,
+        ground_speed_mps: state.groundSpeed,
+        heading_degrees: state.heading,
+        armed: state.armed,
+      },
+    }).catch(error => {
+      setActionFeedback(error instanceof Error
+        ? `Telemetría recibida, pero no se pudo guardar: ${error.message}`
+        : 'Telemetría recibida, pero no se pudo guardar.')
+    })
+  }
+}
+
+const handleDroneTelemetry = (snapshot: {
+  connected: boolean
+  hasHeartbeat: boolean
+  armed: boolean | null
+  latitude: number | null
+  longitude: number | null
+  altitude: number | null
+  relativeAltitude: number | null
+  groundSpeed: number | null
+  heading: number | null
+}) => {
+  pendingDroneSnapshot = {
+    connected: snapshot.connected,
+    hasHeartbeat: snapshot.hasHeartbeat,
+    armed: snapshot.armed,
+    latitude: snapshot.latitude,
+    longitude: snapshot.longitude,
+    altitude: snapshot.altitude,
+    relativeAltitude: snapshot.relativeAltitude,
+    groundSpeed: snapshot.groundSpeed,
+    heading: snapshot.heading,
+  }
+}
 
 const updateTelemetry = () => {
   if (!allPlants || allPlants.length === 0) return
@@ -324,16 +551,82 @@ const createParticles = () => {
 const generateRandomStressCenters = () => {
   stressCenters = []
   clearSectorMarkers()
+  const halfWidth = (selectedFieldGeometry.value?.widthMeters ?? 50) / 2
+  const halfDepth = (selectedFieldGeometry.value?.depthMeters ?? 40) / 2
   const numCenters = Math.floor(Math.random() * 3) + 2
   for (let i=0; i<numCenters; i++) {
     stressCenters.push({
       id: `SEC-${i+1}`,
-      x: (Math.random() * 40) - 20,
-      z: (Math.random() * 30) - 15,
+      x: (Math.random() * 1.6 - 0.8) * halfWidth,
+      z: (Math.random() * 1.6 - 0.8) * halfDepth,
       intensity: 0.6 + Math.random() * 0.4,
-      radius: 4 + Math.random() * 4,
+      radius: Math.max(2, Math.min(halfWidth, halfDepth) * (0.08 + Math.random() * 0.08)),
       type: Math.random() > 0.5 ? 'DROUGHT' : 'PEST'
     })
+  }
+}
+
+const saveScenarioSnapshot = async (saveAlerts = false) => {
+  if (savingSnapshot.value) return
+  savingSnapshot.value = true
+  const fieldId = selectedFieldId.value || null
+
+  try {
+    await createSimulation({
+      field_id: fieldId,
+      scenario_title: `Simulación ${new Date().toLocaleString('es-MX')}`,
+      input_parameters: {
+        visualization_mode: currentMode.value,
+        wind_enabled: windEnabled.value,
+        field_id: fieldId,
+      },
+      results: {
+        telemetry: { ...telemetry.value },
+        plants: allPlants.map(plant => ({ ...plant })),
+        stress_centers: stressCenters.map(center => ({ ...center })),
+      },
+    })
+
+    if (fieldId) {
+      const writes: Promise<void>[] = [
+        saveFieldMetric({
+          field_id: fieldId,
+          soil_humidity: telemetry.value.avgHumidity,
+          temperature: telemetry.value.avgTemp,
+          sustainability_index: telemetry.value.avgHealth / 100,
+          raw_data: {
+            source: 'simulation',
+            ndvi_avg: telemetry.value.avgNDVI,
+            pest_index: telemetry.value.avgPestIndex,
+            plant_count: telemetry.value.plantCount,
+            stress_zones: telemetry.value.stressZones,
+          },
+        }),
+      ]
+
+      if (saveAlerts) {
+        writes.push(...stressCenters.map(center => createAlert({
+          field_id: fieldId,
+          alert_type: center.type === 'DROUGHT' ? 'soil_humidity' : 'pest',
+          severity: center.intensity >= 0.85 ? 'high' : center.intensity >= 0.7 ? 'medium' : 'low',
+          message: center.type === 'DROUGHT'
+            ? `Estrés hídrico detectado en ${center.id}.`
+            : `Posible plaga detectada en ${center.id}.`,
+        })))
+      }
+
+      await Promise.all(writes)
+    }
+
+    setActionFeedback(fieldId
+      ? 'Escenario, métricas y alertas guardados en el campo.'
+      : 'Escenario guardado. Selecciona un campo para asociar métricas y alertas.')
+  } catch (error) {
+    setActionFeedback(error instanceof Error
+      ? `No se pudieron guardar todos los datos: ${error.message}`
+      : 'No se pudieron guardar todos los datos.')
+  } finally {
+    savingSnapshot.value = false
   }
 }
 
@@ -400,15 +693,18 @@ const handleAction = (action: 'ANALYZE' | 'WATER' | 'FUMIGATE' | 'CENTINELAS') =
     droneState.value = 'SCANNING'
     generateRandomStressCenters()
     regenerateFieldHealth()
+    void saveScenarioSnapshot(true)
     
     // Ruta de escaneo (Zigzag sobre el campo)
+    const halfWidth = (selectedFieldGeometry.value?.widthMeters ?? 50) * 0.45
+    const halfDepth = (selectedFieldGeometry.value?.depthMeters ?? 40) * 0.45
     dronePath = [
-       new THREE.Vector3(-25, FLIGHT_HEIGHT, -20),
-       new THREE.Vector3(25, FLIGHT_HEIGHT, -20),
-       new THREE.Vector3(25, FLIGHT_HEIGHT, 0),
-       new THREE.Vector3(-25, FLIGHT_HEIGHT, 0),
-       new THREE.Vector3(-25, FLIGHT_HEIGHT, 20),
-       new THREE.Vector3(25, FLIGHT_HEIGHT, 20),
+       new THREE.Vector3(-halfWidth, FLIGHT_HEIGHT, -halfDepth),
+       new THREE.Vector3(halfWidth, FLIGHT_HEIGHT, -halfDepth),
+       new THREE.Vector3(halfWidth, FLIGHT_HEIGHT, 0),
+       new THREE.Vector3(-halfWidth, FLIGHT_HEIGHT, 0),
+       new THREE.Vector3(-halfWidth, FLIGHT_HEIGHT, halfDepth),
+       new THREE.Vector3(halfWidth, FLIGHT_HEIGHT, halfDepth),
        DRONE_BASE
     ]
     currentPathIndex = 0
@@ -463,6 +759,7 @@ const createNewScenario = () => {
   generateRandomStressCenters()
   regenerateFieldHealth()
   setActionFeedback('Nuevo escenario generado. Analiza el cultivo para detectar las zonas de estrés.')
+  void saveScenarioSnapshot()
 }
 
 const toggleSimulation = () => {
@@ -543,12 +840,19 @@ const initThree = () => {
 
   groundMaterial = new THREE.MeshLambertMaterial({ color: 0xffffff, map: createSoilTexture() })
   sectorFalloffTexture = createSectorFalloffTexture()
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(150, 150), groundMaterial)
+  const fieldExtent = selectedFieldGeometry.value
+    ? Math.max(selectedFieldGeometry.value.widthMeters, selectedFieldGeometry.value.depthMeters)
+    : 150
+  const groundSize = Math.max(150, fieldExtent * 1.5)
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(groundSize, groundSize), groundMaterial)
   ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.value.add(ground)
 
   const furrowPositions: number[] = []
-  for (let x = -26; x <= 26; x += 3.5) {
-    furrowPositions.push(x, 0.025, -21, x, 0.025, 21)
+  const furrowWidth = selectedFieldGeometry.value?.widthMeters ?? BASE_CROP_WIDTH
+  const furrowDepth = selectedFieldGeometry.value?.depthMeters ?? BASE_CROP_DEPTH
+  const furrowSpacing = Math.max(3.5, furrowWidth / 80)
+  for (let x = -furrowWidth / 2; x <= furrowWidth / 2; x += furrowSpacing) {
+    furrowPositions.push(x, 0.025, -furrowDepth / 2, x, 0.025, furrowDepth / 2)
   }
   const furrowGeometry = new THREE.BufferGeometry()
   furrowGeometry.setAttribute('position', new THREE.Float32BufferAttribute(furrowPositions, 3))
@@ -557,14 +861,30 @@ const initThree = () => {
     new THREE.LineBasicMaterial({ color: 0xc39a64, transparent: true, opacity: 0.17 })
   )
   scene.value.add(furrows)
+  cropGroup = new THREE.Group()
+  parcelOutlineGroup = new THREE.Group()
+  scene.value.add(cropGroup, parcelOutlineGroup)
+  applySelectedField()
 
   // Generación aleatoria de zonas inicial
   generateRandomStressCenters()
 
   // Dron y Particulas
   droneGroup = createDrone()
+  droneGroupReady = true
   droneGroup.position.copy(DRONE_BASE)
   scene.value.add(droneGroup)
+  liveDroneGroup = createDrone()
+  liveDroneGroup.traverse(object => {
+    if (object instanceof THREE.Mesh) {
+      const materials = Array.isArray(object.material) ? object.material : [object.material]
+      materials.forEach(material => {
+        if (material instanceof THREE.MeshLambertMaterial) material.color.setHex(0x20cfc0)
+      })
+    }
+  })
+  liveDroneGroup.visible = false
+  scene.value.add(liveDroneGroup)
   createParticles()
 
   // Generar plantas dinámicas afectadas por las zonas
@@ -668,7 +988,8 @@ const initThree = () => {
   leafMesh.castShadow = true
   tasselMesh.castShadow = true
   earMesh.castShadow = true
-  scene.value.add(trunkMesh, leafMesh, tasselMesh, earMesh, hitboxMesh)
+  cropGroup.add(trunkMesh, leafMesh, tasselMesh, earMesh, hitboxMesh)
+  applySelectedField()
   regenerateFieldHealth()
   raycaster.value = new THREE.Raycaster(); mouse.value = new THREE.Vector2()
 
@@ -677,6 +998,7 @@ const initThree = () => {
   const animate = () => {
     animationId.value = requestAnimationFrame(animate)
     controls.value?.update()
+    updateLiveDrone()
     if (simulationPaused.value) {
       if (renderer.value && scene.value && camera.value) renderer.value.render(scene.value, camera.value)
       return
@@ -873,7 +1195,19 @@ const onWindowResize = () => {
   renderer.value.setSize(width, height, false)
 }
 
-onMounted(() => { initThree() })
+onMounted(async () => {
+  try {
+    fields.value = await listFields()
+    selectedFieldId.value = fields.value[0]?.id ?? ''
+    const field = fields.value.find(item => item.id === selectedFieldId.value)
+    selectedFieldGeometry.value = field ? projectFieldGeometry(field.geojson_data) : null
+  } catch (error) {
+    setActionFeedback(error instanceof Error
+      ? `No se pudieron cargar los campos: ${error.message}`
+      : 'No se pudieron cargar los campos.')
+  }
+  initThree()
+})
 onBeforeUnmount(() => {
   cancelAnimationFrame(animationId.value); window.removeEventListener('resize', onWindowResize)
   if (feedbackTimeout) clearTimeout(feedbackTimeout)
@@ -897,6 +1231,15 @@ onBeforeUnmount(() => {
       </div>
       
       <div class="simulation-header-actions">
+        <select
+          v-model="selectedFieldId"
+          class="simulation-field-select"
+          aria-label="Asociar simulación a un campo"
+          @change="applySelectedField"
+        >
+          <option value="">Sin campo asociado</option>
+          <option v-for="field in fields" :key="field.id" :value="field.id">{{ field.name }}</option>
+        </select>
         <button
           class="simulation-toolbar-button"
           type="button"
@@ -926,7 +1269,7 @@ onBeforeUnmount(() => {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
             <path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.64 5.64l2.12 2.12m8.48 8.48 2.12 2.12m0-12.72-2.12 2.12m-8.48 8.48-2.12 2.12M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6" />
           </svg>
-          Nuevo escenario
+          {{ savingSnapshot ? 'Guardando…' : 'Nuevo escenario' }}
         </button>
         <div class="simulation-mode-switch flex p-1 rounded-lg gap-1" role="group" aria-label="Capas de visualización">
           <button
@@ -953,9 +1296,16 @@ onBeforeUnmount(() => {
     <div ref="containerRef" class="simulation-stage flex-1 relative bg-gray-900 cursor-crosshair">
       <canvas ref="canvasRef" class="w-full h-full outline-none" role="img" aria-label="Vista tridimensional interactiva del cultivo. Usa el ratón o gestos para explorar."></canvas>
       <p class="simulation-touch-hint">Arrastra para explorar · Pellizca para acercar</p>
-      <div class="simulation-demo-badge" aria-label="Entorno demostrativo">
+      <div class="simulation-demo-badge" :aria-label="selectedFieldGeometry ? 'Geometría real del campo a escala métrica; cultivo visual demostrativo' : 'Entorno demostrativo'">
         <span class="simulation-demo-dot"></span>
-        ENTORNO DEMOSTRATIVO · DATOS SIMULADOS
+        <span>{{ selectedFieldGeometry ? 'GEOMETRÍA REAL · ESCALA 1:1' : 'ENTORNO DEMOSTRATIVO · DATOS SIMULADOS' }}</span>
+        <small v-if="selectedFieldGeometry">{{ fieldDimensionsLabel }} · cultivo visual demostrativo</small>
+      </div>
+      <div class="simulation-live-badge" :class="{ 'is-tracking': liveDrone.connected && liveDrone.hasHeartbeat }" role="status">
+        <span></span>
+        {{ liveDrone.connected && liveDrone.hasHeartbeat
+          ? `Dron real · GPS${liveDrone.relativeAltitude === null ? (liveDrone.armed ? ' · altura estimada' : ' · altura sin dato') : ` · alt. relativa ${liveDrone.relativeAltitude.toFixed(1)} m`}`
+          : 'Esperando telemetría real' }}
       </div>
       <div class="simulation-camera-tools" role="group" aria-label="Controles de cámara">
         <button type="button" @click="zoomCamera('out')" aria-label="Alejar vista" title="Alejar">
@@ -1117,7 +1467,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <DroneConnectionPanel />
+    <DroneConnectionPanel @telemetry="handleDroneTelemetry" />
     
     <!-- Tooltip Combinado (Planta + Sector) -->
     <div 
@@ -1233,6 +1583,17 @@ onBeforeUnmount(() => {
         justify-content: flex-end;
         gap: 0.65rem;
         flex-wrap: wrap;
+      }
+
+      .simulation-field-select {
+        min-height: 40px;
+        max-width: 180px;
+        padding: 0 10px;
+        border: 1px solid rgba(196, 218, 147, 0.17);
+        border-radius: 10px;
+        color: #cbd4c2;
+        background: #19211b;
+        font-size: 0.72rem;
       }
 
       .simulation-toolbar-button {
@@ -1374,9 +1735,11 @@ onBeforeUnmount(() => {
         z-index: 2;
         top: 1rem;
         left: 1rem;
-        display: inline-flex;
+        display: grid;
+        grid-template-columns: 6px auto;
         align-items: center;
-        gap: 8px;
+        column-gap: 8px;
+        row-gap: 3px;
         padding: 8px 11px;
         border: 1px solid rgba(255, 255, 255, 0.14);
         border-radius: 999px;
@@ -1394,6 +1757,46 @@ onBeforeUnmount(() => {
         height: 6px;
         background: #efb953;
         animation: status-pulse 2s ease-in-out infinite;
+      }
+
+      .simulation-demo-badge small {
+        grid-column: 2;
+        color: #c5d0ba;
+        font-size: 0.55rem;
+        font-weight: 550;
+        letter-spacing: 0.02em;
+      }
+
+      .simulation-live-badge {
+        position: absolute;
+        z-index: 3;
+        top: 1rem;
+        right: 18rem;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        max-width: calc(100% - 20rem);
+        padding: 8px 11px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 999px;
+        color: #d3ddce;
+        background: rgba(13, 20, 16, 0.78);
+        font-size: 0.62rem;
+        pointer-events: none;
+      }
+
+      .simulation-live-badge > span {
+        width: 7px;
+        height: 7px;
+        flex: 0 0 auto;
+        border-radius: 50%;
+        background: #899187;
+      }
+
+      .simulation-live-badge.is-tracking > span {
+        background: #55e6d0;
+        box-shadow: 0 0 12px rgba(85, 230, 208, 0.7);
+        animation: status-pulse 1.5s ease-in-out infinite;
       }
 
       .simulation-camera-tools {
@@ -1669,6 +2072,15 @@ onBeforeUnmount(() => {
           left: 0.75rem;
           padding: 7px 9px;
           font-size: 0.52rem;
+        }
+
+        .simulation-live-badge {
+          top: 3.2rem;
+          right: auto;
+          left: 0.75rem;
+          max-width: calc(100% - 1.5rem);
+          padding: 7px 9px;
+          font-size: 0.57rem;
         }
 
         .simulation-camera-tools {

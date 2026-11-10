@@ -70,6 +70,12 @@ const router = createRouter({
       name: 'parcels',
       component: () => import('../views/ParcelsView.vue'),
       meta: { requiresAuth: true }
+    },
+    {
+      path: '/campos',
+      name: 'field-records',
+      component: () => import('../views/FieldRecordsView.vue'),
+      meta: { requiresAuth: true }
     }
   ]
 })
