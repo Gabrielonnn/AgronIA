@@ -197,55 +197,7 @@
 }
 
 .topo-navigation { scrollbar-width: thin; scrollbar-color: rgba(213, 185, 91, 0.25) transparent; }
-.topo-menu-search {
-  display: flex;
-  height: 38px;
-  align-items: center;
-  gap: 9px;
-  margin: 0 12px 18px;
-  padding: 0 10px;
-  border: 1px solid rgba(196, 218, 147, 0.13);
-  border-radius: 10px;
-  color: #889582;
-  background: rgba(4, 12, 10, 0.3);
-  transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
-}
-
-.topo-menu-search:focus-within {
-  border-color: rgba(224, 194, 100, 0.48);
-  background: rgba(4, 12, 10, 0.48);
-  box-shadow: 0 0 0 3px rgba(224, 194, 100, 0.08);
-}
-
-.topo-menu-search > svg { flex: 0 0 auto; color: #b4a363; }
-.topo-menu-search input {
-  width: 100%;
-  min-width: 0;
-  border: 0;
-  outline: 0;
-  color: #e9ecdf;
-  background: transparent;
-  font-size: 0.7rem;
-}
-.topo-menu-search input::placeholder { color: #858f7b; }
-.topo-menu-search input::-webkit-search-cancel-button { display: none; }
-.topo-menu-search kbd,
-.topo-menu-search button {
-  display: grid;
-  width: 20px;
-  height: 20px;
-  flex: 0 0 auto;
-  place-items: center;
-  border: 1px solid rgba(196, 218, 147, 0.12);
-  border-radius: 5px;
-  color: #89927f;
-  background: rgba(255, 255, 255, 0.035);
-  font: inherit;
-  font-size: 0.63rem;
-}
-.topo-menu-search button:hover { color: #f1d47c; background: rgba(255, 255, 255, 0.08); }
 .topo-menu-group + .topo-menu-group { margin-top: 15px; }
-.topo-menu-empty { padding: 12px 14px; color: #929d86; font-size: 0.7rem; }
 
 .app-sidebar .topo-menu-title {
   display: flex;

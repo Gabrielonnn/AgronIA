@@ -1,14 +1,12 @@
 <script setup lang="ts">
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { Home, Map, MapPin, PieChart, Database, Settings, LogOut, MonitorPlay, Search, ShieldCheck, Users, X, ScanSearch } from 'lucide-vue-next'
+import { Home, Map, MapPin, PieChart, Database, Settings, LogOut, MonitorPlay, ShieldCheck, Users, ScanSearch } from 'lucide-vue-next'
 import { useMainStore } from '../../stores'
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed } from 'vue'
 
 const route = useRoute()
 const router = useRouter()
 const store = useMainStore()
-const menuSearch = ref('')
-const menuSearchInput = ref<HTMLInputElement | null>(null)
 
 const userEmail = computed(() => store.user?.email || 'demo@agronia.com')
 const userRole = computed(() => {
@@ -34,31 +32,11 @@ const menuItems = computed(() => [
 
 const isActive = (path: string) => route.path === path
 const menuGroups = computed(() => {
-  const query = menuSearch.value.trim().toLocaleLowerCase()
   return ['OPERACIÓN', 'GESTIÓN'].map(name => ({
     name,
-    items: menuItems.value.filter(item =>
-      item.group === name && (!query || item.name.toLocaleLowerCase().includes(query))
-    )
-  })).filter(group => group.items.length > 0)
+    items: menuItems.value.filter(item => item.group === name)
+  }))
 })
-
-const handleMenuShortcut = (event: KeyboardEvent) => {
-  const target = event.target
-  const isTyping = target instanceof HTMLElement
-    && (target.isContentEditable || target.matches('input, textarea, select'))
-
-  if (event.key === '/' && !isTyping && !event.metaKey && !event.ctrlKey && !event.altKey) {
-    event.preventDefault()
-    menuSearchInput.value?.focus()
-  } else if (event.key === 'Escape' && document.activeElement === menuSearchInput.value) {
-    menuSearch.value = ''
-    menuSearchInput.value?.blur()
-  }
-}
-
-onMounted(() => window.addEventListener('keydown', handleMenuShortcut))
-onUnmounted(() => window.removeEventListener('keydown', handleMenuShortcut))
 
 const handleLogout = async () => {
   await store.signOut()
@@ -110,15 +88,6 @@ const roleColor = computed(() => {
     </div>
     
     <nav class="topo-navigation flex-1 overflow-y-auto py-4" aria-label="Secciones de AgronIA">
-      <label class="topo-menu-search">
-        <Search :size="15" aria-hidden="true" />
-        <input ref="menuSearchInput" v-model="menuSearch" type="search" placeholder="Filtrar secciones" aria-label="Filtrar secciones del menú" />
-        <button v-if="menuSearch" type="button" aria-label="Limpiar búsqueda" @click="menuSearch = ''">
-          <X :size="14" />
-        </button>
-        <kbd v-else>/</kbd>
-      </label>
-
       <section v-for="group in menuGroups" :key="group.name" class="topo-menu-group">
         <p class="topo-menu-title text-[10px] font-bold text-gray-400 uppercase tracking-widest px-6 mb-2">{{ group.name }}</p>
         <ul class="space-y-0.5 px-3">
@@ -137,7 +106,6 @@ const roleColor = computed(() => {
           </li>
         </ul>
       </section>
-      <p v-if="menuGroups.length === 0" class="topo-menu-empty">No se encontraron secciones.</p>
     </nav>
     
     <div class="topo-account-area p-4 border-t border-gray-100">
