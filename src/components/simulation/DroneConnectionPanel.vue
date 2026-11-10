@@ -2,6 +2,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import { Activity, Battery, Bug, Cable, Camera, CameraOff, Check, Crosshair, ExternalLink, LocateFixed, MapPin, Radio, Save, ShieldCheck, Unplug, Wifi } from 'lucide-vue-next'
 import { MavLinkTelemetryParser, type MavLinkTelemetryMessage } from '../../services/mavlinkTelemetry'
+import { SIMULATION_PRESETS } from '../../services/multispectralPlantEngine'
+import MultispectralPlantScanner, { type MultispectralCapturePayload } from '../diagnosis/MultispectralPlantScanner.vue'
 import { supabase } from '../../services/supabase'
 import { useMainStore } from '../../stores'
 
@@ -906,6 +908,18 @@ const handleDetectorClassChange = () => {
   }
 }
 
+const handleMultispectralCapture = (payload: MultispectralCapturePayload) => {
+  releaseCapturedPhoto()
+  capturedPhoto.value = payload.file
+  capturedPhotoUrl.value = payload.previewUrl
+  const presetMeta = SIMULATION_PRESETS[payload.preset]
+  issueType.value = presetMeta.defaultIssueType
+  issueSeverity.value = presetMeta.defaultSeverity
+  observationNotes.value = `[Escaneo ${payload.spectrumMode.toUpperCase()} · ${payload.analysis.aiClassification.label}] NDVI prom: ${payload.analysis.ndvi.mean.toFixed(2)} | Temp foliar: ${payload.analysis.thermal.meanTempC.toFixed(1)}°C (CWSI ${payload.analysis.thermal.cwsi.toFixed(2)}) | Área planta: ${payload.analysis.plantCoveragePercent}%`
+  observationMessage.value = 'Captura multiespectral cargada en el formulario de Registro de campo.'
+  observationError.value = ''
+}
+
 const issueLabels: Record<string, string> = {
   plaga: 'Posible plaga',
   enfermedad: 'Posible enfermedad',
@@ -1080,11 +1094,19 @@ onBeforeUnmount(() => {
     <section class="drone-link-camera" aria-labelledby="drone-camera-title">
       <div class="drone-camera-heading">
         <div>
-          <span class="drone-camera-eyebrow">CÁMARA LOCAL</span>
-          <h3 id="drone-camera-title">Vista de cámara</h3>
-          <p>Usa la cámara de este teléfono o dispositivo; todavía no es el video del dron.</p>
+          <span class="drone-camera-eyebrow">CÁMARA LOCAL Y ESCÁNER MULTIESPECTRAL IA</span>
+          <h3 id="drone-camera-title">Reconocimiento de Planta y Simulación Espectral (RGB · NDVI · Térmico)</h3>
+          <p>Conecta la cámara del dispositivo deseado para detectar el área total de la planta, simular presets fisiológicos y transferir hallazgos al Registro de campo.</p>
         </div>
         <span v-if="cameraActive" class="drone-camera-live"><span></span>En vivo</span>
+      </div>
+
+      <div class="col-span-full mb-2">
+        <MultispectralPlantScanner
+          :compact="true"
+          :show-field-scouting-action="true"
+          @capture="handleMultispectralCapture"
+        />
       </div>
       <div class="drone-camera-preview">
         <img
