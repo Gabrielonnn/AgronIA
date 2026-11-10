@@ -1,11 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
-import { Activity, Battery, Bug, Cable, Camera, CameraOff, Check, Crosshair, ExternalLink, LocateFixed, MapPin, Radio, Save, ShieldCheck, Unplug, Wifi } from 'lucide-vue-next'
+import { Activity, Battery, Cable, Camera, CameraOff, Crosshair, ExternalLink, MapPin, Radio, Save, ShieldCheck, Unplug, Wifi } from 'lucide-vue-next'
 import { MavLinkTelemetryParser, type MavLinkTelemetryMessage } from '../../services/mavlinkTelemetry'
-import { SIMULATION_PRESETS } from '../../services/multispectralPlantEngine'
-import MultispectralPlantScanner, { type MultispectralCapturePayload } from '../diagnosis/MultispectralPlantScanner.vue'
-import { supabase } from '../../services/supabase'
-import { useMainStore } from '../../stores'
+import MultispectralPlantScanner from '../diagnosis/MultispectralPlantScanner.vue'
 
 type LinkState = 'disconnected' | 'connecting' | 'connected' | 'error'
 type ConnectionMode = 'usb' | 'mavlink-bridge' | 'dji-bridge'
@@ -42,28 +39,6 @@ interface DroneTelemetry {
   incompatibleFramesSkipped: number
 }
 
-interface PhoneLocation {
-  latitude: number
-  longitude: number
-  accuracy: number
-  capturedAt: number
-}
-
-interface SavedObservation {
-  id: string
-  issue_type: string
-  severity: string | null
-  notes: string | null
-  detector_class: string | null
-  detector_confidence: number | null
-  image_path: string
-  latitude: number | null
-  longitude: number | null
-  location_source: 'drone' | 'phone' | 'none'
-  created_at: string
-  imageUrl: string
-}
-
 const baudRate = ref(57600)
 const connectionMode = ref<ConnectionMode>('usb')
 const mavlinkBridgeUrl = ref('ws://127.0.0.1:8765')
@@ -98,38 +73,10 @@ const cameraStarting = ref(false)
 const cameraActive = ref(false)
 const cameraError = ref('')
 let cameraRequestId = 0
-const store = useMainStore()
 const capturedPhoto = shallowRef<File | null>(null)
 const capturedPhotoUrl = ref('')
 const photoError = ref('')
-const issueType = ref('plaga')
-const issueSeverity = ref('media')
-const observationNotes = ref('')
-const detectorClass = ref('')
-const detectorConfidencePercent = ref('')
-const locationSourcePreference = ref<'auto' | 'drone' | 'phone'>('auto')
-const phoneLocation = ref<PhoneLocation | null>(null)
-const locatingPhone = ref(false)
-const locationError = ref('')
-const savingObservation = ref(false)
-const observationMessage = ref('')
-const observationError = ref('')
-const loadingObservations = ref(false)
-const observationListError = ref('')
-const recentObservations = ref<SavedObservation[]>([])
 const detectorUrl = 'https://plant-dectection.streamlit.app/'
-const detectorClasses = [
-  'Apple Scab',
-  'Apple Rust',
-  'Corn Leaf Blight',
-  'Corn Gray Spot',
-  'Potato Early Blight',
-  'Potato Late Blight',
-  'Tomato Bacterial Spot',
-  'Tomato Leaf Mold',
-  'Tomato Mosaic Virus',
-  'Healthy Leaf',
-]
 
 let port: SerialPortLike | null = null
 let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
@@ -142,35 +89,6 @@ const serial = computed(() => (navigator as Navigator & { serial?: WebSerialLike
 const cameraSupported = computed(() =>
   typeof navigator !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia)
 )
-const phoneLocationFresh = computed(() =>
-  phoneLocation.value !== null && clock.value - phoneLocation.value.capturedAt < 5 * 60_000
-)
-const droneLocationFresh = computed(() =>
-  telemetry.value.latitude !== null
-  && telemetry.value.longitude !== null
-  && telemetry.value.lastMessageAt !== null
-  && clock.value - telemetry.value.lastMessageAt < 15_000
-)
-const observationLocation = computed(() => {
-  const preference = locationSourcePreference.value
-  if ((preference === 'auto' || preference === 'drone') && droneLocationFresh.value) {
-    return {
-      latitude: telemetry.value.latitude!,
-      longitude: telemetry.value.longitude!,
-      source: 'drone' as const,
-      accuracy: null,
-    }
-  }
-  if ((preference === 'auto' || preference === 'phone') && phoneLocationFresh.value && phoneLocation.value) {
-    return {
-      latitude: phoneLocation.value.latitude,
-      longitude: phoneLocation.value.longitude,
-      source: 'phone' as const,
-      accuracy: phoneLocation.value.accuracy,
-    }
-  }
-  return null
-})
 const hasHeartbeat = computed(() =>
   telemetry.value.lastMessageAt !== null
   && clock.value - telemetry.value.lastMessageAt < 5000
@@ -699,7 +617,6 @@ const capturePhoto = async () => {
   }
 
   photoError.value = ''
-  observationMessage.value = ''
   const maxDimension = 1920
   const scale = Math.min(1, maxDimension / Math.max(video.videoWidth, video.videoHeight))
   const canvas = document.createElement('canvas')
@@ -730,213 +647,6 @@ const capturePhoto = async () => {
   }
 }
 
-const locatePhone = () => {
-  locationError.value = ''
-  if (!navigator.geolocation) {
-    locationError.value = 'Este navegador no ofrece geolocalización.'
-    return
-  }
-
-  locatingPhone.value = true
-  navigator.geolocation.getCurrentPosition(
-    position => {
-      phoneLocation.value = {
-        latitude: position.coords.latitude,
-        longitude: position.coords.longitude,
-        accuracy: position.coords.accuracy,
-        capturedAt: Date.now(),
-      }
-      locatingPhone.value = false
-      locationError.value = ''
-    },
-    error => {
-      locatingPhone.value = false
-      if (error.code === error.PERMISSION_DENIED) {
-        locationError.value = 'No se concedió permiso para la ubicación. Permítelo en el navegador y vuelve a intentar.'
-      } else if (error.code === error.POSITION_UNAVAILABLE) {
-        locationError.value = 'El teléfono no pudo determinar su ubicación. Comprueba el GPS y la señal.'
-      } else {
-        locationError.value = 'La ubicación tardó demasiado. Inténtalo de nuevo.'
-      }
-    },
-    { enableHighAccuracy: true, timeout: 15_000, maximumAge: 0 }
-  )
-}
-
-const loadRecentObservations = async () => {
-  const client = supabase
-  const userId = store.user?.id
-  if (!client || !userId) {
-    observationListError.value = 'Inicia sesión y configura Supabase para consultar registros.'
-    return
-  }
-
-  loadingObservations.value = true
-  observationListError.value = ''
-  try {
-    const { data, error } = await client
-      .from('field_observations')
-      .select('id, issue_type, severity, notes, detector_class, detector_confidence, image_path, latitude, longitude, location_source, created_at')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-      .limit(6)
-
-    if (error) {
-      observationListError.value = `No se pudieron cargar los registros: ${error.message}. Comprueba que ejecutaste supabase_field_scouting_setup.sql.`
-      recentObservations.value = []
-      return
-    }
-
-    const observations = await Promise.all((data ?? []).map(async (row): Promise<SavedObservation> => {
-      const { data: signedImage, error: signedImageError } = await client.storage
-        .from('field-observations')
-        .createSignedUrl(row.image_path, 3600)
-      if (signedImageError) {
-        throw new Error(`No se pudo abrir la foto de un registro: ${signedImageError.message}`)
-      }
-      return { ...row, imageUrl: signedImage.signedUrl } as SavedObservation
-    }))
-    recentObservations.value = observations
-  } catch (error) {
-    observationListError.value = error instanceof Error
-      ? error.message
-      : 'No se pudieron abrir las fotos de los registros.'
-    recentObservations.value = []
-  } finally {
-    loadingObservations.value = false
-  }
-}
-
-const saveObservation = async () => {
-  const userId = store.user?.id
-  const photo = capturedPhoto.value
-  if (!supabase) {
-    observationError.value = 'Supabase no está configurado. No se guardó el registro.'
-    return
-  }
-  if (!userId) {
-    observationError.value = 'Inicia sesión para guardar una observación.'
-    return
-  }
-  if (!photo) {
-    observationError.value = 'Toma una foto antes de guardar el registro.'
-    return
-  }
-  if ((issueType.value === 'sin_hallazgo') !== (issueSeverity.value === 'ninguna')) {
-    observationError.value = 'Selecciona un nivel de severidad para el hallazgo, o “Sin severidad” si no se observó un problema.'
-    return
-  }
-  const confidencePercent = detectorConfidencePercent.value.trim() === ''
-    ? null
-    : Number(detectorConfidencePercent.value)
-  if (detectorClass.value && confidencePercent !== null
-    && (!Number.isFinite(confidencePercent) || confidencePercent < 0 || confidencePercent > 100)) {
-    observationError.value = 'La confianza del detector debe estar entre 0 y 100%.'
-    return
-  }
-  if (!detectorClass.value && detectorConfidencePercent.value.trim() !== '') {
-    observationError.value = 'Selecciona la clase YOLOv8 para guardar su confianza.'
-    return
-  }
-
-  savingObservation.value = true
-  observationError.value = ''
-  observationMessage.value = ''
-  const imagePath = `${userId}/${crypto.randomUUID()}.jpg`
-  const location = observationLocation.value
-  const droneIsFresh = droneLocationFresh.value
-
-  try {
-    const { error: uploadError } = await supabase.storage
-      .from('field-observations')
-      .upload(imagePath, photo, { cacheControl: '3600', contentType: 'image/jpeg', upsert: false })
-
-    if (uploadError) {
-      observationError.value = `No se pudo subir la foto: ${uploadError.message}. Comprueba el bucket ejecutando supabase_field_scouting_setup.sql.`
-      return
-    }
-
-    const { error: insertError } = await supabase.from('field_observations').insert({
-      user_id: userId,
-      issue_type: issueType.value,
-      severity: issueSeverity.value === 'ninguna' ? null : issueSeverity.value,
-      notes: observationNotes.value.trim() || null,
-      detector_class: detectorClass.value || null,
-      detector_confidence: confidencePercent === null ? null : confidencePercent / 100,
-      image_path: imagePath,
-      latitude: location?.latitude ?? null,
-      longitude: location?.longitude ?? null,
-      location_source: location?.source ?? 'none',
-      location_accuracy_m: location?.accuracy ?? null,
-      drone_system_id: droneIsFresh ? telemetry.value.systemId : null,
-      drone_altitude_m: droneIsFresh ? telemetry.value.altitude : null,
-      drone_heading_deg: droneIsFresh ? telemetry.value.heading : null,
-    })
-
-    if (insertError) {
-      const { error: cleanupError } = await supabase.storage.from('field-observations').remove([imagePath])
-      observationError.value = `La foto se subió, pero no se pudo guardar el registro: ${insertError.message}${cleanupError ? ` No se pudo borrar la foto temporal: ${cleanupError.message}` : ''}`
-      return
-    }
-
-    releaseCapturedPhoto()
-    observationNotes.value = ''
-    detectorClass.value = ''
-    detectorConfidencePercent.value = ''
-    observationMessage.value = 'Observación guardada con su foto.'
-    await loadRecentObservations()
-  } catch (error) {
-    observationError.value = error instanceof Error
-      ? `No se pudo guardar la observación: ${error.message}`
-      : 'No se pudo guardar la observación por un error inesperado.'
-  } finally {
-    savingObservation.value = false
-  }
-}
-
-const handleIssueTypeChange = () => {
-  issueSeverity.value = issueType.value === 'sin_hallazgo' ? 'ninguna' : 'media'
-}
-
-const handleDetectorClassChange = () => {
-  if (detectorClass.value === 'Healthy Leaf') {
-    issueType.value = 'sin_hallazgo'
-    issueSeverity.value = 'ninguna'
-  } else if (detectorClass.value) {
-    issueType.value = 'enfermedad'
-    issueSeverity.value = 'media'
-  }
-}
-
-const handleMultispectralCapture = (payload: MultispectralCapturePayload) => {
-  releaseCapturedPhoto()
-  capturedPhoto.value = payload.file
-  capturedPhotoUrl.value = payload.previewUrl
-  const presetMeta = SIMULATION_PRESETS[payload.preset]
-  issueType.value = presetMeta.defaultIssueType
-  issueSeverity.value = presetMeta.defaultSeverity
-  const speciesTag = payload.species
-    ? `Planta: ${payload.species.commonName} (${payload.species.scientificName}) · ${payload.species.plantType} | `
-    : ''
-  observationNotes.value = `[Escaneo ${payload.spectrumMode.toUpperCase()} · ${payload.analysis.aiClassification.label}] ${speciesTag}NDVI prom: ${payload.analysis.ndvi.mean.toFixed(2)} | Temp foliar: ${payload.analysis.thermal.meanTempC.toFixed(1)}°C (CWSI ${payload.analysis.thermal.cwsi.toFixed(2)}) | Área planta: ${payload.analysis.plantCoveragePercent}%`
-  observationMessage.value = 'Captura multiespectral y especie botánica cargadas en el formulario de Registro de campo.'
-  observationError.value = ''
-}
-
-const issueLabels: Record<string, string> = {
-  plaga: 'Posible plaga',
-  enfermedad: 'Posible enfermedad',
-  estres_hidrico: 'Estrés hídrico',
-  deficiencia_nutricional: 'Deficiencia nutricional',
-  otro: 'Otro hallazgo',
-  sin_hallazgo: 'Sin hallazgo',
-}
-const severityLabels: Record<string, string> = {
-  baja: 'Baja',
-  media: 'Media',
-  alta: 'Alta',
-}
-
 const formatValue = (value: number | null, digits = 1) =>
   value === null ? '—' : value.toFixed(digits)
 const formatCoordinate = (value: number | null) =>
@@ -951,7 +661,6 @@ const gpsFixLabel = (fix: number | null) => {
 
 onMounted(() => {
   clockInterval = setInterval(() => { clock.value = Date.now() }, 1000)
-  void loadRecentObservations()
 })
 
 onBeforeUnmount(() => {
@@ -1099,7 +808,7 @@ onBeforeUnmount(() => {
         <div>
           <span class="drone-camera-eyebrow">CÁMARA LOCAL Y ESCÁNER MULTIESPECTRAL IA</span>
           <h3 id="drone-camera-title">Reconocimiento de Planta y Simulación Espectral (RGB · NDVI · Térmico)</h3>
-          <p>Conecta la cámara del dispositivo deseado para detectar el área total de la planta, simular presets fisiológicos y transferir hallazgos al Registro de campo.</p>
+          <p>Conecta la cámara del dispositivo deseado para detectar el área total de la planta y simular presets fisiológicos.</p>
         </div>
         <span v-if="cameraActive" class="drone-camera-live"><span></span>En vivo</span>
       </div>
@@ -1107,8 +816,7 @@ onBeforeUnmount(() => {
       <div class="col-span-full mb-2">
         <MultispectralPlantScanner
           :compact="true"
-          :show-field-scouting-action="true"
-          @capture="handleMultispectralCapture"
+          :show-field-scouting-action="false"
         />
       </div>
       <div class="drone-camera-preview">
@@ -1196,131 +904,6 @@ onBeforeUnmount(() => {
           El resultado no vuelve automáticamente a AgronIA: confirma y transcribe manualmente.
           Al subir la foto a Streamlit, la envías a ese servicio externo; el GPS no se comparte.
         </p>
-      </div>
-      <div class="drone-observation-form">
-        <div class="drone-observation-heading">
-          <Bug :size="17" />
-          <div>
-            <h4>Registro de campo</h4>
-            <p>Combina observación de campo con el resultado que confirmes del detector.</p>
-          </div>
-        </div>
-
-        <div class="drone-observation-location">
-          <label>
-            <span>Ubicación del registro</span>
-            <select v-model="locationSourcePreference">
-              <option value="auto">Automática (dron y luego teléfono)</option>
-              <option value="drone">Telemetría del dron</option>
-              <option value="phone">GPS del teléfono</option>
-            </select>
-          </label>
-          <button
-            class="drone-camera-switch"
-            type="button"
-            :disabled="locatingPhone"
-            @click="locatePhone"
-          >
-            <LocateFixed :size="14" /> {{ locatingPhone ? 'Buscando…' : 'Actualizar GPS del teléfono' }}
-          </button>
-          <p v-if="observationLocation" class="drone-location-status">
-            <Check :size="14" />
-            {{ observationLocation.source === 'drone' ? 'Dron' : 'Teléfono' }}:
-            {{ formatCoordinate(observationLocation.latitude) }}, {{ formatCoordinate(observationLocation.longitude) }}
-            <template v-if="observationLocation.accuracy !== null">
-              · precisión aprox. {{ Math.round(observationLocation.accuracy) }} m
-            </template>
-          </p>
-          <p v-else class="drone-location-status is-missing">
-            <MapPin :size="14" /> Sin ubicación reciente; puedes registrar la foto sin coordenadas.
-          </p>
-          <p v-if="locationError" class="drone-link-error" role="alert">{{ locationError }}</p>
-        </div>
-
-        <div class="drone-observation-fields">
-          <label>
-            <span>Observación</span>
-            <select v-model="issueType" @change="handleIssueTypeChange">
-              <option value="plaga">Posible plaga</option>
-              <option value="enfermedad">Posible enfermedad</option>
-              <option value="estres_hidrico">Estrés hídrico</option>
-              <option value="deficiencia_nutricional">Deficiencia nutricional</option>
-              <option value="otro">Otro hallazgo</option>
-              <option value="sin_hallazgo">Sin hallazgo</option>
-            </select>
-          </label>
-          <label>
-            <span>Severidad</span>
-            <select v-model="issueSeverity">
-              <option value="baja">Baja</option>
-              <option value="media">Media</option>
-              <option value="alta">Alta</option>
-              <option value="ninguna">Sin severidad</option>
-            </select>
-          </label>
-          <label class="drone-observation-notes">
-            <span>Notas (opcional)</span>
-            <textarea v-model="observationNotes" maxlength="1000" rows="2" placeholder="Describe lo observado para revisarlo después"></textarea>
-          </label>
-          <label class="drone-observation-notes">
-            <span>Clase del detector YOLOv8 (opcional, cópiala de la otra página)</span>
-            <select v-model="detectorClass" @change="handleDetectorClassChange">
-              <option value="">Sin resultado del detector</option>
-              <option v-for="name in detectorClasses" :key="name" :value="name">{{ name }}</option>
-            </select>
-          </label>
-          <label v-if="detectorClass" class="drone-observation-notes">
-            <span>Confianza indicada por YOLOv8 (%)</span>
-            <input
-              v-model="detectorConfidencePercent"
-              type="number"
-              min="0"
-              max="100"
-              step="0.1"
-              inputmode="decimal"
-              placeholder="Ej. 92.5"
-            />
-          </label>
-        </div>
-        <button
-          class="drone-link-button"
-          type="button"
-          :disabled="savingObservation || !capturedPhoto"
-          @click="saveObservation"
-        >
-          <Save :size="16" /> {{ savingObservation ? 'Guardando…' : 'Guardar foto y observación' }}
-        </button>
-        <p v-if="observationError" class="drone-link-error" role="alert">{{ observationError }}</p>
-        <p v-if="observationMessage" class="drone-observation-success" role="status">
-          <Check :size="14" /> {{ observationMessage }}
-        </p>
-        <p v-if="observationListError" class="drone-link-error" role="alert">{{ observationListError }}</p>
-      </div>
-
-      <div v-if="loadingObservations" class="drone-observation-list-status">Cargando registros guardados…</div>
-      <div v-else-if="recentObservations.length" class="drone-observation-history">
-        <h4>Registros recientes</h4>
-        <article v-for="observation in recentObservations" :key="observation.id" class="drone-observation-card">
-          <img :src="observation.imageUrl" alt="Foto de la observación guardada" loading="lazy" />
-          <div>
-            <strong>{{ issueLabels[observation.issue_type] ?? 'Observación' }}</strong>
-            <span v-if="observation.severity">Severidad {{ severityLabels[observation.severity] ?? observation.severity }}</span>
-            <span v-if="observation.detector_class">
-              Resultado YOLOv8 informado: {{ observation.detector_class }}
-              <template v-if="observation.detector_confidence !== null">
-                ({{ (observation.detector_confidence * 100).toFixed(1) }}%)
-              </template>
-            </span>
-            <span>
-              {{ observation.location_source === 'drone' ? 'GPS del dron' : observation.location_source === 'phone' ? 'GPS del teléfono' : 'Sin ubicación' }}
-              <template v-if="observation.latitude !== null && observation.longitude !== null">
-                · {{ formatCoordinate(observation.latitude) }}, {{ formatCoordinate(observation.longitude) }}
-              </template>
-            </span>
-            <small>{{ new Date(observation.created_at).toLocaleString('es-MX') }}</small>
-            <p v-if="observation.notes">{{ observation.notes }}</p>
-          </div>
-        </article>
       </div>
     </section>
 
@@ -1431,32 +1014,6 @@ onBeforeUnmount(() => {
 .drone-detector-handoff { display: grid; grid-column: 1 / -1; gap: 0.5rem; padding: 0.75rem; border: 1px solid rgba(211, 189, 103, 0.17); border-radius: 10px; background: rgba(211, 189, 103, 0.045); }
 .drone-detector-handoff > p:first-child { color: #c4cbb9; font-size: 0.62rem; line-height: 1.5; }
 .drone-detector-limits { color: #d3bd77; font-size: 0.58rem; line-height: 1.5; }
-.drone-observation-form, .drone-observation-history, .drone-observation-list-status { grid-column: 1 / -1; }
-.drone-observation-form { display: grid; gap: 0.75rem; padding: 0.85rem; border: 1px solid rgba(196, 218, 147, 0.1); border-radius: 11px; background: rgba(5, 10, 7, 0.2); }
-.drone-observation-heading { display: flex; align-items: flex-start; gap: 0.55rem; color: #d7c16e; }
-.drone-observation-heading h4, .drone-observation-history h4 { color: #e7ecdf; font-size: 0.7rem; font-weight: 700; }
-.drone-observation-heading p { margin-top: 0.2rem; color: #929b88; font-size: 0.59rem; }
-.drone-observation-location { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 0.55rem; }
-.drone-observation-location label, .drone-observation-fields label { display: grid; min-width: 0; gap: 0.32rem; color: #a9b29f; font-size: 0.6rem; font-weight: 650; }
-.drone-observation-location select, .drone-observation-fields select, .drone-observation-fields textarea, .drone-observation-fields input { width: 100%; min-height: 36px; padding: 0.45rem 0.6rem; border: 1px solid rgba(196, 218, 147, 0.16); border-radius: 8px; outline: none; color: #dce3d3; background: #1a241b; font-size: 0.65rem; }
-.drone-observation-location select:focus, .drone-observation-fields select:focus, .drone-observation-fields textarea:focus, .drone-observation-fields input:focus { border-color: rgba(211, 189, 103, 0.5); }
-.drone-location-status { display: flex; grid-column: 1 / -1; align-items: center; gap: 0.35rem; color: #9ed5a9; font-size: 0.59rem; line-height: 1.4; overflow-wrap: anywhere; }
-.drone-location-status.is-missing { color: #9a9f91; }
-.drone-observation-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.55rem; }
-.drone-observation-fields textarea { min-height: 58px; resize: vertical; }
-.drone-observation-fields textarea::placeholder { color: #788273; }
-.drone-observation-notes { grid-column: 1 / -1; }
-.drone-observation-success { display: flex; align-items: center; gap: 0.35rem; color: #9ed5a9; font-size: 0.64rem; }
-.drone-observation-history { display: grid; gap: 0.5rem; }
-.drone-observation-history h4 { margin-bottom: 0.1rem; }
-.drone-observation-card { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 0.65rem; padding: 0.55rem; border: 1px solid rgba(196, 218, 147, 0.09); border-radius: 9px; background: rgba(5, 10, 7, 0.16); }
-.drone-observation-card img { width: 76px; height: 76px; border-radius: 6px; object-fit: cover; background: #070b08; }
-.drone-observation-card > div { display: grid; align-content: start; gap: 0.18rem; min-width: 0; }
-.drone-observation-card strong { color: #e7ecdf; font-size: 0.63rem; }
-.drone-observation-card span, .drone-observation-card small, .drone-observation-card p, .drone-observation-list-status { color: #929b88; font-size: 0.56rem; line-height: 1.4; overflow-wrap: anywhere; }
-.drone-observation-card p { margin-top: 0.12rem; color: #bcc6b4; }
-.drone-observation-list-status { padding: 0.25rem 0; }
-
 .drone-link-telemetry { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); align-content: center; }
 .drone-telemetry-item { min-width: 0; padding: 0.8rem 0.75rem; border-right: 1px solid rgba(196, 218, 147, 0.08); transition: background 0.2s ease; }
 .drone-telemetry-item:last-child { border-right: 0; }
@@ -1496,8 +1053,6 @@ onBeforeUnmount(() => {
   .drone-camera-heading { align-items: flex-start; }
   .drone-camera-controls { align-items: stretch; flex-direction: column; }
   .drone-camera-controls > * { width: 100%; }
-  .drone-observation-location, .drone-observation-fields { grid-template-columns: minmax(0, 1fr); }
-  .drone-observation-location > button, .drone-location-status, .drone-observation-notes { grid-column: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
