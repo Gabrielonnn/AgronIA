@@ -1,55 +1,109 @@
 <script setup lang="ts">
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
-import { LineChart, PieChart, BarChart, GaugeChart } from 'echarts/charts'
+import { LineChart, GaugeChart } from 'echarts/charts'
 import {
   TitleComponent, TooltipComponent, LegendComponent, GridComponent
 } from 'echarts/components'
 import VChart from 'vue-echarts'
 import Card from '../components/ui/Card.vue'
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, shallowRef, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import { ArrowRight, Droplets, Bug, Thermometer, TrendingUp, AlertTriangle, CheckCircle, Info } from 'lucide-vue-next'
+import { listFieldMetrics, listFields, type FieldMetricRecord, type FieldRecord } from '../services/agronomyData'
 
-use([CanvasRenderer, LineChart, PieChart, BarChart, GaugeChart, TitleComponent, TooltipComponent, LegendComponent, GridComponent])
+use([CanvasRenderer, LineChart, GaugeChart, TitleComponent, TooltipComponent, LegendComponent, GridComponent])
 
 // ============================================================
-// Estado de telemetría — proviene de la simulación
+// Estado de telemetría — mediciones guardadas para el campo seleccionado
 // ============================================================
-const simHumidity = ref(62.4)
-const simPestIndex = ref(18.2)
-const simTemperature = ref(27.4)
-const simNDVI = ref(0.72)
-const simWaterSaved = ref(65)
-const simChemReduction = ref(20)
+const fields = shallowRef<FieldRecord[]>([])
+const selectedFieldId = ref('')
+const metrics = shallowRef<FieldMetricRecord[]>([])
+const dataError = ref('')
+const hasSimulationMetrics = computed(() => metrics.value.some(metric =>
+  metric.raw_data !== null
+  && typeof metric.raw_data === 'object'
+  && !Array.isArray(metric.raw_data)
+  && metric.raw_data.source === 'simulation',
+))
+const latestMetricWith = (value: (metric: FieldMetricRecord) => number | null) =>
+  metrics.value.find(metric => value(metric) !== null)
+const rawMetricValue = (metric: FieldMetricRecord | undefined, key: string) => {
+  const rawData = metric?.raw_data
+  if (!rawData || typeof rawData !== 'object' || Array.isArray(rawData)) return null
+  const value = rawData[key]
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsedValue = Number(value)
+    if (Number.isFinite(parsedValue)) return parsedValue
+  }
+  return null
+}
+const simHumidity = computed(() => latestMetricWith(metric => metric.soil_humidity)?.soil_humidity ?? null)
+const simPestIndex = computed(() => rawMetricValue(
+  latestMetricWith(metric => rawMetricValue(metric, 'pest_index')),
+  'pest_index',
+))
+const simTemperature = computed(() => latestMetricWith(metric => metric.temperature)?.temperature ?? null)
+const simNDVI = computed(() => rawMetricValue(
+  latestMetricWith(metric => rawMetricValue(metric, 'ndvi_avg')),
+  'ndvi_avg',
+))
+const simSustainability = computed(() =>
+  latestMetricWith(metric => metric.sustainability_index)?.sustainability_index ?? null,
+)
+const loadMetrics = async () => {
+  metrics.value = selectedFieldId.value ? await listFieldMetrics(selectedFieldId.value) : []
+  dataError.value = ''
+}
 
-let telemetryInterval: ReturnType<typeof setInterval>
-
-onMounted(() => {
-  telemetryInterval = setInterval(() => {
-    simHumidity.value = parseFloat(Math.max(30, Math.min(95, simHumidity.value + (Math.random() - 0.5) * 1.5)).toFixed(1))
-    simPestIndex.value = parseFloat(Math.max(0, Math.min(100, simPestIndex.value + (Math.random() - 0.5) * 1)).toFixed(1))
-    simTemperature.value = parseFloat(Math.max(18, Math.min(40, simTemperature.value + (Math.random() - 0.5) * 0.3)).toFixed(1))
-    simNDVI.value = parseFloat(Math.max(0.1, Math.min(1, simNDVI.value + (Math.random() - 0.5) * 0.02)).toFixed(2))
-  }, 2500)
+watch(selectedFieldId, () => {
+  void loadMetrics().catch(error => {
+    dataError.value = error instanceof Error ? error.message : 'No se pudieron cargar las mediciones.'
+  })
 })
 
-onBeforeUnmount(() => clearInterval(telemetryInterval))
+let telemetryInterval: ReturnType<typeof setInterval> | undefined
+onMounted(async () => {
+  try {
+    fields.value = await listFields()
+    selectedFieldId.value = fields.value[0]?.id ?? ''
+  } catch (error) {
+    dataError.value = error instanceof Error ? error.message : 'No se pudieron cargar los datos del campo.'
+  }
+  telemetryInterval = setInterval(() => {
+    void loadMetrics().catch(error => {
+      dataError.value = error instanceof Error ? error.message : 'No se pudieron actualizar las mediciones.'
+    })
+  }, 10_000)
+})
+
+onBeforeUnmount(() => {
+  if (telemetryInterval) clearInterval(telemetryInterval)
+})
 
 const pestStatus = computed(() => {
+  if (simPestIndex.value === null) return { label: 'Sin dato', color: 'text-gray-400', bg: 'bg-gray-50', icon: Info, border: 'border-gray-200' }
   if (simPestIndex.value > 30) return { label: 'Crítico', color: 'text-red-500', bg: 'bg-red-50', icon: AlertTriangle, border: 'border-red-200' }
   if (simPestIndex.value > 15) return { label: 'Alerta', color: 'text-orange-500', bg: 'bg-orange-50', icon: AlertTriangle, border: 'border-orange-200' }
   return { label: 'Normal', color: 'text-agron-green', bg: 'bg-green-50', icon: CheckCircle, border: 'border-green-200' }
 })
 
 const humidityStatus = computed(() => {
+  if (simHumidity.value === null) return { label: 'Sin dato', color: 'text-gray-400' }
   if (simHumidity.value < 40) return { label: 'Bajo', color: 'text-red-500' }
   if (simHumidity.value < 55) return { label: 'Moderado', color: 'text-orange-500' }
   return { label: 'Óptimo', color: 'text-agron-green' }
 })
 
+const chartRecords = computed(() => [...metrics.value].slice(0, 100).reverse())
+const chartDates = computed(() => chartRecords.value.map(metric =>
+  new Date(metric.record_date).toLocaleString('es-MX', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+))
+
 // ============================================================
-// Gráfico Humedad del Suelo (desde simulación)
+// Gráfico de clima a partir de mediciones guardadas
 // ============================================================
 const climateChartOptions = computed(() => ({
   animationDuration: 900,
@@ -66,7 +120,7 @@ const climateChartOptions = computed(() => ({
   xAxis: {
     type: 'category',
     boundaryGap: false,
-    data: ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'],
+    data: chartDates.value,
     axisLine: { lineStyle: { color: 'rgba(196, 218, 147, 0.16)' } },
     axisTick: { show: false },
     axisLabel: { color: '#929b88' }
@@ -82,7 +136,7 @@ const climateChartOptions = computed(() => ({
       name: 'Humedad Suelo (%)',
       type: 'line',
       smooth: true,
-      data: [58, 54, 49, 65, 70, 67, simHumidity.value],
+      data: chartRecords.value.map(metric => metric.soil_humidity),
       symbolSize: 7,
       itemStyle: { color: '#72d59f' },
       lineStyle: { width: 3, color: '#72d59f' },
@@ -92,7 +146,7 @@ const climateChartOptions = computed(() => ({
       name: 'Temperatura (°C)',
       type: 'line',
       smooth: true,
-      data: [24, 26, 28, 22, 21, 23, simTemperature.value],
+      data: chartRecords.value.map(metric => metric.temperature),
       symbolSize: 7,
       itemStyle: { color: '#e5a261' },
       lineStyle: { width: 3, color: '#e5a261' }
@@ -101,38 +155,45 @@ const climateChartOptions = computed(() => ({
 }))
 
 // ============================================================
-// Gráfico Sustentabilidad (datos de simulación)
+// Historial del índice de sustentabilidad
 // ============================================================
 const sustainabilityChartOptions = computed(() => ({
   animationDuration: 900,
   animationDurationUpdate: 500,
   animationEasing: 'cubicOut' as const,
   tooltip: {
-    trigger: 'item',
+    trigger: 'axis',
     backgroundColor: 'rgba(15, 22, 17, 0.96)',
     borderColor: 'rgba(196, 218, 147, 0.2)',
     textStyle: { color: '#e8eddf' }
   },
-  legend: { top: '5%', left: 'center', textStyle: { color: '#aab19f' } },
+  grid: { left: '3%', right: '4%', bottom: '15%', containLabel: true },
+  xAxis: {
+    type: 'category',
+    data: chartDates.value,
+    axisLine: { lineStyle: { color: 'rgba(196, 218, 147, 0.16)' } },
+    axisTick: { show: false },
+    axisLabel: { color: '#929b88' }
+  },
+  yAxis: {
+    type: 'value',
+    axisLine: { show: false },
+    axisLabel: { color: '#929b88' },
+    splitLine: { lineStyle: { color: 'rgba(196, 218, 147, 0.09)' } }
+  },
   series: [{
     name: 'Índice de Sustentabilidad',
-    type: 'pie',
-    radius: ['40%', '70%'],
-    avoidLabelOverlap: false,
-    itemStyle: { borderRadius: 10, borderColor: '#182019', borderWidth: 3 },
-    label: { show: false, position: 'center', color: '#e8eddf' },
-    emphasis: { label: { show: true, fontSize: 16, fontWeight: 'bold', color: '#e8eddf' } },
-    labelLine: { show: false },
-    data: [
-      { value: simWaterSaved.value, name: 'Agua Ahorrada', itemStyle: { color: '#10B981' } },
-      { value: simChemReduction.value, name: 'Reducción Químicos', itemStyle: { color: '#047857' } },
-      { value: 100 - simWaterSaved.value - simChemReduction.value, name: 'Uso Tradicional', itemStyle: { color: '#D1FAE5' } }
-    ]
+    type: 'line',
+    smooth: true,
+    data: chartRecords.value.map(metric => metric.sustainability_index),
+    symbolSize: 7,
+    itemStyle: { color: '#72d59f' },
+    lineStyle: { width: 3, color: '#72d59f' }
   }]
 }))
 
 // ============================================================
-// Gráfico Comparativo por Sector (plagas desde simulación)
+// Historial del índice de plagas
 // ============================================================
 const comparisonChartOptions = computed(() => ({
   animationDuration: 900,
@@ -140,16 +201,14 @@ const comparisonChartOptions = computed(() => ({
   animationEasing: 'cubicOut' as const,
   tooltip: {
     trigger: 'axis',
-    axisPointer: { type: 'shadow' },
     backgroundColor: 'rgba(15, 22, 17, 0.96)',
     borderColor: 'rgba(196, 218, 147, 0.2)',
     textStyle: { color: '#e8eddf' }
   },
-  legend: { data: ['Zonas Saludables', 'Zonas de Riesgo'], bottom: 0, textStyle: { color: '#aab19f' } },
   grid: { left: '3%', right: '4%', bottom: '15%', containLabel: true },
   xAxis: {
     type: 'category',
-    data: ['Sector A', 'Sector B', 'Sector C', 'Sector D', 'Sector E'],
+    data: chartDates.value,
     axisLine: { lineStyle: { color: 'rgba(196, 218, 147, 0.16)' } },
     axisTick: { show: false },
     axisLabel: { color: '#929b88' }
@@ -162,20 +221,13 @@ const comparisonChartOptions = computed(() => ({
   },
   series: [
     {
-      name: 'Zonas Saludables',
-      type: 'bar',
-      stack: 'total',
-      emphasis: { focus: 'series' },
-      data: [120, 132, 101, 134, 90],
-      itemStyle: { color: '#72d59f', borderRadius: [5, 5, 0, 0] }
-    },
-    {
-      name: 'Zonas de Riesgo',
-      type: 'bar',
-      stack: 'total',
-      emphasis: { focus: 'series' },
-      data: [20, 12, Math.round(simPestIndex.value * 1.2), 10, 30],
-      itemStyle: { color: '#e77f69', borderRadius: [5, 5, 0, 0] }
+      name: 'Índice de plagas',
+      type: 'line',
+      smooth: true,
+      data: chartRecords.value.map(metric => rawMetricValue(metric, 'pest_index')),
+      symbolSize: 7,
+      itemStyle: { color: '#e77f69' },
+      lineStyle: { width: 3, color: '#e77f69' }
     }
   ]
 }))
@@ -207,7 +259,7 @@ const ndviGaugeOptions = computed(() => ({
       fontWeight: 'bold',
       offsetCenter: [0, '60%']
     },
-    data: [{ value: simNDVI.value }],
+    data: [{ value: simNDVI.value ?? 0 }],
     axisTick: { show: false },
     splitLine: { show: false },
     axisLabel: { color: '#a0aa94', fontSize: 10, formatter: (v: number) => v.toFixed(1) }
@@ -241,7 +293,7 @@ const pestGaugeOptions = computed(() => ({
       fontWeight: 'bold',
       offsetCenter: [0, '60%']
     },
-    data: [{ value: simPestIndex.value }],
+    data: [{ value: simPestIndex.value ?? 0 }],
     axisTick: { show: false },
     splitLine: { show: false },
     axisLabel: { color: '#a0aa94', fontSize: 10 }
@@ -255,15 +307,27 @@ const pestGaugeOptions = computed(() => ({
       <div>
         <span class="dashboard-eyebrow">INTELIGENCIA AGRÍCOLA</span>
         <h1>Analítica del cultivo</h1>
-        <p>Indicadores y tendencias de tu simulación agrícola.</p>
+        <p>Indicadores obtenidos de las mediciones guardadas para cada campo.</p>
       </div>
       <div class="dashboard-heading-actions">
-        <span class="dashboard-live"><span></span> Vista demostrativa</span>
+        <label class="sr-only" for="dashboard-field-select">Campo para consultar</label>
+        <select id="dashboard-field-select" v-model="selectedFieldId" class="rounded-lg border border-white/10 bg-[#182019] px-3 py-2 text-sm text-white" :disabled="fields.length === 0">
+          <option value="" disabled>Selecciona un campo</option>
+          <option v-for="field in fields" :key="field.id" :value="field.id">{{ field.name }}</option>
+        </select>
+        <span class="dashboard-live"><span></span> Actualización cada 10 s</span>
         <RouterLink to="/simulacion" class="dashboard-simulation-link">
           Abrir simulador <ArrowRight :size="16" />
         </RouterLink>
       </div>
     </header>
+    <p v-if="dataError" role="alert" class="text-sm text-red-400">{{ dataError }}</p>
+    <p v-else-if="!fields.length" class="text-sm text-gray-400">
+      No hay campos registrados. <RouterLink to="/mapas" class="text-agron-green underline">Crea o guarda un campo desde el mapa.</RouterLink>
+    </p>
+    <p v-else-if="!metrics.length" class="text-sm text-gray-400">
+      Este campo aún no tiene mediciones. Los valores aparecerán cuando guardes datos o conectes telemetría.
+    </p>
 
     <!-- Tarjetas de parámetros clave -->
     <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -274,11 +338,11 @@ const pestGaugeOptions = computed(() => ({
           <span class="dashboard-metric-label">Humedad del suelo</span>
         </div>
         <div class="dashboard-metric-value">
-          {{ simHumidity }}<span>%</span>
+          {{ simHumidity === null ? '—' : simHumidity.toFixed(1) }}<span v-if="simHumidity !== null">%</span>
         </div>
         <div class="dashboard-metric-foot">
           <div class="dashboard-meter">
-            <div class="h-1.5 rounded-full bg-blue-400 transition-all duration-700" :style="`width: ${simHumidity}%`"></div>
+            <div class="h-1.5 rounded-full bg-blue-400 transition-all duration-700" :style="{ width: `${simHumidity ?? 0}%` }"></div>
           </div>
           <span class="dashboard-status" :class="humidityStatus.color">{{ humidityStatus.label }}</span>
         </div>
@@ -291,13 +355,13 @@ const pestGaugeOptions = computed(() => ({
           <span class="dashboard-metric-label">Índice de plagas</span>
         </div>
         <div class="dashboard-metric-value" :class="pestStatus.color">
-          {{ simPestIndex }}<span>%</span>
+          {{ simPestIndex === null ? '—' : simPestIndex.toFixed(1) }}<span v-if="simPestIndex !== null">%</span>
         </div>
         <div class="dashboard-metric-foot">
           <div class="dashboard-meter">
             <div class="h-1.5 rounded-full transition-all duration-700"
-              :class="simPestIndex > 30 ? 'bg-red-500' : simPestIndex > 15 ? 'bg-orange-400' : 'bg-agron-green'"
-              :style="`width: ${simPestIndex}%`"></div>
+              :class="simPestIndex === null ? 'bg-gray-500' : simPestIndex > 30 ? 'bg-red-500' : simPestIndex > 15 ? 'bg-orange-400' : 'bg-agron-green'"
+              :style="{ width: `${simPestIndex ?? 0}%` }"></div>
           </div>
           <span class="dashboard-status" :class="pestStatus.color">{{ pestStatus.label }}</span>
         </div>
@@ -310,7 +374,7 @@ const pestGaugeOptions = computed(() => ({
           <span class="dashboard-metric-label">Temperatura</span>
         </div>
         <div class="dashboard-metric-value">
-          {{ simTemperature }}<span>°C</span>
+          {{ simTemperature === null ? '—' : simTemperature.toFixed(1) }}<span v-if="simTemperature !== null">°C</span>
         </div>
         <div class="dashboard-metric-note">Promedio del campo</div>
       </div>
@@ -322,18 +386,19 @@ const pestGaugeOptions = computed(() => ({
           <span class="dashboard-metric-label">Índice NDVI</span>
         </div>
         <div class="dashboard-metric-value">
-          {{ simNDVI }}<span>/ 1.00</span>
+          {{ simNDVI === null ? '—' : simNDVI.toFixed(2) }}<span v-if="simNDVI !== null">/ 1.00</span>
         </div>
         <div class="dashboard-metric-note">Vigor de la vegetación</div>
       </div>
     </div>
 
-    <!-- Aviso: datos de simulación -->
+    <!-- Aviso sobre el origen de los datos -->
     <div class="dashboard-source">
       <span class="dashboard-source-icon"><Info :size="17" /></span>
       <div>
-        <strong>Datos de demostración</strong>
-        <p>Los indicadores representan la simulación 3D y fluctúan para mostrar el panel en funcionamiento. Ejecuta “Analizar campo” en Simulación para generar nuevos parámetros.</p>
+        <strong>Datos registrados del campo</strong>
+        <p>Los indicadores y gráficos provienen de las mediciones guardadas. Si una métrica no está en tus registros, se muestra como “—”; NDVI y plagas se leen de los campos <code>ndvi_avg</code> y <code>pest_index</code> de <code>raw_data</code>.</p>
+        <p v-if="hasSimulationMetrics" class="mt-1 text-amber-300">Este historial incluye registros del simulador 3D; no son mediciones de sensores ni deben usarse como observaciones reales.</p>
       </div>
     </div>
 
@@ -343,22 +408,24 @@ const pestGaugeOptions = computed(() => ({
         <template #header>
           <div class="dashboard-chart-heading">
             <div><span>VIGOR VEGETAL</span><h3>Índice NDVI</h3></div>
-            <span class="dashboard-chart-value">{{ simNDVI }}</span>
+            <span class="dashboard-chart-value">{{ simNDVI === null ? '—' : simNDVI.toFixed(2) }}</span>
           </div>
         </template>
         <div class="h-64 w-full">
-          <v-chart class="chart" :option="ndviGaugeOptions" autoresize />
+          <v-chart v-if="simNDVI !== null" class="chart" :option="ndviGaugeOptions" autoresize />
+          <p v-else class="grid h-full place-items-center text-sm text-gray-400">Sin dato NDVI registrado.</p>
         </div>
       </Card>
       <Card class="dashboard-chart-card">
         <template #header>
           <div class="dashboard-chart-heading">
             <div><span>MONITOREO FITOSANITARIO</span><h3>Índice de plagas</h3></div>
-            <span class="dashboard-chart-value">{{ simPestIndex }}%</span>
+            <span class="dashboard-chart-value">{{ simPestIndex === null ? '—' : `${simPestIndex.toFixed(1)}%` }}</span>
           </div>
         </template>
         <div class="h-64 w-full">
-          <v-chart class="chart" :option="pestGaugeOptions" autoresize />
+          <v-chart v-if="simPestIndex !== null" class="chart" :option="pestGaugeOptions" autoresize />
+          <p v-else class="grid h-full place-items-center text-sm text-gray-400">Sin dato de plagas registrado.</p>
         </div>
       </Card>
     </div>
@@ -368,8 +435,8 @@ const pestGaugeOptions = computed(() => ({
       <Card class="dashboard-chart-card lg:col-span-2">
         <template #header>
           <div class="dashboard-chart-heading">
-            <div><span>TENDENCIA SEMANAL</span><h3>Clima y humedad del suelo</h3></div>
-            <span class="dashboard-chart-caption">Lunes — Domingo</span>
+            <div><span>HISTORIAL RECIENTE</span><h3>Clima y humedad del suelo</h3></div>
+            <span class="dashboard-chart-caption">Hasta 100 registros</span>
           </div>
         </template>
         <div class="h-80 w-full">
@@ -380,7 +447,8 @@ const pestGaugeOptions = computed(() => ({
       <Card class="dashboard-chart-card">
         <template #header>
           <div class="dashboard-chart-heading">
-            <div><span>EFICIENCIA DE RECURSOS</span><h3>Índice de sustentabilidad</h3></div>
+            <div><span>ÍNDICE DE SUSTENTABILIDAD</span><h3>Historial registrado</h3></div>
+            <span class="dashboard-chart-value">{{ simSustainability === null ? '—' : simSustainability.toFixed(2) }}</span>
           </div>
         </template>
         <div class="h-80 w-full">
@@ -391,7 +459,7 @@ const pestGaugeOptions = computed(() => ({
       <Card class="dashboard-chart-card">
         <template #header>
           <div class="dashboard-chart-heading">
-            <div><span>COMPARATIVA DE PARCELAS</span><h3>Salud por sector</h3></div>
+            <div><span>MONITOREO FITOSANITARIO</span><h3>Historial del índice de plagas</h3></div>
           </div>
         </template>
         <div class="h-80 w-full">

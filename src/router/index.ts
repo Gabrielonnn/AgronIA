@@ -42,6 +42,12 @@ const router = createRouter({
       meta: { requiresAuth: true }
     },
     {
+      path: '/analisis',
+      name: 'crop-analysis',
+      component: () => import('../views/CropAnalysisView.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
       path: '/simulacion',
       name: 'simulation',
       component: () => import('../views/SimulationView.vue'),
@@ -63,6 +69,12 @@ const router = createRouter({
       path: '/parcelas',
       name: 'parcels',
       component: () => import('../views/ParcelsView.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
+      path: '/campos',
+      name: 'field-records',
+      component: () => import('../views/FieldRecordsView.vue'),
       meta: { requiresAuth: true }
     },
     {
@@ -90,8 +102,7 @@ router.beforeEach(async (to) => {
 
   if (to.meta.requiresAdmin) {
     const profileRole = store.user?.profile?.role
-    const metadataRole = store.user?.user_metadata?.role
-    const isAdmin = profileRole === 'administrador' || metadataRole === 'administrador' || store.user?.email === 'jenone0424@gmail.com'
+    const isAdmin = profileRole === 'administrador' && store.user?.profile?.active === true
     if (!isAdmin) return { name: 'home' }
   }
 

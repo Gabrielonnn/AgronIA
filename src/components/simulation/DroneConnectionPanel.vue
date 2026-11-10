@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Activity, Battery, Cable, Crosshair, MapPin, Radio, ShieldCheck, Unplug, Wifi } from 'lucide-vue-next'
 import { MavLinkTelemetryParser, type MavLinkTelemetryMessage } from '../../services/mavlinkTelemetry'
 import MultispectralPlantScanner from '../diagnosis/MultispectralPlantScanner.vue'
@@ -26,6 +26,7 @@ interface DroneTelemetry {
   latitude: number | null
   longitude: number | null
   altitude: number | null
+  relativeAltitude: number | null
   groundSpeed: number | null
   heading: number | null
   gpsFix: number | null
@@ -38,6 +39,10 @@ interface DroneTelemetry {
   signedPacketsSkipped: number
   incompatibleFramesSkipped: number
 }
+
+const emit = defineEmits<{
+  (event: 'telemetry', snapshot: DroneTelemetry & { connected: boolean; hasHeartbeat: boolean }): void
+}>()
 
 const baudRate = ref(57600)
 const connectionMode = ref<ConnectionMode>('usb')
@@ -53,6 +58,7 @@ const telemetry = ref<DroneTelemetry>({
   latitude: null,
   longitude: null,
   altitude: null,
+  relativeAltitude: null,
   groundSpeed: null,
   heading: null,
   gpsFix: null,
@@ -79,6 +85,14 @@ const hasHeartbeat = computed(() =>
   telemetry.value.lastMessageAt !== null
   && clock.value - telemetry.value.lastMessageAt < 5000
 )
+
+watch([telemetry, linkState, hasHeartbeat], () => {
+  emit('telemetry', {
+    ...telemetry.value,
+    connected: linkState.value === 'connected',
+    hasHeartbeat: hasHeartbeat.value,
+  })
+}, { immediate: true, deep: true })
 const linkLabel = computed(() => {
   if (linkState.value === 'connecting') return 'Conectando'
   if (linkState.value === 'error') return 'Error de conexión'
@@ -141,6 +155,7 @@ const updateTelemetry = (message: MavLinkTelemetryMessage) => {
     const latitude = readNumber(message, 'latitude')
     const longitude = readNumber(message, 'longitude')
     const altitude = readNumber(message, 'altitude')
+    const relativeAltitude = readNumber(message, 'relativeAltitude')
     const vx = readNumber(message, 'velocityX')
     const vy = readNumber(message, 'velocityY')
     const heading = readNumber(message, 'heading')
@@ -149,6 +164,7 @@ const updateTelemetry = (message: MavLinkTelemetryMessage) => {
       next.longitude = longitude / 10_000_000
     }
     if (altitude !== null) next.altitude = altitude / 1000
+    if (relativeAltitude !== null) next.relativeAltitude = relativeAltitude / 1000
     if (vx !== null && vy !== null) next.groundSpeed = Math.hypot(vx, vy) / 100
     if (heading !== null && heading !== 65535) next.heading = heading / 100
   } else if (name === 'VFR_HUD') {
@@ -207,6 +223,7 @@ const updateDjiTelemetry = (data: unknown) => {
   const latitude = readNumber('latitude', -90, 90)
   const longitude = readNumber('longitude', -180, 180)
   const altitude = readNumber('altitude', -1000, 100000)
+  const relativeAltitude = readNumber('relativeAltitude', -1000, 100000)
   const groundSpeed = readNumber('groundSpeed', 0, 1000)
   const heading = readNumber('heading', 0, 360)
   const gpsFix = readNumber('gpsFix', 0, 10)
@@ -220,6 +237,7 @@ const updateDjiTelemetry = (data: unknown) => {
   if (latitude !== null) next.latitude = latitude
   if (longitude !== null) next.longitude = longitude
   if (altitude !== null) next.altitude = altitude
+  if (relativeAltitude !== null) next.relativeAltitude = relativeAltitude
   if (groundSpeed !== null) next.groundSpeed = groundSpeed
   if (heading !== null) next.heading = heading === 360 ? 0 : heading
   if (gpsFix !== null) next.gpsFix = gpsFix
@@ -607,7 +625,7 @@ onBeforeUnmount(() => {
         </p>
         <details v-if="connectionMode === 'dji-bridge'" class="dji-bridge-contract">
           <summary>Formato JSON esperado del puente</summary>
-          <pre>{"type":"telemetry","vehicleName":"DJI","latitude":19.43,"longitude":-99.13,"altitude":42.5,"groundSpeed":3.2,"heading":180,"gpsFix":3,"satellites":12,"batteryPercent":86,"batteryVoltage":15.4,"armed":false}</pre>
+          <pre>{"type":"telemetry","vehicleName":"DJI","latitude":19.43,"longitude":-99.13,"altitude":42.5,"relativeAltitude":12.5,"groundSpeed":3.2,"heading":180,"gpsFix":3,"satellites":12,"batteryPercent":86,"batteryVoltage":15.4,"armed":false}</pre>
         </details>
         <p v-if="errorMessage" class="drone-link-error" role="alert">{{ errorMessage }}</p>
         <p class="drone-link-safety">

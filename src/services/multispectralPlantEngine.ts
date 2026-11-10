@@ -1413,7 +1413,6 @@ function drawSubOverlay(
 
   ctx.restore()
 }
-
 function drawPrimaryHudOverlay(
   ctx: CanvasRenderingContext2D,
   w: number,
@@ -1564,4 +1563,3 @@ function drawPrimaryHudOverlay(
 
   ctx.restore()
 }
-

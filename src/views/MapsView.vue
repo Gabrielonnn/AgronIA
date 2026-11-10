@@ -14,13 +14,14 @@ import {
   MapPinned,
   MousePointer2,
   Pentagon,
+  Save,
   ScanLine,
   Shapes,
-  Save,
   Sparkles,
   Trash2,
   Upload
 } from 'lucide-vue-next'
+import { listFields, saveMapWorkspace, type FieldRecord } from '../services/agronomyData'
 
 interface MapFeature {
   type: 'Feature'
@@ -52,6 +53,10 @@ interface FieldOption {
 const store = useMainStore()
 const geojsonData = ref<MapFeatureCollection | null>(null)
 const exportStatus = ref('')
+const saveError = ref('')
+const fieldName = ref('')
+const savedFields = ref<FieldRecord[]>([])
+const isSaving = ref(false)
 const saveStatus = ref('')
 const errorMessage = ref('')
 const loadingSaved = ref(false)
@@ -82,7 +87,44 @@ const lineCount = computed(() =>
 const handleGeoJsonUpdate = (data: MapFeatureCollection) => {
   geojsonData.value = data
   exportStatus.value = ''
+  saveError.value = ''
   saveStatus.value = ''
+  errorMessage.value = ''
+  if (!fieldName.value) fieldName.value = `Mapa ${new Date().toLocaleDateString('es-MX')}`
+}
+
+const refreshFields = async () => {
+  savedFields.value = await listFields()
+}
+
+onMounted(() => {
+  void refreshFields().catch(error => {
+    saveError.value = error instanceof Error ? error.message : 'No se pudieron cargar los campos guardados.'
+  })
+})
+
+const saveMap = async () => {
+  if (!geojsonData.value || features.value.length === 0 || !fieldName.value.trim() || isSaving.value) return
+  isSaving.value = true
+  exportStatus.value = ''
+  saveError.value = ''
+  try {
+    const geojson = JSON.parse(JSON.stringify(geojsonData.value))
+    const id = await saveMapWorkspace(fieldName.value.trim(), geojson)
+    fieldName.value = ''
+    exportStatus.value = `Mapa guardado correctamente (campo ${id.slice(0, 8)}).`
+    try {
+      await refreshFields()
+    } catch (error) {
+      saveError.value = error instanceof Error
+        ? `El mapa se guardó, pero no se pudo actualizar la lista: ${error.message}`
+        : 'El mapa se guardó, pero no se pudo actualizar la lista.'
+    }
+  } catch (error) {
+    saveError.value = error instanceof Error ? error.message : 'No se pudo guardar el mapa.'
+  } finally {
+    isSaving.value = false
+  }
 }
 
 const handleBasemapUpdate = (basemap: 'satellite' | 'streets') => {
@@ -414,9 +456,44 @@ const exportGeoJson = () => {
               Descargar datos
             </Button>
 
-            <p v-if="exportStatus" class="export-status" role="status">
-              <Check :size="14" /> {{ exportStatus }}
-            </p>
+            <form class="map-save-form" @submit.prevent="saveMap">
+              <label for="map-field-name">Nombre del campo</label>
+              <input
+                id="map-field-name"
+                v-model="fieldName"
+                maxlength="120"
+                required
+                placeholder="Ej. Parcela norte"
+              >
+              <Button variant="primary" size="sm" :disabled="isSaving || !fieldName.trim()">
+                <Save class="mr-2 h-4 w-4" />
+                {{ isSaving ? 'Guardando…' : 'Guardar mapa y elementos' }}
+              </Button>
+            </form>
+
+          </div>
+        </Card>
+        <p v-if="exportStatus" class="export-status" role="status"><Check :size="14" /> {{ exportStatus }}</p>
+        <p v-if="saveError" class="export-error" role="alert">{{ saveError }}</p>
+
+        <Card v-if="savedFields.length" class="map-guide-card">
+          <template #header>
+            <div class="map-card-title">
+              <span class="panel-icon"><MapPinned :size="17" /></span>
+              <div>
+                <h2>Campos guardados</h2>
+                <p>{{ savedFields.length }} campo(s) en tu cuenta</p>
+              </div>
+            </div>
+          </template>
+          <div class="feature-list">
+            <div v-for="field in savedFields.slice(0, 5)" :key="field.id" class="feature-row">
+              <span class="feature-symbol"><MapPinned :size="15" /></span>
+              <span class="feature-row-copy">
+                <strong>{{ field.name }}</strong>
+                <small>{{ new Date(field.created_at).toLocaleDateString('es-MX') }}</small>
+              </span>
+            </div>
           </div>
         </Card>
 
@@ -497,6 +574,23 @@ const exportGeoJson = () => {
   background: rgba(255, 255, 255, 0.035);
   font-size: 0.75rem;
   white-space: nowrap;
+}
+
+.map-save-form {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(196, 218, 147, 0.13);
+}
+.map-save-form label { color: #c9d3b9; font-size: 0.72rem; font-weight: 700; }
+.map-save-form input {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(196, 218, 147, 0.2);
+  border-radius: 9px;
+  color: #f5f1df;
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .maps-overview {
@@ -636,6 +730,7 @@ const exportGeoJson = () => {
 .feature-check { color: #77bd83; }
 .export-side-button { width: 100%; margin-top: 13px; }
 .export-status { display: flex; align-items: center; gap: 5px; margin: 10px 0 0; color: #91d2a0; font-size: 0.69rem; }
+.export-error { margin: 10px 0 0; color: #fca5a5; font-size: 0.75rem; }
 .tool-guide { display: grid; gap: 4px; }
 .tool-guide > div { display: flex; align-items: center; gap: 10px; padding: 9px 0; }
 .tool-guide > div + div { border-top: 1px solid rgba(196, 218, 147, 0.08); }

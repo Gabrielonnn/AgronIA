@@ -1,0 +1,7 @@
+project_id = "agronia"
+
+[functions.analyze-crop]
+verify_jwt = true
+
+[functions.admin-create-user]
+verify_jwt = true

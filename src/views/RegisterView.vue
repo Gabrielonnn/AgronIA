@@ -3,11 +3,12 @@ import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { supabase } from '../services/supabase'
 import {
-  Mail, Lock, Eye, EyeOff, Leaf, AlertCircle,
+  Mail, Lock, Eye, EyeOff, Leaf, AlertCircle, UserRound,
   Loader2, ShieldCheck, AlertTriangle, CheckCircle2, Sparkles
 } from 'lucide-vue-next'
 
 const router = useRouter()
+const fullName = ref('')
 const email = ref('')
 const password = ref('')
 const loading = ref(false)
@@ -17,6 +18,7 @@ const showPassword = ref(false)
 const capsLockOn = ref(false)
 const progress = ref(0)
 const registerSuccess = ref(false)
+let successRedirectTimeout: ReturnType<typeof setTimeout> | undefined
 
 const passwordStrength = computed(() => {
   const value = password.value
@@ -42,14 +44,13 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('keydown', checkCapsLock)
   window.removeEventListener('keyup', checkCapsLock)
+  if (successRedirectTimeout) clearTimeout(successRedirectTimeout)
 })
 
 const handleRegister = async () => {
   loading.value = true
   error.value = ''
   successMessage.value = ''
-  progress.value = 15
-
   progress.value = 15
 
   try {
@@ -62,8 +63,14 @@ const handleRegister = async () => {
     }
 
     const { error: authError } = await supabase.auth.signUp({
-      email: email.value,
-      password: password.value
+      email: email.value.trim(),
+      password: password.value,
+      options: {
+        data: {
+          name: fullName.value.trim(),
+          full_name: fullName.value.trim(),
+        },
+      },
     })
 
     progress.value = 80
@@ -74,7 +81,7 @@ const handleRegister = async () => {
     } else {
       registerSuccess.value = true
       progress.value = 100
-      setTimeout(() => router.push('/login'), 3500)
+      successRedirectTimeout = setTimeout(() => router.push('/login'), 3500)
     }
   } catch (err: any) {
     error.value = err instanceof Error
@@ -160,6 +167,23 @@ const translateError = (msg: string): string => {
           </div>
 
           <div class="input-wrapper reveal-item reveal-delay-1">
+            <label class="field-label" for="register-name">Nombre completo</label>
+            <div class="input-group">
+              <UserRound class="input-icon" :size="18" />
+              <input
+                id="register-name"
+                v-model="fullName"
+                type="text"
+                required
+                maxlength="120"
+                placeholder="Tu nombre"
+                autocomplete="name"
+                :disabled="loading"
+              />
+            </div>
+          </div>
+
+          <div class="input-wrapper reveal-item reveal-delay-2">
             <label class="field-label" for="register-email">Correo electrónico</label>
             <div class="input-group">
               <Mail class="input-icon" :size="18" />
@@ -176,7 +200,7 @@ const translateError = (msg: string): string => {
             </div>
           </div>
 
-          <div class="input-wrapper reveal-item reveal-delay-2">
+          <div class="input-wrapper reveal-item reveal-delay-3">
             <label class="field-label" for="register-password">Contraseña</label>
             <div class="input-group">
               <Lock class="input-icon" :size="18" />
@@ -185,6 +209,7 @@ const translateError = (msg: string): string => {
                 v-model="password"
                 :type="showPassword ? 'text' : 'password'"
                 required
+                minlength="8"
                 placeholder="Crea una contraseña segura"
                 autocomplete="new-password"
                 :disabled="loading"
@@ -246,7 +271,7 @@ const translateError = (msg: string): string => {
 
           <button
             type="submit"
-            class="btn-login reveal-item reveal-delay-3"
+            class="btn-login reveal-item reveal-delay-4"
             :disabled="loading"
           >
             <Loader2 v-if="loading" class="spin" :size="18" />
@@ -254,9 +279,9 @@ const translateError = (msg: string): string => {
           </button>
         </form>
 
-        <p class="review-note"><ShieldCheck :size="15" /> Cada solicitud es revisada por nuestro equipo.</p>
+        <p class="review-note"><ShieldCheck :size="15" /> Cada cuenta requiere aprobación antes de activar el acceso.</p>
 
-        <p class="footer-text reveal-item reveal-delay-4">
+        <p class="footer-text reveal-item reveal-delay-5">
           ¿Ya tienes cuenta?
           <RouterLink to="/login" class="footer-link">
             Inicia sesión
@@ -283,7 +308,7 @@ const translateError = (msg: string): string => {
     </Transition>
 
     <div class="bottom-credit">
-      © 2025 AgronIA · Tecnológico Nacional de México
+      © 2026 AgronIA · Tecnológico Nacional de México
     </div>
   </div>
 </template>
@@ -1847,3 +1872,5 @@ const translateError = (msg: string): string => {
   }
 }
 </style>
+
+

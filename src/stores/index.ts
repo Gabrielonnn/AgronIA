@@ -6,6 +6,7 @@ export const useMainStore = defineStore('main', {
     user: null as any | null,
     loading: true,
     initialized: false,
+    authError: '',
   }),
   actions: {
     setUser(user: any) {
@@ -22,32 +23,63 @@ export const useMainStore = defineStore('main', {
         return
       }
 
-      const { data: { session } } = await supabase!.auth.getSession()
-      
-      if (session?.user) {
-        const { data: profile } = await supabase!.from('profiles').select('*').eq('id', session.user.id).single()
-        if (profile && profile.active) {
-          this.user = { ...session.user, profile }
+      const client = supabase
+      try {
+        const { data: { session }, error: sessionError } = await client.auth.getSession()
+        if (sessionError) throw sessionError
+
+        if (session?.user) {
+          const { data: profile, error: profileError } = await client
+            .from('profiles')
+            .select('*')
+            .eq('id', session.user.id)
+            .single()
+          if (profileError) throw profileError
+          if (profile?.active) {
+            this.user = { ...session.user, profile }
+          } else {
+            await client.auth.signOut()
+            this.user = null
+          }
         } else {
-          await supabase!.auth.signOut()
           this.user = null
         }
-      } else {
+      } catch (error) {
+        this.authError = error instanceof Error
+          ? `No se pudo validar la sesión con Supabase: ${error.message}`
+          : 'No se pudo validar la sesión con Supabase.'
         this.user = null
+      } finally {
+        this.loading = false
+        this.initialized = true
       }
-      this.loading = false
-      this.initialized = true
       
-      supabase!.auth.onAuthStateChange(async (event, session) => {
+      client.auth.onAuthStateChange(async (event, session) => {
         if (event === 'SIGNED_IN' && session?.user) {
-          const { data: profile } = await supabase!.from('profiles').select('*').eq('id', session.user.id).single()
-          if (profile && !profile.active) {
-            await supabase!.auth.signOut()
+          try {
+            const { data: profile, error: profileError } = await client
+              .from('profiles')
+              .select('*')
+              .eq('id', session.user.id)
+              .single()
+            if (profileError) throw profileError
+            if (!profile?.active) {
+              await client.auth.signOut()
+              this.user = null
+              return
+            }
+            this.authError = ''
+            this.user = { ...session.user, profile }
+            const { error: logError } = await client
+              .from('user_logs')
+              .insert([{ user_id: this.user.id, action: 'LOGIN' }])
+            if (logError) console.error('No se pudo registrar el inicio de sesión:', logError.message)
+          } catch (error) {
+            this.authError = error instanceof Error
+              ? `No se pudo cargar el perfil de Supabase: ${error.message}`
+              : 'No se pudo cargar el perfil de Supabase.'
             this.user = null
-            return
           }
-          this.user = { ...session.user, profile }
-          await supabase!.from('user_logs').insert([{ user_id: this.user.id, action: 'LOGIN' }])
         } else if (event === 'SIGNED_OUT') {
           this.user = null
         }
@@ -61,9 +93,39 @@ export const useMainStore = defineStore('main', {
         return
       }
 
-      const { data: { session } } = await supabase!.auth.getSession()
-      this.user = session?.user || null
-      this.loading = false
+      if (this.initialized && this.user?.profile) {
+        this.loading = false
+        return
+      }
+
+      try {
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession()
+        if (sessionError) throw sessionError
+        if (!session?.user) {
+          this.user = null
+          return
+        }
+        const { data: profile, error: profileError } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', session.user.id)
+          .single()
+        if (profileError) throw profileError
+        if (!profile?.active) {
+          await supabase.auth.signOut()
+          this.user = null
+          return
+        }
+        this.user = { ...session.user, profile }
+        this.authError = ''
+      } catch (error) {
+        this.authError = error instanceof Error
+          ? `No se pudo validar la sesión con Supabase: ${error.message}`
+          : 'No se pudo validar la sesión con Supabase.'
+        this.user = null
+      } finally {
+        this.loading = false
+      }
     },
 
     async signOut() {
@@ -73,9 +135,13 @@ export const useMainStore = defineStore('main', {
       }
 
       if (this.user) {
-        await supabase!.from('user_logs').insert([{ user_id: this.user.id, action: 'LOGOUT' }])
+        const { error: logError } = await supabase
+          .from('user_logs')
+          .insert([{ user_id: this.user.id, action: 'LOGOUT' }])
+        if (logError) console.error('No se pudo registrar el cierre de sesión:', logError.message)
       }
-      await supabase!.auth.signOut()
+      const { error } = await supabase.auth.signOut()
+      if (error) throw new Error(`No se pudo cerrar la sesión: ${error.message}`)
       this.user = null
     }
   }

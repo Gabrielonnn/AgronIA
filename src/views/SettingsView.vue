@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref, computed, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useMainStore } from '../stores'
+import { supabase } from '../services/supabase'
 import Card from '../components/ui/Card.vue'
 import Button from '../components/ui/Button.vue'
-import { supabase } from '../services/supabase'
 import {
   User, Settings2, ShieldCheck, Bell, Globe,
   Save, Eye, EyeOff, Camera, Trash2
@@ -25,20 +25,26 @@ const tabs = [
 // ============================================================
 // CUENTA
 // ============================================================
-const displayName = ref('Agricultor AgronIA')
-const accountEmail = ref(store.user?.email || 'demo@agronia.com')
+const displayName = ref('')
+const accountEmail = ref(store.user?.email || '')
 const newPassword = ref('')
 const showPassword = ref(false)
 const saveAccountMsg = ref('')
+const accountError = ref('')
+const savingAccount = ref(false)
 const avatarInput = ref<HTMLInputElement | null>(null)
 const selectedAvatar = ref<File | null>(null)
 const avatarPreview = ref('')
 const avatarMessage = ref('')
 const avatarError = ref('')
 const savingAvatar = ref(false)
-const avatarUrl = computed(() =>
-  avatarPreview.value || store.user?.user_metadata?.avatar_url || ''
-)
+const avatarUrl = computed(() => {
+  if (avatarPreview.value) return avatarPreview.value
+  const metadataUrl = store.user?.user_metadata?.avatar_url
+  if (typeof metadataUrl === 'string') return metadataUrl
+  const path = store.user?.profile?.avatar_path
+  return path && supabase ? supabase.storage.from('avatars').getPublicUrl(path).data.publicUrl : ''
+})
 
 const clearAvatarPreview = () => {
   if (avatarPreview.value) URL.revokeObjectURL(avatarPreview.value)
@@ -188,17 +194,37 @@ const removeAvatar = async () => {
 
 onBeforeUnmount(clearAvatarPreview)
 
-const saveAccount = () => {
-  saveAccountMsg.value = 'Cambios guardados correctamente.'
-  setTimeout(() => { saveAccountMsg.value = '' }, 3000)
+const saveAccount = async () => {
+  const user = store.user
+  if (!supabase || !user?.id) {
+    accountError.value = 'No se encontró una sesión activa para guardar los cambios.'
+    return
+  }
+  if (!newPassword.value) {
+    accountError.value = 'Escribe una nueva contraseña para guardar el cambio.'
+    return
+  }
+
+  savingAccount.value = true
+  accountError.value = ''
+  saveAccountMsg.value = ''
+  try {
+    const { error } = await supabase.auth.updateUser({ password: newPassword.value })
+    if (error) throw new Error(`No se pudo actualizar la contraseña: ${error.message}`)
+    newPassword.value = ''
+    saveAccountMsg.value = 'Contraseña actualizada correctamente.'
+  } catch (error) {
+    accountError.value = error instanceof Error ? error.message : 'No se pudieron guardar los cambios.'
+  } finally {
+    savingAccount.value = false
+  }
 }
 
 const userRole = computed(() => {
   const profileRole = store.user?.profile?.role
-  const metadataRole = store.user?.user_metadata?.role
-  if (profileRole === 'administrador' || metadataRole === 'administrador' || store.user?.email === 'jenone0424@gmail.com') return 'administrador'
-  if (profileRole === 'tecnico' || metadataRole === 'tecnico') return 'tecnico'
-  return profileRole || metadataRole || 'cliente'
+  if (profileRole === 'administrador' && store.user?.profile?.active) return 'administrador'
+  if (profileRole === 'tecnico') return 'tecnico'
+  return profileRole || 'cliente'
 })
 
 const roleLabels: Record<string, string> = {
@@ -210,7 +236,18 @@ const roleLabels: Record<string, string> = {
 // ============================================================
 // PREFERENCIAS
 // ============================================================
-const prefs = ref({
+interface AppPreferences {
+  lang: 'es' | 'en'
+  units: 'metric' | 'imperial'
+  notifications: boolean
+  emailAlerts: boolean
+  alertThresholdHumidity: number
+  alertThresholdPest: number
+  mapDefault: 'satellite' | 'terrain' | 'street'
+  autoRefresh: boolean
+}
+
+const defaultPreferences: AppPreferences = {
   lang: 'es',
   units: 'metric',
   notifications: true,
@@ -219,12 +256,57 @@ const prefs = ref({
   alertThresholdPest: 25,
   mapDefault: 'satellite',
   autoRefresh: true,
-})
+}
+const prefs = ref<AppPreferences>({ ...defaultPreferences })
 const savePrefsMsg = ref('')
+const prefsError = ref('')
+
+onMounted(() => {
+  displayName.value = store.user?.profile?.full_name
+    || store.user?.user_metadata?.full_name
+    || ''
+  accountEmail.value = store.user?.email || ''
+  const userId = store.user?.id
+  if (!userId) return
+  try {
+    const saved = localStorage.getItem(`agronia-preferences:${userId}`)
+    if (!saved) return
+    const value: unknown = JSON.parse(saved)
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return
+    const candidate = value as Partial<AppPreferences>
+    prefs.value = {
+      ...defaultPreferences,
+      ...(candidate.lang === 'es' || candidate.lang === 'en' ? { lang: candidate.lang } : {}),
+      ...(candidate.units === 'metric' || candidate.units === 'imperial' ? { units: candidate.units } : {}),
+      ...(typeof candidate.notifications === 'boolean' ? { notifications: candidate.notifications } : {}),
+      ...(typeof candidate.emailAlerts === 'boolean' ? { emailAlerts: candidate.emailAlerts } : {}),
+      ...(typeof candidate.alertThresholdHumidity === 'number' ? { alertThresholdHumidity: candidate.alertThresholdHumidity } : {}),
+      ...(typeof candidate.alertThresholdPest === 'number' ? { alertThresholdPest: candidate.alertThresholdPest } : {}),
+      ...(candidate.mapDefault === 'satellite' || candidate.mapDefault === 'terrain' || candidate.mapDefault === 'street' ? { mapDefault: candidate.mapDefault } : {}),
+      ...(typeof candidate.autoRefresh === 'boolean' ? { autoRefresh: candidate.autoRefresh } : {}),
+    }
+  } catch (error) {
+    prefsError.value = error instanceof Error
+      ? `No se pudieron leer las preferencias guardadas: ${error.message}`
+      : 'No se pudieron leer las preferencias guardadas.'
+  }
+})
 
 const savePrefs = () => {
-  savePrefsMsg.value = 'Preferencias guardadas.'
-  setTimeout(() => { savePrefsMsg.value = '' }, 3000)
+  const userId = store.user?.id
+  if (!userId) {
+    prefsError.value = 'Inicia sesión para guardar tus preferencias.'
+    return
+  }
+  try {
+    localStorage.setItem(`agronia-preferences:${userId}`, JSON.stringify(prefs.value))
+    prefsError.value = ''
+    savePrefsMsg.value = 'Preferencias guardadas en este navegador.'
+  } catch (error) {
+    prefsError.value = error instanceof Error
+      ? `No se pudieron guardar las preferencias: ${error.message}`
+      : 'No se pudieron guardar las preferencias.'
+  }
 }
 </script>
 
@@ -364,6 +446,12 @@ const savePrefs = () => {
           .settings-card-icon { display: grid; width: 34px; height: 34px; flex: 0 0 34px; place-items: center; border: 1px solid rgba(211, 189, 103, 0.2); border-radius: 10px; color: #dfc775; background: rgba(211, 189, 103, 0.08); }
           .settings-form { width: min(100%, 680px); }
           .settings-preferences { width: min(100%, 760px); }
+          .settings-avatar-row { display: flex; align-items: center; gap: 1rem; }
+          .settings-avatar { display: grid; width: 68px; height: 68px; flex: 0 0 68px; place-items: center; overflow: hidden; border: 1px solid rgba(211, 189, 103, 0.3); border-radius: 50%; color: #dfc775; background: rgba(211, 189, 103, 0.08); }
+          .settings-avatar img { width: 100%; height: 100%; object-fit: cover; }
+          .settings-avatar-copy { color: #94a08d; font-size: 0.7rem; }
+          .settings-avatar-error { color: #ff9a91; }
+          .settings-avatar-success { color: #94d2a5; }
 
           .settings-field-label,
           .settings-range-label {
@@ -529,26 +617,31 @@ const savePrefs = () => {
             <div v-if="saveAccountMsg" class="settings-feedback">
               {{ saveAccountMsg }}
             </div>
+            <div v-if="accountError" class="rounded-lg border border-red-400/20 bg-red-400/10 px-3 py-2 text-sm text-red-300" role="alert">
+              {{ accountError }}
+            </div>
             <div>
               <label class="settings-field-label" for="settings-display-name">Nombre</label>
-              <input id="settings-display-name" v-model="displayName" type="text" class="settings-field" autocomplete="name" />
+              <input id="settings-display-name" v-model="displayName" readonly type="text" class="settings-field opacity-70" autocomplete="name" />
+              <p class="settings-avatar-copy mt-1">El nombre se administra desde tu perfil aprobado.</p>
             </div>
             <div>
               <label class="settings-field-label" for="settings-account-email">Correo electrónico</label>
-              <input id="settings-account-email" v-model="accountEmail" type="email" class="settings-field" autocomplete="email" />
+              <input id="settings-account-email" v-model="accountEmail" readonly type="email" class="settings-field opacity-70" autocomplete="email" />
+              <p class="settings-avatar-copy mt-1">El correo se administra desde la verificación de cuenta.</p>
             </div>
             <div>
               <label class="settings-field-label" for="settings-new-password">Nueva contraseña</label>
               <div class="relative">
-                <input id="settings-new-password" v-model="newPassword" :type="showPassword ? 'text' : 'password'" class="settings-field settings-password-field" autocomplete="new-password" placeholder="••••••••" />
+                <input id="settings-new-password" v-model="newPassword" :type="showPassword ? 'text' : 'password'" required minlength="8" class="settings-field settings-password-field" autocomplete="new-password" placeholder="Mínimo 8 caracteres" />
                 <button type="button" @click="showPassword = !showPassword" class="settings-password-toggle" :aria-label="showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'">
                   <Eye v-if="!showPassword" class="w-4 h-4" />
                   <EyeOff v-else class="w-4 h-4" />
                 </button>
               </div>
             </div>
-            <Button class="settings-save-button" variant="primary" size="sm" @click="saveAccount">
-              <Save class="w-4 h-4 mr-2" /> Guardar Cambios
+            <Button class="settings-save-button" variant="primary" size="sm" :disabled="savingAccount || newPassword.length < 8" @click="saveAccount">
+              <Save class="w-4 h-4 mr-2" /> {{ savingAccount ? 'Actualizando…' : 'Actualizar contraseña' }}
             </Button>
           </div>
         </Card>
@@ -623,6 +716,7 @@ const savePrefs = () => {
             </div>
           </template>
           <div class="settings-preferences space-y-5">
+            <p class="settings-option-description">Estas preferencias se guardan en este navegador para tu cuenta.</p>
             <div class="settings-toggle-row flex items-center justify-between">
               <div>
                 <p class="settings-option-title">Notificaciones push</p>
@@ -689,6 +783,9 @@ const savePrefs = () => {
           </Button>
           <span v-if="savePrefsMsg" class="settings-feedback">{{ savePrefsMsg }}</span>
         </div>
+        <p v-if="prefsError" class="rounded-lg border border-red-400/20 bg-red-400/10 px-3 py-2 text-sm text-red-300" role="alert">
+          {{ prefsError }}
+        </p>
       </div>
     </transition>
   </div>
