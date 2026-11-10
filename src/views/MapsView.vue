@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useMainStore } from '../stores'
+import { supabase } from '../services/supabase'
 import AgroMap from '../components/map/AgroMap.vue'
 import Card from '../components/ui/Card.vue'
 import Button from '../components/ui/Button.vue'
@@ -22,10 +24,8 @@ import {
 import { listFields, saveMapWorkspace, type FieldRecord } from '../services/agronomyData'
 
 interface MapFeature {
-  type: string
-  geometry?: {
-    type: string
-  } | null
+  type: 'Feature'
+  geometry: GeoJSON.Geometry | null
   properties?: Record<string, unknown> | null
 }
 
@@ -34,15 +34,40 @@ interface MapFeatureCollection {
   features: MapFeature[]
 }
 
+interface SavedMapElement {
+  id: string
+  user_id: string
+  field_id: string | null
+  element_type: string
+  name: string | null
+  geometry_data: GeoJSON.Geometry
+  properties: Record<string, unknown> | null
+  created_at: string
+}
+
+interface FieldOption {
+  id: string
+  name: string
+}
+
+const store = useMainStore()
 const geojsonData = ref<MapFeatureCollection | null>(null)
 const exportStatus = ref('')
 const saveError = ref('')
 const fieldName = ref('')
 const savedFields = ref<FieldRecord[]>([])
 const isSaving = ref(false)
+const saveStatus = ref('')
+const errorMessage = ref('')
+const loadingSaved = ref(false)
+const saving = ref(false)
+const savedElements = ref<SavedMapElement[]>([])
+const fields = ref<FieldOption[]>([])
+const selectedFieldId = ref('')
 const mapBasemap = ref<'satellite' | 'streets'>('satellite')
 
 const features = computed(() => geojsonData.value?.features ?? [])
+const initialFeatures = ref<GeoJSON.Feature[]>([])
 const polygonCount = computed(() =>
   features.value.filter(feature =>
     feature.geometry?.type === 'Polygon' || feature.geometry?.type === 'MultiPolygon'
@@ -63,6 +88,8 @@ const handleGeoJsonUpdate = (data: MapFeatureCollection) => {
   geojsonData.value = data
   exportStatus.value = ''
   saveError.value = ''
+  saveStatus.value = ''
+  errorMessage.value = ''
   if (!fieldName.value) fieldName.value = `Mapa ${new Date().toLocaleDateString('es-MX')}`
 }
 
@@ -111,6 +138,164 @@ const featureName = (feature: MapFeature, index: number) => {
     : `Elemento ${index + 1}`
 }
 
+const isGeometry = (value: unknown): value is GeoJSON.Geometry => {
+  if (typeof value !== 'object' || value === null || !('type' in value)) return false
+  return value.type === 'GeometryCollection'
+    ? 'geometries' in value && Array.isArray(value.geometries)
+    : 'coordinates' in value
+}
+
+const loadSavedElements = async () => {
+  if (!supabase || !store.user?.id) {
+    errorMessage.value = 'Inicia sesión y configura Supabase para guardar elementos del mapa.'
+    return
+  }
+
+  loadingSaved.value = true
+  errorMessage.value = ''
+  const [elementsResult, fieldsResult] = await Promise.all([
+    supabase
+      .from('map_elements')
+      .select('*')
+      .eq('user_id', store.user.id)
+      .order('created_at', { ascending: true }),
+    supabase
+      .from('fields')
+      .select('id, name')
+      .eq('user_id', store.user.id)
+      .order('name')
+  ])
+
+  if (elementsResult.error) {
+    errorMessage.value = `No se pudieron consultar los elementos guardados: ${elementsResult.error.message}`
+    savedElements.value = []
+    loadingSaved.value = false
+    return
+  }
+
+  if (fieldsResult.error) {
+    errorMessage.value = `No se pudieron consultar las parcelas: ${fieldsResult.error.message}`
+  } else {
+    fields.value = (fieldsResult.data ?? []) as FieldOption[]
+  }
+
+  savedElements.value = (elementsResult.data ?? []) as SavedMapElement[]
+  selectedFieldId.value = savedElements.value.find(element => element.field_id)?.field_id ?? ''
+  const savedFeatures = savedElements.value.flatMap(element => {
+    if (!isGeometry(element.geometry_data)) return []
+    return [{
+      type: 'Feature' as const,
+      geometry: element.geometry_data,
+      properties: {
+        ...(element.properties ?? {}),
+        name: element.name ?? 'Elemento guardado',
+        map_element_id: element.id
+      }
+    }]
+  })
+
+  geojsonData.value = { type: 'FeatureCollection', features: savedFeatures }
+  initialFeatures.value = savedFeatures
+  loadingSaved.value = false
+}
+
+onMounted(loadSavedElements)
+
+const saveMapElements = async () => {
+  if (!supabase || !store.user?.id || !geojsonData.value || saving.value || loadingSaved.value) return
+
+  saving.value = true
+  saveStatus.value = ''
+  errorMessage.value = ''
+  const currentIds = new Set<string>()
+
+  for (const [index, feature] of features.value.entries()) {
+    if (!feature.geometry) {
+      errorMessage.value = `No se pudo guardar ${featureName(feature, index)} porque no tiene geometría.`
+      break
+    }
+
+    const properties = { ...(feature.properties ?? {}) }
+    const elementId = properties.map_element_id
+    delete properties.map_element_id
+    const name = featureName(feature, index)
+    const record = {
+      user_id: store.user.id,
+      field_id: selectedFieldId.value || null,
+      element_type: feature.geometry.type,
+      name,
+      geometry_data: feature.geometry,
+      properties
+    }
+
+    if (typeof elementId === 'string') {
+      const { data, error } = await supabase
+        .from('map_elements')
+        .update(record)
+        .eq('id', elementId)
+        .eq('user_id', store.user.id)
+        .select('id')
+        .maybeSingle()
+
+      if (error || !data) {
+        errorMessage.value = `No se pudo actualizar ${name}: ${error?.message ?? 'No se encontró el registro o faltan permisos.'}`
+        break
+      }
+      currentIds.add(elementId)
+    } else {
+      const { data, error } = await supabase
+        .from('map_elements')
+        .insert(record)
+        .select('id')
+        .single()
+
+      if (error) {
+        errorMessage.value = `No se pudo guardar ${name}: ${error.message}`
+        break
+      }
+
+      if (!data) {
+        errorMessage.value = `No se pudo guardar ${name}: Supabase no devolvió el identificador del elemento.`
+        break
+      }
+      feature.properties = { ...(feature.properties ?? {}), map_element_id: data.id }
+      currentIds.add(data.id)
+    }
+  }
+
+  if (!errorMessage.value) {
+    const removedIds = savedElements.value
+      .filter(element => !currentIds.has(element.id))
+      .map(element => element.id)
+
+    if (removedIds.length > 0) {
+      const { data, error } = await supabase
+        .from('map_elements')
+        .delete()
+        .eq('user_id', store.user.id)
+        .in('id', removedIds)
+        .select('id')
+
+      if (error) {
+        errorMessage.value = `Los elementos se actualizaron, pero no se pudieron eliminar los que quitaste del mapa: ${error.message}`
+      } else if (data?.length !== removedIds.length) {
+        errorMessage.value = 'Los elementos se actualizaron, pero no se eliminaron todos los que quitaste del mapa. Comprueba los permisos RLS.'
+      }
+    }
+  }
+
+  if (!errorMessage.value) {
+    saveStatus.value = 'Elementos del mapa guardados en Supabase.'
+    await loadSavedElements()
+  } else {
+    geojsonData.value = {
+      type: 'FeatureCollection',
+      features: [...features.value]
+    }
+  }
+  saving.value = false
+}
+
 const exportGeoJson = () => {
   if (!geojsonData.value || features.value.length === 0) return
 
@@ -140,6 +325,15 @@ const exportGeoJson = () => {
 
       <div class="maps-heading-actions">
         <div class="maps-live-pill"><Activity :size="15" /> {{ mapBasemap === 'satellite' ? 'Vista satelital' : 'Mapa de calles' }}</div>
+        <Button
+          variant="outline"
+          size="sm"
+          :disabled="(features.length === 0 && savedElements.length === 0) || saving || loadingSaved"
+          @click="saveMapElements"
+        >
+          <Save class="mr-2 h-4 w-4" />
+          {{ saving ? 'Guardando…' : 'Guardar en Supabase' }}
+        </Button>
         <Button
           variant="primary"
           size="sm"
@@ -173,6 +367,23 @@ const exportGeoJson = () => {
 
     <div class="maps-layout">
       <section class="map-column">
+        <div class="mb-3 flex flex-wrap items-center gap-3">
+          <label for="map-field" class="text-sm font-medium text-gray-300">Relacionar con parcela</label>
+          <select
+            id="map-field"
+            v-model="selectedFieldId"
+            class="rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100"
+          >
+            <option value="">Sin parcela asociada</option>
+            <option v-for="field in fields" :key="field.id" :value="field.id">{{ field.name }}</option>
+          </select>
+        </div>
+        <div v-if="errorMessage" class="mb-3 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700" role="alert">
+          {{ errorMessage }}
+        </div>
+        <div v-if="saveStatus" class="mb-3 rounded-lg border border-green-300 bg-green-50 p-3 text-sm text-green-700" role="status">
+          {{ saveStatus }}
+        </div>
         <div class="map-card">
           <div class="map-card-header">
             <div>
@@ -184,6 +395,7 @@ const exportGeoJson = () => {
 
           <div class="map-canvas">
             <AgroMap
+              :initial-features="initialFeatures"
               @update:geojson="handleGeoJsonUpdate"
               @update:basemap="handleBasemapUpdate"
             />

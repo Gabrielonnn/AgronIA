@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: agronia-plant-diagnosis
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerContext: ./backend
+    dockerfilePath: ./backend/Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: PLANT_DIAGNOSIS_ALLOWED_ORIGINS
+        value: https://jarednn.github.io,http://localhost:5173,http://127.0.0.1:5173

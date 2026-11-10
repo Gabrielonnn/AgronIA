@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Activity, Battery, Cable, Crosshair, MapPin, Radio, Unplug, Wifi } from 'lucide-vue-next'
+import { Activity, Battery, Cable, Crosshair, MapPin, Radio, ShieldCheck, Unplug, Wifi } from 'lucide-vue-next'
 import { MavLinkTelemetryParser, type MavLinkTelemetryMessage } from '../../services/mavlinkTelemetry'
+import MultispectralPlantScanner from '../diagnosis/MultispectralPlantScanner.vue'
 
 type LinkState = 'disconnected' | 'connecting' | 'connected' | 'error'
 type ConnectionMode = 'usb' | 'mavlink-bridge' | 'dji-bridge'
@@ -665,6 +666,21 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
+    <section class="drone-link-camera" aria-labelledby="drone-camera-title">
+      <div class="drone-camera-heading">
+        <div>
+          <span class="drone-camera-eyebrow">ESCÁNER MULTIESPECTRAL IA</span>
+          <h3 id="drone-camera-title">Reconocimiento de Planta y Simulación Espectral (RGB · NDVI · Térmico)</h3>
+          <p>Analiza la planta con el escáner multiespectral y sus presets fisiológicos.</p>
+        </div>
+      </div>
+
+      <MultispectralPlantScanner
+        :compact="true"
+        :show-field-scouting-action="false"
+      />
+    </section>
+
     <footer class="drone-link-footer">
       <span :class="{ 'telemetry-dot-online': hasHeartbeat }"></span>
       <span>{{ telemetry.messagesReceived }} {{ connectionMode === 'dji-bridge' ? 'lecturas del puente recibidas' : 'mensajes MAVLink recibidos' }}</span>
@@ -750,6 +766,11 @@ onBeforeUnmount(() => {
 .drone-link-safety { gap: 0.4rem; margin-top: 0.8rem; color: #909a87; font-size: 0.59rem; line-height: 1.45; }
 .drone-link-safety svg { flex: 0 0 auto; color: #8fc99d; }
 
+.drone-link-camera { display: grid; gap: 0.8rem 1rem; padding: 1rem 1.15rem; border-top: 1px solid rgba(196, 218, 147, 0.09); }
+.drone-camera-heading { display: flex; grid-column: 1 / -1; align-items: center; justify-content: space-between; gap: 0.8rem; }
+.drone-camera-eyebrow { color: #c1a95f; font-size: 0.55rem; font-weight: 800; letter-spacing: 0.14em; }
+.drone-camera-heading h3 { margin-top: 0.2rem; color: #edf0e5; font-size: 0.82rem; font-weight: 700; }
+.drone-camera-heading p { color: #929b88; font-size: 0.62rem; line-height: 1.5; }
 .drone-link-telemetry { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); align-content: center; }
 .drone-telemetry-item { min-width: 0; padding: 0.8rem 0.75rem; border-right: 1px solid rgba(196, 218, 147, 0.08); transition: background 0.2s ease; }
 .drone-telemetry-item:last-child { border-right: 0; }

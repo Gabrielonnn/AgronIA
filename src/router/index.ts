@@ -76,6 +76,12 @@ const router = createRouter({
       name: 'field-records',
       component: () => import('../views/FieldRecordsView.vue'),
       meta: { requiresAuth: true }
+    },
+    {
+      path: '/diagnostico',
+      name: 'diagnosis',
+      component: () => import('../views/PlantDiagnosisView.vue'),
+      meta: { requiresAuth: true }
     }
   ]
 })

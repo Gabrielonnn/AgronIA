@@ -18,8 +18,10 @@ interface PlantData {
 }
 
 interface StressCenter {
-  id: string; x: number; z: number; intensity: number; radius: number; type: 'DROUGHT' | 'PEST'
+  id: string; x: number; z: number; intensity: number; radius: number; type: 'DROUGHT' | 'OVERHYDRATION' | 'PEST'
 }
+
+type FieldPresetId = 'mixed' | 'sin_plagas' | 'estres_hidrico' | 'sobre_hidratacion' | 'con_plagas'
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 const containerRef = ref<HTMLDivElement | null>(null)
@@ -49,6 +51,7 @@ const liveDrone = ref<{
   heading: null,
 })
 const currentMode = ref<'rgb' | 'ndvi' | 'thermal'>('rgb')
+const activeFieldPreset = ref<FieldPresetId>('mixed')
 const droneState = ref<'IDLE' | 'SCANNING' | 'FLYING' | 'ACTION' | 'RETURNING' | 'CENTINELAS'>('IDLE')
 const currentAction = ref<'NONE' | 'WATER' | 'FUMIGATE' | 'CENTINELAS'>('NONE')
 const simulationPaused = ref(false)
@@ -450,10 +453,12 @@ const getStatusName = (health: number) => {
 const getSectorColor = (type: string, intensity: number) => {
   const t = Math.max(0, Math.min(1, (intensity - 0.6) / 0.4))
   if (type === 'DROUGHT') {
-     return new THREE.Color().lerpColors(new THREE.Color(0xfacc15), new THREE.Color(0xea580c), t).getHex()
-  } else {
-     return new THREE.Color().lerpColors(new THREE.Color(0xc084fc), new THREE.Color(0x7e22ce), t).getHex()
+    return new THREE.Color().lerpColors(new THREE.Color(0xfacc15), new THREE.Color(0xea580c), t).getHex()
   }
+  if (type === 'OVERHYDRATION') {
+    return new THREE.Color().lerpColors(new THREE.Color(0x38bdf8), new THREE.Color(0x1d4ed8), t).getHex()
+  }
+  return new THREE.Color().lerpColors(new THREE.Color(0xc084fc), new THREE.Color(0x7e22ce), t).getHex()
 }
 
 const getColorForPlant = (plant: PlantData, mode: 'rgb' | 'ndvi' | 'thermal') => {
@@ -463,7 +468,7 @@ const getColorForPlant = (plant: PlantData, mode: 'rgb' | 'ndvi' | 'thermal') =>
     if (plant.ndvi < 0.66) return lerpColor(new THREE.Color(0xf97316), new THREE.Color(0xfacc15), (plant.ndvi - 0.33) / 0.33)
     return lerpColor(new THREE.Color(0xfacc15), new THREE.Color(0x16a34a), (plant.ndvi - 0.66) / 0.34)
   }
-  const heat = Math.max(0, Math.min(1, (plant.temp - 25) / 12)) // 0 to 1
+  const heat = Math.max(0, Math.min(1, (plant.temp - 20) / 17)) // 0 to 1 (20°C cold overhydration to 37°C drought)
   if (heat < 0.33) return lerpColor(new THREE.Color(0x1d4ed8), new THREE.Color(0x06b6d4), heat / 0.33)
   if (heat < 0.66) return lerpColor(new THREE.Color(0x06b6d4), new THREE.Color(0xfde047), (heat - 0.33) / 0.33)
   return lerpColor(new THREE.Color(0xfde047), new THREE.Color(0xef4444), (heat - 0.66) / 0.34)
@@ -548,20 +553,27 @@ const createParticles = () => {
   scene.value?.add(particleSystem)
 }
 
-const generateRandomStressCenters = () => {
+const generateRandomStressCenters = (preset: FieldPresetId = activeFieldPreset.value) => {
   stressCenters = []
   clearSectorMarkers()
+  if (preset === 'sin_plagas') return
+
   const halfWidth = (selectedFieldGeometry.value?.widthMeters ?? 50) / 2
   const halfDepth = (selectedFieldGeometry.value?.depthMeters ?? 40) / 2
-  const numCenters = Math.floor(Math.random() * 3) + 2
-  for (let i=0; i<numCenters; i++) {
+  const numCenters = preset === 'mixed' ? Math.floor(Math.random() * 3) + 2 : 3
+  for (let i = 0; i < numCenters; i++) {
+    let type: StressCenter['type'] = 'DROUGHT'
+    if (preset === 'sobre_hidratacion') type = 'OVERHYDRATION'
+    else if (preset === 'con_plagas') type = 'PEST'
+    else if (preset === 'mixed') type = Math.random() > 0.5 ? 'DROUGHT' : 'PEST'
+
     stressCenters.push({
-      id: `SEC-${i+1}`,
+      id: `SEC-${i + 1}`,
       x: (Math.random() * 1.6 - 0.8) * halfWidth,
       z: (Math.random() * 1.6 - 0.8) * halfDepth,
-      intensity: 0.6 + Math.random() * 0.4,
+      intensity: 0.68 + Math.random() * 0.3,
       radius: Math.max(2, Math.min(halfWidth, halfDepth) * (0.08 + Math.random() * 0.08)),
-      type: Math.random() > 0.5 ? 'DROUGHT' : 'PEST'
+      type,
     })
   }
 }
@@ -632,22 +644,38 @@ const saveScenarioSnapshot = async (saveAlerts = false) => {
 
 const regenerateFieldHealth = () => {
   allPlants.forEach(plant => {
-    let dStress = 0, pStress = 0
+    let dStress = 0, pStress = 0, oStress = 0
     for (const center of stressCenters) {
       const dist = Math.sqrt(Math.pow(plant.x - center.x, 2) + Math.pow(plant.z - center.z, 2))
       if (dist < center.radius) {
         const effect = center.intensity * (1 - (dist / center.radius))
         if (center.type === 'DROUGHT') dStress = Math.max(dStress, effect)
+        if (center.type === 'OVERHYDRATION') oStress = Math.max(oStress, effect)
         if (center.type === 'PEST') pStress = Math.max(pStress, effect)
       }
     }
-    plant.health = Math.max(0.1, 0.9 + Math.random() * 0.1 - dStress - pStress)
-    plant.temp = 25 + (dStress * 12) + (pStress * 2)
-    plant.ndvi = Math.max(0.1, 0.8 - (pStress * 0.6) - (dStress * 0.2))
+    plant.health = Math.max(0.1, 0.92 + Math.random() * 0.08 - dStress - pStress - oStress * 0.75)
+    plant.temp = 25 + (dStress * 12) + (pStress * 3) - (oStress * 5.2)
+    plant.ndvi = Math.max(0.1, 0.84 - (pStress * 0.65) - (dStress * 0.32) - (oStress * 0.38))
     plant.status = getStatusName(plant.health)
   })
   updateMaterials(currentMode.value)
   updateTelemetry()
+}
+
+const applyFieldPreset = (preset: FieldPresetId) => {
+  if (droneState.value !== 'IDLE') return
+  activeFieldPreset.value = preset
+  generateRandomStressCenters(preset)
+  regenerateFieldHealth()
+  const labels: Record<FieldPresetId, string> = {
+    mixed: 'Escenario mixto aplicado.',
+    sin_plagas: 'Preset aplicado: Sin Plagas · Cultivo en vigor óptimo.',
+    estres_hidrico: 'Preset aplicado: Estrés Hídrico (Sequía y aumento térmico foliar).',
+    sobre_hidratacion: 'Preset aplicado: Sobrehidratación (Exceso de agua y enfriamiento basal).',
+    con_plagas: 'Preset aplicado: Con Plagas (Focos de infestación y caída de NDVI).'
+  }
+  setActionFeedback(labels[preset])
 }
 
 const handleAction = (action: 'ANALYZE' | 'WATER' | 'FUMIGATE' | 'CENTINELAS') => {
@@ -751,7 +779,7 @@ const zoomCamera = (direction: 'in' | 'out') => {
   controls.value.update()
 }
 
-const createNewScenario = () => {
+const createNewScenario = async () => {
   if (droneState.value !== 'IDLE' || simulationPaused.value) return
   if (centinelaGroup) centinelaGroup.visible = false
   currentAction.value = 'NONE'
@@ -1265,7 +1293,23 @@ onBeforeUnmount(() => {
           <Download :size="15" />
           Exportar CSV
         </button>
-        <button class="simulation-new-scenario" type="button" @click="createNewScenario" :disabled="droneState !== 'IDLE' || simulationPaused">
+        <label class="simulation-toolbar-button gap-2" title="Preset de simulación del cultivo">
+          <span class="text-xs text-stone-300">Preset:</span>
+          <select
+            :value="activeFieldPreset"
+            :disabled="droneState !== 'IDLE'"
+            aria-label="Seleccionar preset de estrés o plagas del cultivo"
+            class="bg-transparent text-xs font-bold text-amber-200 focus:outline-none"
+            @change="applyFieldPreset(($event.target as HTMLSelectElement).value as FieldPresetId)"
+          >
+            <option value="mixed">Escenario Mixto</option>
+            <option value="sin_plagas">Sin Plagas · Óptimo</option>
+            <option value="estres_hidrico">Estrés Hídrico (Sequía)</option>
+            <option value="sobre_hidratacion">Sobrehidratación (Exceso)</option>
+            <option value="con_plagas">Con Plagas (Infestación)</option>
+          </select>
+        </label>
+        <button class="simulation-new-scenario" type="button" @click="createNewScenario" :disabled="droneState !== 'IDLE' || simulationPaused || savingSnapshot">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
             <path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.64 5.64l2.12 2.12m8.48 8.48 2.12 2.12m0-12.72-2.12 2.12m-8.48 8.48-2.12 2.12M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6" />
           </svg>

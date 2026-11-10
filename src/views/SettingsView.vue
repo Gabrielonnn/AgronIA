@@ -1,13 +1,12 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useMainStore } from '../stores'
 import { supabase } from '../services/supabase'
-import { uploadProfileAvatar } from '../services/profileAvatar'
 import Card from '../components/ui/Card.vue'
 import Button from '../components/ui/Button.vue'
 import {
   User, Settings2, ShieldCheck, Bell, Globe,
-  Save, Eye, EyeOff, Camera
+  Save, Eye, EyeOff, Camera, Trash2
 } from 'lucide-vue-next'
 
 const store = useMainStore()
@@ -34,44 +33,166 @@ const saveAccountMsg = ref('')
 const accountError = ref('')
 const savingAccount = ref(false)
 const avatarInput = ref<HTMLInputElement | null>(null)
-const avatarLoading = ref(false)
+const selectedAvatar = ref<File | null>(null)
+const avatarPreview = ref('')
+const avatarMessage = ref('')
 const avatarError = ref('')
-const avatarNotice = ref('')
-
+const savingAvatar = ref(false)
 const avatarUrl = computed(() => {
+  if (avatarPreview.value) return avatarPreview.value
+  const metadataUrl = store.user?.user_metadata?.avatar_url
+  if (typeof metadataUrl === 'string') return metadataUrl
   const path = store.user?.profile?.avatar_path
-  if (!path || !supabase) return ''
-  return supabase.storage.from('avatars').getPublicUrl(path).data.publicUrl
+  return path && supabase ? supabase.storage.from('avatars').getPublicUrl(path).data.publicUrl : ''
 })
 
-const handleAvatarChange = async (event: Event) => {
-  const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
-  input.value = ''
-  if (!file) return
+const clearAvatarPreview = () => {
+  if (avatarPreview.value) URL.revokeObjectURL(avatarPreview.value)
+  avatarPreview.value = ''
+}
 
+const handleAvatarSelection = (event: Event) => {
+  const input = event.target
+  if (!(input instanceof HTMLInputElement)) return
+
+  const file = input.files?.[0]
+  avatarMessage.value = ''
   avatarError.value = ''
-  avatarNotice.value = ''
-  const userId = store.user?.id
-  if (!userId) {
-    avatarError.value = 'Inicia sesión con una cuenta activa para cambiar la foto.'
+  clearAvatarPreview()
+  selectedAvatar.value = null
+
+  if (!file) return
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+    avatarError.value = 'Elige una imagen JPG, PNG o WebP.'
+    input.value = ''
+    return
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    avatarError.value = 'La imagen debe pesar 5 MB o menos.'
+    input.value = ''
     return
   }
 
-  avatarLoading.value = true
+  selectedAvatar.value = file
+  avatarPreview.value = URL.createObjectURL(file)
+}
+
+const updateCurrentUserMetadata = (user: NonNullable<typeof store.user>) => {
+  store.setUser({ ...store.user, ...user, profile: store.user?.profile })
+}
+
+const uploadAvatar = async () => {
+  const user = store.user
+  const file = selectedAvatar.value
+  if (!supabase) {
+    avatarError.value = 'Supabase no está configurado. No se pudo guardar la foto.'
+    return
+  }
+  if (!user?.id || !file) {
+    avatarError.value = 'Selecciona una imagen e inicia sesión para guardarla.'
+    return
+  }
+
+  savingAvatar.value = true
+  avatarError.value = ''
+  avatarMessage.value = ''
+  const extension = file.type === 'image/jpeg' ? 'jpg' : file.type === 'image/png' ? 'png' : 'webp'
+  const path = `${user.id}/${crypto.randomUUID()}.${extension}`
+  const previousPath = user.user_metadata?.avatar_storage_path
+
   try {
-    const result = await uploadProfileAvatar(file, userId, store.user?.profile?.avatar_path ?? null)
-    store.setUser({
-      ...store.user,
-      profile: { ...store.user.profile, avatar_path: result.path },
+    const { error: uploadError } = await supabase.storage
+      .from('avatars')
+      .upload(path, file, { cacheControl: '3600', contentType: file.type, upsert: false })
+
+    if (uploadError) {
+      avatarError.value = `No se pudo subir la foto: ${uploadError.message}`
+      return
+    }
+
+    const publicUrl = supabase.storage.from('avatars').getPublicUrl(path).data.publicUrl
+    const { data, error: metadataError } = await supabase.auth.updateUser({
+      data: { avatar_url: publicUrl, avatar_storage_path: path },
     })
-    avatarNotice.value = result.warning || 'Foto de perfil actualizada.'
+
+    if (metadataError || !data.user) {
+      const { error: cleanupError } = await supabase.storage.from('avatars').remove([path])
+      avatarError.value = metadataError
+        ? `La foto se subió, pero no se pudo guardar en el perfil: ${metadataError.message}${cleanupError ? ` No se pudo limpiar el archivo temporal: ${cleanupError.message}` : ''}`
+        : `La foto se subió, pero Supabase no devolvió el perfil actualizado.${cleanupError ? ` No se pudo limpiar el archivo temporal: ${cleanupError.message}` : ''}`
+      return
+    }
+
+    updateCurrentUserMetadata(data.user)
+    clearAvatarPreview()
+    selectedAvatar.value = null
+    if (avatarInput.value) avatarInput.value.value = ''
+    avatarMessage.value = 'Foto de perfil actualizada.'
+
+    if (typeof previousPath === 'string' && previousPath.startsWith(`${user.id}/`) && previousPath !== path) {
+      const { error: cleanupError } = await supabase.storage.from('avatars').remove([previousPath])
+      if (cleanupError) {
+        avatarMessage.value = `La foto se actualizó, pero no se pudo borrar la anterior: ${cleanupError.message}`
+      }
+    }
   } catch (error) {
-    avatarError.value = error instanceof Error ? error.message : 'No se pudo subir la foto de perfil.'
+    avatarError.value = error instanceof Error
+      ? `No se pudo guardar la foto: ${error.message}`
+      : 'No se pudo guardar la foto por un error inesperado.'
   } finally {
-    avatarLoading.value = false
+    savingAvatar.value = false
   }
 }
+
+const removeAvatar = async () => {
+  const user = store.user
+  if (!supabase) {
+    avatarError.value = 'Supabase no está configurado. No se pudo quitar la foto.'
+    return
+  }
+  if (!user?.id) {
+    avatarError.value = 'Inicia sesión para quitar tu foto de perfil.'
+    return
+  }
+
+  savingAvatar.value = true
+  avatarError.value = ''
+  avatarMessage.value = ''
+  const previousPath = user.user_metadata?.avatar_storage_path
+
+  try {
+    const { data, error } = await supabase.auth.updateUser({
+      data: { avatar_url: null, avatar_storage_path: null },
+    })
+    if (error || !data.user) {
+      avatarError.value = error
+        ? `No se pudo quitar la foto del perfil: ${error.message}`
+        : 'Supabase no devolvió el perfil actualizado.'
+      return
+    }
+
+    updateCurrentUserMetadata(data.user)
+    selectedAvatar.value = null
+    clearAvatarPreview()
+    if (avatarInput.value) avatarInput.value.value = ''
+    avatarMessage.value = 'Foto de perfil quitada.'
+
+    if (typeof previousPath === 'string' && previousPath.startsWith(`${user.id}/`)) {
+      const { error: cleanupError } = await supabase.storage.from('avatars').remove([previousPath])
+      if (cleanupError) {
+        avatarMessage.value = `La foto se quitó del perfil, pero no se pudo borrar el archivo: ${cleanupError.message}`
+      }
+    }
+  } catch (error) {
+    avatarError.value = error instanceof Error
+      ? `No se pudo quitar la foto: ${error.message}`
+      : 'No se pudo quitar la foto por un error inesperado.'
+  } finally {
+    savingAvatar.value = false
+  }
+}
+
+onBeforeUnmount(clearAvatarPreview)
 
 const saveAccount = async () => {
   const user = store.user
@@ -449,35 +570,50 @@ const savePrefs = () => {
           }
           </style>
           <div class="settings-form space-y-4">
-            <div class="settings-avatar-row">
-              <div class="settings-avatar">
-                <img v-if="avatarUrl" :src="avatarUrl" alt="Foto de perfil" />
-                <User v-else :size="26" aria-hidden="true" />
+            <div class="flex flex-wrap items-center gap-4">
+              <div class="grid h-20 w-20 flex-shrink-0 place-items-center overflow-hidden rounded-full border border-white/10 bg-white/5">
+                <img v-if="avatarUrl" :src="avatarUrl" alt="Vista previa de la foto de perfil" class="h-full w-full object-cover" />
+                <User v-else :size="30" class="text-white/45" aria-hidden="true" />
               </div>
               <div class="space-y-2">
+                <p class="settings-field-label mb-0">Foto de perfil</p>
+                <p class="text-xs text-white/55">JPG, PNG o WebP; máximo 5 MB. Se mostrará en tu menú de usuario.</p>
                 <input
                   ref="avatarInput"
                   class="sr-only"
                   type="file"
                   accept="image/jpeg,image/png,image/webp"
                   aria-label="Seleccionar foto de perfil"
-                  @change="handleAvatarChange"
+                  @change="handleAvatarSelection"
                 />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  :disabled="avatarLoading"
-                  @click="avatarInput?.click()"
-                >
-                  <Camera class="w-4 h-4 mr-2" />
-                  {{ avatarLoading ? 'Subiendo…' : 'Cambiar foto' }}
-                </Button>
-                <p class="settings-avatar-copy">JPG, PNG o WebP; máximo 5 MB.</p>
-                <p v-if="avatarError" class="settings-avatar-error" role="alert">{{ avatarError }}</p>
-                <p v-else-if="avatarNotice" class="settings-avatar-success" role="status">{{ avatarNotice }}</p>
+                <div class="flex flex-wrap gap-2">
+                  <Button variant="outline" size="sm" :disabled="savingAvatar" @click="avatarInput?.click()">
+                    <Camera class="mr-2 h-4 w-4" /> Elegir foto
+                  </Button>
+                  <Button
+                    v-if="selectedAvatar"
+                    class="settings-save-button"
+                    variant="primary"
+                    size="sm"
+                    :disabled="savingAvatar"
+                    @click="uploadAvatar"
+                  >
+                    <Save class="mr-2 h-4 w-4" /> {{ savingAvatar ? 'Guardando…' : 'Guardar foto' }}
+                  </Button>
+                  <Button
+                    v-else-if="store.user?.user_metadata?.avatar_url"
+                    variant="outline"
+                    size="sm"
+                    :disabled="savingAvatar"
+                    @click="removeAvatar"
+                  >
+                    <Trash2 class="mr-2 h-4 w-4" /> Quitar foto
+                  </Button>
+                </div>
               </div>
             </div>
+            <p v-if="avatarError" class="text-sm text-red-300" role="alert">{{ avatarError }}</p>
+            <p v-if="avatarMessage" class="text-sm text-emerald-300" role="status">{{ avatarMessage }}</p>
             <div v-if="saveAccountMsg" class="settings-feedback">
               {{ saveAccountMsg }}
             </div>
