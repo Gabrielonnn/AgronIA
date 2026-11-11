@@ -2,7 +2,6 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Activity, Battery, Cable, Crosshair, MapPin, Radio, ShieldCheck, Unplug, Wifi } from 'lucide-vue-next'
 import { MavLinkTelemetryParser, type MavLinkTelemetryMessage } from '../../services/mavlinkTelemetry'
-import MultispectralPlantScanner from '../diagnosis/MultispectralPlantScanner.vue'
 
 type LinkState = 'disconnected' | 'connecting' | 'connected' | 'error'
 type ConnectionMode = 'usb' | 'mavlink-bridge' | 'dji-bridge'
@@ -665,21 +664,6 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </div>
-
-    <section class="drone-link-camera" aria-labelledby="drone-camera-title">
-      <div class="drone-camera-heading">
-        <div>
-          <span class="drone-camera-eyebrow">ESCÁNER MULTIESPECTRAL IA</span>
-          <h3 id="drone-camera-title">Reconocimiento de Planta y Simulación Espectral (RGB · NDVI · Térmico)</h3>
-          <p>Analiza la planta con el escáner multiespectral y sus presets fisiológicos.</p>
-        </div>
-      </div>
-
-      <MultispectralPlantScanner
-        :compact="true"
-        :show-field-scouting-action="false"
-      />
-    </section>
 
     <footer class="drone-link-footer">
       <span :class="{ 'telemetry-dot-online': hasHeartbeat }"></span>
