@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useMainStore } from '../stores'
 import { supabase } from '../services/supabase'
+import { uploadProfileAvatar } from '../services/profileAvatar'
 import Card from '../components/ui/Card.vue'
 import Button from '../components/ui/Button.vue'
 import {
@@ -40,10 +41,10 @@ const avatarError = ref('')
 const savingAvatar = ref(false)
 const avatarUrl = computed(() => {
   if (avatarPreview.value) return avatarPreview.value
-  const metadataUrl = store.user?.user_metadata?.avatar_url
-  if (typeof metadataUrl === 'string') return metadataUrl
   const path = store.user?.profile?.avatar_path
-  return path && supabase ? supabase.storage.from('avatars').getPublicUrl(path).data.publicUrl : ''
+  if (path && supabase) return supabase.storage.from('avatars').getPublicUrl(path).data.publicUrl
+  const metadataUrl = store.user?.user_metadata?.avatar_url
+  return typeof metadataUrl === 'string' ? metadataUrl : ''
 })
 
 const clearAvatarPreview = () => {
@@ -77,8 +78,13 @@ const handleAvatarSelection = (event: Event) => {
   avatarPreview.value = URL.createObjectURL(file)
 }
 
-const updateCurrentUserMetadata = (user: NonNullable<typeof store.user>) => {
-  store.setUser({ ...store.user, ...user, profile: store.user?.profile })
+const updateCurrentUserAvatarPath = (path: string | null) => {
+  const user = store.user
+  if (!user) return
+  store.setUser({
+    ...user,
+    profile: { ...user.profile, avatar_path: path },
+  })
 }
 
 const uploadAvatar = async () => {
@@ -96,45 +102,16 @@ const uploadAvatar = async () => {
   savingAvatar.value = true
   avatarError.value = ''
   avatarMessage.value = ''
-  const extension = file.type === 'image/jpeg' ? 'jpg' : file.type === 'image/png' ? 'png' : 'webp'
-  const path = `${user.id}/${crypto.randomUUID()}.${extension}`
-  const previousPath = user.user_metadata?.avatar_storage_path
+  const previousPath = user.profile?.avatar_path
+    || (typeof user.user_metadata?.avatar_storage_path === 'string' ? user.user_metadata.avatar_storage_path : null)
 
   try {
-    const { error: uploadError } = await supabase.storage
-      .from('avatars')
-      .upload(path, file, { cacheControl: '3600', contentType: file.type, upsert: false })
-
-    if (uploadError) {
-      avatarError.value = `No se pudo subir la foto: ${uploadError.message}`
-      return
-    }
-
-    const publicUrl = supabase.storage.from('avatars').getPublicUrl(path).data.publicUrl
-    const { data, error: metadataError } = await supabase.auth.updateUser({
-      data: { avatar_url: publicUrl, avatar_storage_path: path },
-    })
-
-    if (metadataError || !data.user) {
-      const { error: cleanupError } = await supabase.storage.from('avatars').remove([path])
-      avatarError.value = metadataError
-        ? `La foto se subió, pero no se pudo guardar en el perfil: ${metadataError.message}${cleanupError ? ` No se pudo limpiar el archivo temporal: ${cleanupError.message}` : ''}`
-        : `La foto se subió, pero Supabase no devolvió el perfil actualizado.${cleanupError ? ` No se pudo limpiar el archivo temporal: ${cleanupError.message}` : ''}`
-      return
-    }
-
-    updateCurrentUserMetadata(data.user)
+    const savedAvatar = await uploadProfileAvatar(file, user.id, previousPath)
+    updateCurrentUserAvatarPath(savedAvatar.path)
     clearAvatarPreview()
     selectedAvatar.value = null
     if (avatarInput.value) avatarInput.value.value = ''
-    avatarMessage.value = 'Foto de perfil actualizada.'
-
-    if (typeof previousPath === 'string' && previousPath.startsWith(`${user.id}/`) && previousPath !== path) {
-      const { error: cleanupError } = await supabase.storage.from('avatars').remove([previousPath])
-      if (cleanupError) {
-        avatarMessage.value = `La foto se actualizó, pero no se pudo borrar la anterior: ${cleanupError.message}`
-      }
-    }
+    avatarMessage.value = savedAvatar.warning || 'Foto de perfil actualizada.'
   } catch (error) {
     avatarError.value = error instanceof Error
       ? `No se pudo guardar la foto: ${error.message}`
@@ -158,7 +135,8 @@ const removeAvatar = async () => {
   savingAvatar.value = true
   avatarError.value = ''
   avatarMessage.value = ''
-  const previousPath = user.user_metadata?.avatar_storage_path
+  const previousPath = user.profile?.avatar_path
+    || (typeof user.user_metadata?.avatar_storage_path === 'string' ? user.user_metadata.avatar_storage_path : null)
 
   try {
     const { data, error } = await supabase.auth.updateUser({
@@ -171,13 +149,27 @@ const removeAvatar = async () => {
       return
     }
 
-    updateCurrentUserMetadata(data.user)
+    const { data: profileUpdated, error: profileError } = await supabase.rpc('set_my_avatar_path', {
+      p_avatar_path: null,
+    })
+    if (profileError || !profileUpdated) {
+      avatarError.value = profileError
+        ? `Se quitó la foto de la sesión, pero no se pudo actualizar el perfil: ${profileError.message}`
+        : 'Se quitó la foto de la sesión, pero Supabase no confirmó la actualización del perfil.'
+      return
+    }
+
+    store.setUser({
+      ...user,
+      ...data.user,
+      profile: { ...user.profile, avatar_path: null },
+    })
     selectedAvatar.value = null
     clearAvatarPreview()
     if (avatarInput.value) avatarInput.value.value = ''
     avatarMessage.value = 'Foto de perfil quitada.'
 
-    if (typeof previousPath === 'string' && previousPath.startsWith(`${user.id}/`)) {
+    if (previousPath?.startsWith(`${user.id}/`)) {
       const { error: cleanupError } = await supabase.storage.from('avatars').remove([previousPath])
       if (cleanupError) {
         avatarMessage.value = `La foto se quitó del perfil, pero no se pudo borrar el archivo: ${cleanupError.message}`

@@ -103,7 +103,9 @@
   color: #e8eddf;
   background-color: #10231e;
   background:
-    radial-gradient(ellipse at 50% 0, rgba(120, 150, 76, 0.1), transparent 54%),
+    radial-gradient(ellipse at 0% 12%, rgba(120, 150, 76, 0.2), transparent 45%),
+    radial-gradient(ellipse at 100% 52%, rgba(245, 138, 0, 0.09), transparent 48%),
+    radial-gradient(ellipse at 0% 92%, rgba(56, 189, 148, 0.11), transparent 44%),
     linear-gradient(155deg, #10201b 0%, #10231f 46%, #13241d 100%);
   border-color: rgba(255, 196, 0, 0.12);
   box-shadow: 12px 0 40px rgba(0, 0, 0, 0.2);
@@ -119,18 +121,22 @@
 
 .topo-drone {
   position: absolute;
-  width: 30px;
-  height: 22px;
-  color: rgba(195, 220, 159, 0.62);
-  filter: drop-shadow(0 0 8px rgba(155, 215, 164, 0.3));
-  animation: sidebar-drone-flight 15s ease-in-out infinite;
+  left: 0;
+  width: 42px;
+  height: 21px;
+  color: var(--drone-color);
+  opacity: 0.64;
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--drone-color) 75%, transparent));
+  animation: sidebar-drone-flight 19s ease-in-out infinite;
 }
 
-.topo-drone-1 { top: 17%; left: -34px; animation-delay: -2s; }
-.topo-drone-2 { top: 39%; left: -34px; width: 24px; opacity: 0.68; animation-delay: -8s; animation-duration: 19s; }
-.topo-drone-3 { top: 62%; left: -34px; width: 27px; opacity: 0.76; animation-delay: -12s; animation-duration: 17s; }
-.topo-drone-4 { top: 83%; left: -34px; width: 21px; opacity: 0.58; animation-delay: -5s; animation-duration: 21s; }
-.topo-drone-rotor { transform-box: fill-box; transform-origin: center; animation: sidebar-drone-rotor 0.18s linear infinite; }
+.topo-drone-gold { --drone-color: #ffc400; top: 16%; animation-delay: -2s; }
+.topo-drone-orange { --drone-color: #f58a00; top: 34%; animation-delay: -9s; animation-duration: 23s; }
+.topo-drone-green { --drone-color: #78b653; top: 53%; animation-delay: -14s; animation-duration: 21s; }
+.topo-drone-lime { --drone-color: #b4d18b; top: 72%; animation-delay: -6s; animation-duration: 25s; }
+.topo-drone-teal { --drone-color: #48c7a1; top: 89%; animation-delay: -18s; animation-duration: 22s; }
+.topo-drone-rotor { transform-box: fill-box; transform-origin: center; animation: sidebar-drone-rotor 0.24s ease-in-out infinite alternate; }
+.topo-drone-beacon { opacity: 0.32; transform-box: fill-box; transform-origin: center; animation: sidebar-drone-beacon 1.8s ease-out infinite; }
 
 .app-sidebar > :not(.topo-drone-scene) { position: relative; z-index: 1; }
 
@@ -140,10 +146,18 @@
   flex: 0 0 68px;
   padding-inline: 18px;
   border-color: rgba(211, 189, 103, 0.16);
-  background: rgba(4, 12, 10, 0.19);
+  background:
+    linear-gradient(100deg, rgba(255, 196, 0, 0.07), transparent 70%),
+    rgba(4, 12, 10, 0.19);
 }
 
 .topo-brand-content { min-width: 0; }
+.topo-brand-logo {
+  display: block;
+  width: 78px;
+  height: 60px;
+  object-fit: contain;
+}
 .topo-brand-copy { min-width: 0; }
 .topo-brand { justify-content: space-between; }
 .topo-brand-name {
@@ -163,8 +177,8 @@
   flex: 0 0 34px;
   border-radius: 10px;
   color: #43320d;
-  background: linear-gradient(145deg, #f7e6a5 0%, #d4b45d 100%);
-  box-shadow: 0 7px 20px rgba(212, 180, 93, 0.16);
+  background: linear-gradient(145deg, #ffe477 0%, #ffc400 58%, #f58a00 100%);
+  box-shadow: 0 7px 22px rgba(255, 178, 0, 0.26);
 }
 
 .app-sidebar .topo-brand-mark span { color: #43320d; }
@@ -240,6 +254,10 @@
 .menu-accent-pink { --menu-accent: #f0a3c2; }
 .menu-accent-orange { --menu-accent: #f3b274; }
 .menu-accent-slate { --menu-accent: #b3c3ce; }
+.menu-accent-indigo { --menu-accent: #a9a7ff; }
+.menu-accent-lime { --menu-accent: #c3e879; }
+.menu-accent-teal { --menu-accent: #58d5be; }
+.menu-accent-rose { --menu-accent: #ff9aab; }
 
 .app-sidebar nav a.topo-menu-link:hover {
   color: #f4edda;
@@ -258,7 +276,7 @@
   color: color-mix(in srgb, var(--menu-accent) 72%, white);
   border-color: color-mix(in srgb, var(--menu-accent) 37%, transparent);
   background:
-    linear-gradient(100deg, color-mix(in srgb, var(--menu-accent) 16%, rgba(20, 27, 19, 0.92)), rgba(157, 127, 57, 0.06));
+    linear-gradient(100deg, color-mix(in srgb, var(--menu-accent) 23%, rgba(20, 27, 19, 0.92)), color-mix(in srgb, var(--menu-accent) 9%, transparent));
   box-shadow:
     inset 0 0 0 1px color-mix(in srgb, var(--menu-accent) 8%, transparent),
     0 7px 20px rgba(0, 0, 0, 0.1);
@@ -450,16 +468,22 @@
 }
 
 @keyframes sidebar-drone-flight {
-  0% { transform: translate3d(-12px, 8px, 0) rotate(-7deg); opacity: 0; }
-  10% { opacity: 0.72; }
-  34% { transform: translate3d(82px, -5px, 0) rotate(2deg); opacity: 0.78; }
-  63% { transform: translate3d(176px, 12px, 0) rotate(-3deg); opacity: 0.62; }
-  90% { opacity: 0.58; }
-  100% { transform: translate3d(270px, -7px, 0) rotate(5deg); opacity: 0; }
+  0% { transform: translate3d(-65px, 5px, 0) rotate(-5deg); opacity: 0; }
+  12% { opacity: 0.64; }
+  35% { transform: translate3d(50px, -4px, 0) rotate(2deg); opacity: 0.76; }
+  64% { transform: translate3d(150px, 7px, 0) rotate(-2deg); opacity: 0.68; }
+  88% { opacity: 0.58; }
+  100% { transform: translate3d(275px, -5px, 0) rotate(4deg); opacity: 0; }
 }
 
 @keyframes sidebar-drone-rotor {
-  to { transform: rotate(360deg); }
+  from { transform: scaleX(0.7); }
+  to { transform: scaleX(1.15); }
+}
+
+@keyframes sidebar-drone-beacon {
+  0% { opacity: 0.32; transform: scale(0.75); }
+  70%, 100% { opacity: 0; transform: scale(1.55); }
 }
 
 @media (max-width: 767px) {
@@ -476,6 +500,7 @@
 
 .app-mobile-header {
   position: relative;
+  min-height: 75px;
   overflow: hidden;
   color: #efe7ca;
   background:
@@ -485,14 +510,10 @@
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
 }
 
-.app-mobile-header > div:first-child > div {
-  background: linear-gradient(145deg, #f7e6a5 0%, #d4b45d 100%);
-  box-shadow: 0 7px 20px rgba(212, 180, 93, 0.16);
-}
-
-.app-mobile-header > div:first-child > div span,
-.app-mobile-header > div:first-child > span {
-  color: #efe7ca;
+.app-mobile-brand img {
+  display: block;
+  width: 78px;
+  height: auto;
 }
 
 .app-mobile-header button {
@@ -722,10 +743,15 @@
   outline-offset: 3px;
 }
 
+.app-workspace button:not(:disabled) { cursor: pointer; }
+.app-workspace button:disabled { cursor: not-allowed; }
+
 .app-workspace .app-action-button {
   min-height: 36px;
+  gap: 0.5rem;
   border-radius: 10px;
   font-weight: 650;
+  white-space: nowrap;
   transition:
     color 0.2s ease,
     background-color 0.2s ease,
@@ -750,6 +776,19 @@
   filter: saturate(0.55);
   opacity: 0.52;
   box-shadow: none;
+}
+
+.app-workspace .app-action-button.border-2.border-agron-green {
+  border-width: 1px;
+  border-color: rgba(211, 189, 103, 0.25);
+  color: #e6d28b;
+  background: rgba(211, 189, 103, 0.06);
+}
+
+.app-workspace .app-action-button.border-2.border-agron-green:hover:not(:disabled) {
+  border-color: rgba(211, 189, 103, 0.45);
+  color: #fff0b5;
+  background: rgba(211, 189, 103, 0.12);
 }
 
 .app-workspace button:not(:disabled):not(.leaflet-control-zoom-in):not(.leaflet-control-zoom-out) {
@@ -829,7 +868,7 @@
 
 @media (max-width: 767px) {
   .app-main {
-    height: calc(100dvh - 61px);
+    height: calc(100dvh - 75px);
     overflow-x: clip;
   }
 

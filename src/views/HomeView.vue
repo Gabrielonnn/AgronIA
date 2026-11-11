@@ -15,6 +15,7 @@ import { listFieldMetrics, listFields, type FieldMetricRecord, type FieldRecord 
 use([CanvasRenderer, LineChart, BarChart, GaugeChart, TitleComponent, TooltipComponent, LegendComponent, GridComponent])
 
 const store = useMainStore()
+const agroniaMark = `${import.meta.env.BASE_URL}agronia-mark.png`
 const userName = computed(() => {
   const name = store.user?.profile?.full_name ?? store.user?.user_metadata?.full_name
   const firstName = typeof name === 'string' ? name.trim().split(/\s+/)[0] : ''
@@ -188,7 +189,10 @@ const stats = computed(() => [
         <h1>Hola, {{ userName }}<span class="home-heading-period">.</span></h1>
         <p>Una vista clara de lo que sucede en tu campo.</p>
       </div>
-      <span class="home-heading-tag"><span></span> AGRONIA · SINALOA</span>
+      <span class="home-heading-tag">
+        <img :src="agroniaMark" alt="" />
+        <span></span> SINALOA
+      </span>
     </header>
 
     <!-- Hero Banner -->
@@ -390,6 +394,12 @@ const stats = computed(() => [
   font-weight: 750;
   letter-spacing: 0.12em;
   white-space: nowrap;
+}
+
+.home-heading-tag img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
 }
 
 .home-heading-tag > span,
