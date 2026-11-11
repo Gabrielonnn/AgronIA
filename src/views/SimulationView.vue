@@ -1935,7 +1935,7 @@ onBeforeUnmount(() => {
         min-height: 0;
         flex: 1 1 auto;
         overflow: auto;
-
+      }
 
       .simulation-hud-left {
         position: absolute;
@@ -2154,6 +2154,7 @@ onBeforeUnmount(() => {
         position: absolute;
         inset: 1rem auto auto 1rem;
         width: min(270px, calc(100vw - 2rem));
+      }
 
       .simulation-stage:fullscreen > .simulation-hud-left {
         top: 1rem;
@@ -2425,8 +2426,6 @@ onBeforeUnmount(() => {
           pointer-events: auto;
         }
 
-        .simulation-stage > .simulation-panel {
-
         .simulation-hud-left,
         .simulation-hud-right {
           display: contents;
@@ -2492,8 +2491,6 @@ onBeforeUnmount(() => {
           border: 0;
           border-radius: 0;
         }
-
-        .simulation-stage:fullscreen > .simulation-side-stack {
 
         .simulation-stage:fullscreen .simulation-panel {
           position: absolute;

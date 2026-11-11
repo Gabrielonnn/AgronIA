@@ -2078,6 +2078,7 @@ const translateError = (msg: string): string => {
     border-radius: 22px;
   }
 
+
   .story-panel { min-height: 250px; padding: 24px 27px 20px; }
   .story-copy { margin-top: 31px; }
   .story-copy h2 { font-size: 32px; }
