@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterView, useRoute } from 'vue-router'
-import { Leaf, Menu, X } from 'lucide-vue-next'
+import { Menu, X } from 'lucide-vue-next'
 import { useMainStore } from './stores'
 import Sidebar from './components/layout/Sidebar.vue'
+import agroniaLogo from './assets/agronia-logo.png'
 
 const route = useRoute()
 const store = useMainStore()
@@ -54,15 +55,8 @@ onUnmounted(() => {
         <div class="app-intro-orbit app-intro-orbit-one"></div>
         <div class="app-intro-orbit app-intro-orbit-two"></div>
         <div class="app-intro-content">
-          <div class="app-intro-mark">
-            <span class="app-intro-mark-ring"></span>
-            <span class="app-intro-mark-spinner"></span>
-            <span class="app-intro-satellite app-intro-satellite-one"></span>
-            <span class="app-intro-satellite app-intro-satellite-two"></span>
-            <Leaf :size="34" :stroke-width="1.8" />
-          </div>
           <p class="app-intro-kicker"><span></span>Agricultura inteligente</p>
-          <h1 class="app-intro-title">Agron<span>IA</span></h1>
+          <img class="app-intro-logo" :src="agroniaLogo" alt="AgronIA" />
           <p class="app-intro-caption">Tecnología para una agricultura más precisa, productiva y sostenible.</p>
           <div class="app-intro-divider"></div>
           <div class="app-intro-progress" aria-hidden="true"><span></span></div>
@@ -74,12 +68,9 @@ onUnmounted(() => {
         </div>
       </div>
     </Transition>
-    <div v-if="!route.meta.public" class="app-mobile-header md:hidden flex items-center justify-between bg-white border-b border-gray-200 px-4 py-3 z-30 relative shadow-sm">
-      <div class="flex items-center gap-2">
-        <div class="w-8 h-8 rounded-lg bg-agron-green flex items-center justify-center shadow-sm">
-          <span class="text-white font-bold text-lg leading-none">A</span>
-        </div>
-        <span class="text-lg font-bold text-gray-900 tracking-tight leading-tight">AgronIA</span>
+    <div v-if="!route.meta.public" class="app-mobile-header md:hidden flex items-center justify-between bg-white border-b border-gray-200 px-4 py-2 z-30 relative shadow-sm">
+      <div class="app-mobile-brand">
+        <img :src="agroniaLogo" alt="AgronIA" />
       </div>
       <button
         type="button"
@@ -109,7 +100,7 @@ onUnmounted(() => {
     <main
       class="app-main relative flex-1 overflow-y-auto w-full"
       :class="[
-        route.meta.public ? 'app-public' : 'h-[calc(100vh-61px)] md:h-screen',
+        route.meta.public ? 'app-public' : 'h-[calc(100vh-75px)] md:h-screen',
         { 'p-4 md:p-6': !route.meta.public },
         { 'app-main-reveal': !showIntro },
         { 'app-workspace': !route.meta.public }
@@ -362,60 +353,13 @@ onUnmounted(() => {
   animation: content-arrive 0.85s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
-.app-intro-mark {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 76px;
-  height: 76px;
-  margin-bottom: 25px;
-  border: 1px solid rgba(255, 196, 0, 0.35);
-  border-radius: 24px;
-  color: var(--palette-gold);
-  background: linear-gradient(145deg, rgba(120, 150, 76, 0.24), rgba(76, 43, 8, 0.42));
-  box-shadow: 0 12px 38px rgba(0, 0, 0, 0.25), 0 0 44px rgba(255, 196, 0, 0.08);
-  animation: mark-arrive 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) both, mark-float 2.4s 0.8s ease-in-out infinite;
-}
-
-.app-intro-mark-ring {
-  position: absolute;
-  inset: -11px;
-  border: 1px solid rgba(255, 196, 0, 0.35);
-  border-radius: 34px;
-  animation: mark-ring 2.4s ease-out infinite;
-}
-
-.app-intro-mark-spinner {
-  position: absolute;
-  inset: -6px;
-  border: 1px solid transparent;
-  border-top-color: rgba(255, 196, 0, 0.8);
-  border-right-color: rgba(120, 150, 76, 0.6);
-  border-radius: 29px;
-  animation: mark-spin 5s linear infinite;
-}
-
-.app-intro-satellite {
-  position: absolute;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: #fff1a8;
-  box-shadow: 0 0 10px rgba(255, 196, 0, 0.8);
-}
-
-.app-intro-satellite-one {
-  top: 8px;
-  right: 4px;
-  animation: satellite-blink 1.8s ease-in-out infinite;
-}
-
-.app-intro-satellite-two {
-  bottom: 8px;
-  left: 4px;
-  width: 4px;
-  height: 4px;
-  animation: satellite-blink 1.8s 0.9s ease-in-out infinite;
+.app-intro-logo {
+  display: block;
+  width: clamp(165px, 26vw, 230px);
+  height: auto;
+  margin: 0 auto 15px;
+  filter: drop-shadow(0 10px 24px rgba(0, 0, 0, 0.3));
+  animation: intro-copy 0.7s 0.22s both;
 }
 
 .app-intro-kicker {
@@ -438,18 +382,6 @@ onUnmounted(() => {
   background: var(--palette-gold);
   box-shadow: 0 0 12px rgba(255, 196, 0, 0.72);
 }
-
-.app-intro-title {
-  margin: 0;
-  color: #fff9e8;
-  font-size: clamp(44px, 9vw, 58px);
-  font-weight: 800;
-  letter-spacing: -0.06em;
-  line-height: 1.1;
-  animation: intro-copy 0.7s 0.28s both;
-}
-
-.app-intro-title span { color: var(--palette-gold); }
 
 .app-intro-caption {
   max-width: 310px;
@@ -554,10 +486,6 @@ onUnmounted(() => {
   animation: login-content-reveal 0.65s 0.32s both;
 }
 
-@keyframes mark-arrive {
-  from { opacity: 0; transform: translateY(18px) scale(0.72) rotate(-8deg); }
-  to { opacity: 1; transform: translateY(0) scale(1) rotate(0); }
-}
 @keyframes content-arrive {
   from { opacity: 0; transform: translateY(12px) scale(0.985); }
   to { opacity: 1; transform: translateY(0) scale(1); }
@@ -573,15 +501,6 @@ onUnmounted(() => {
   from { opacity: 0; translate: 0 10px; }
   to { opacity: 1; translate: 0 0; }
 }
-@keyframes mark-float {
-  0%, 100% { translate: 0 0; }
-  50% { translate: 0 -5px; }
-}
-@keyframes mark-ring {
-  from { opacity: 0.5; transform: scale(0.9); }
-  to { opacity: 0; transform: scale(1.32); }
-}
-@keyframes mark-spin { to { transform: rotate(360deg); } }
 @keyframes intro-copy {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
@@ -622,10 +541,6 @@ onUnmounted(() => {
   35%, 65% { opacity: 0.62; }
   50% { opacity: 0.95; transform: translate3d(10px, -18px, 0) scale(1.15); }
 }
-@keyframes satellite-blink {
-  0%, 100% { opacity: 0.45; transform: scale(0.8); }
-  50% { opacity: 1; transform: scale(1.25); }
-}
 @keyframes loading-pulse {
   0%, 100% { opacity: 0.45; transform: scale(0.78); }
   50% { opacity: 1; transform: scale(1.25); }
@@ -640,9 +555,8 @@ onUnmounted(() => {
 @media (prefers-reduced-motion: reduce) {
   .app-intro-field, .app-intro-furrows, .app-intro-glow, .app-intro-sun, .app-intro-scan,
   .app-intro-crop, .app-intro-spark, .app-intro-drone,
-  .app-intro-content, .app-intro-mark, .app-intro-mark-ring, .app-intro-mark-spinner,
-  .app-intro-satellite, .app-intro-kicker,
-  .app-intro-title, .app-intro-caption, .app-intro-divider, .app-intro-progress,
+  .app-intro-content, .app-intro-logo, .app-intro-kicker,
+  .app-intro-caption, .app-intro-divider, .app-intro-progress,
   .app-intro-progress span, .app-intro-loading, .app-intro-loading-dot, .app-intro-orbit {
     animation: none !important;
   }

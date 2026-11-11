@@ -4,14 +4,16 @@ import { computed } from 'vue'
 const props = withDefaults(defineProps<{
   variant?: 'primary' | 'danger' | 'alert' | 'outline'
   size?: 'sm' | 'md' | 'lg'
+  type?: 'button' | 'submit' | 'reset'
   disabled?: boolean
 }>(), {
   variant: 'primary',
   size: 'md',
+  type: 'button',
   disabled: false
 })
 
-const baseClasses = 'app-action-button inline-flex items-center justify-center font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2'
+const baseClasses = 'app-action-button inline-flex items-center justify-center gap-2 font-medium rounded-lg transition-colors whitespace-nowrap focus:outline-none focus:ring-2 focus:ring-offset-2'
 
 const variantClasses = computed(() => {
   switch (props.variant) {
@@ -38,6 +40,7 @@ const sizeClasses = computed(() => {
 <template>
   <button 
     :class="[baseClasses, variantClasses, sizeClasses, { 'opacity-50 cursor-not-allowed': disabled }]"
+    :type="type"
     :disabled="disabled"
   >
     <slot />

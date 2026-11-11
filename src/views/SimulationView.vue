@@ -1479,6 +1479,7 @@ onBeforeUnmount(() => {
         </button>
       </div>
 
+      <div class="simulation-side-stack">
       <!-- Menú de Dron / Análisis -->
       <div class="simulation-panel simulation-controls absolute top-6 right-6 bg-black/80 backdrop-blur-md border border-white/10 rounded-xl p-4 text-white shadow-2xl z-10 w-64 transition-all">
         <div class="simulation-panel-heading">
@@ -1622,6 +1623,7 @@ onBeforeUnmount(() => {
             <span class="text-gray-400">Zonas de estrés</span>
             <span class="font-bold" :class="telemetry.stressZones > 0 ? 'text-yellow-400' : 'text-green-400'">{{ telemetry.stressZones }}</span>
           </div>
+        </div>
         </div>
       </div>
     </div>
@@ -1892,6 +1894,39 @@ onBeforeUnmount(() => {
       }
 
       .simulation-stage > canvas:active { cursor: grabbing; }
+      .simulation-side-stack {
+        position: absolute;
+        z-index: 10;
+        top: 1.5rem;
+        right: 1.5rem;
+        bottom: 1.5rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        width: min(300px, calc(100% - 3rem));
+        pointer-events: none;
+      }
+
+      .simulation-side-stack > .simulation-panel {
+        position: relative;
+        inset: auto;
+        width: 100%;
+        margin: 0;
+        pointer-events: auto;
+      }
+
+      .simulation-side-stack > .simulation-controls {
+        flex: 0 0 auto;
+        max-height: 58%;
+        overflow: auto;
+      }
+
+      .simulation-side-stack > .simulation-telemetry {
+        min-height: 0;
+        flex: 1 1 auto;
+        overflow: auto;
+      }
+
       .simulation-touch-hint {
         position: absolute;
         z-index: 3;
@@ -1914,7 +1949,7 @@ onBeforeUnmount(() => {
         position: absolute;
         z-index: 2;
         top: 1rem;
-        left: 1rem;
+        left: 50%;
         display: grid;
         grid-template-columns: 6px auto;
         align-items: center;
@@ -1929,6 +1964,7 @@ onBeforeUnmount(() => {
         font-size: 0.58rem;
         font-weight: 750;
         letter-spacing: 0.08em;
+        transform: translateX(-50%);
         pointer-events: none;
       }
 
@@ -2049,11 +2085,24 @@ onBeforeUnmount(() => {
         border-radius: 0;
       }
 
-      .simulation-stage:fullscreen > .simulation-panel {
+      .simulation-stage:fullscreen > .simulation-side-stack {
+        inset: 1rem 1rem 1rem auto;
+        width: min(340px, calc(100vw - 2rem));
+      }
+
+      .simulation-stage:fullscreen > .simulation-legend {
         position: absolute;
-        inset: 1rem 1rem auto auto;
-        width: min(300px, calc(100vw - 2rem));
+        inset: 1rem auto auto 1rem;
+        width: min(270px, calc(100vw - 2rem));
         max-height: calc(100dvh - 2rem);
+        overflow: auto;
+      }
+
+      .simulation-stage:fullscreen > .simulation-severity {
+        position: absolute;
+        inset: auto auto 4.5rem 1rem;
+        width: min(270px, calc(100vw - 2rem));
+        max-height: calc(100dvh - 7rem);
         overflow: auto;
       }
 
@@ -2291,6 +2340,16 @@ onBeforeUnmount(() => {
         .desktop-camera-hint { display: none; }
         .mobile-camera-hint { display: inline; }
 
+        .simulation-side-stack {
+          position: relative;
+          inset: auto;
+          z-index: 1;
+          width: 100%;
+          margin: 0;
+          order: 1;
+          pointer-events: auto;
+        }
+
         .simulation-stage > .simulation-panel {
           position: relative;
           inset: auto;
@@ -2304,6 +2363,7 @@ onBeforeUnmount(() => {
           left: 0.75rem;
           padding: 7px 9px;
           font-size: 0.52rem;
+          transform: none;
         }
 
         .simulation-live-badge {
@@ -2347,27 +2407,35 @@ onBeforeUnmount(() => {
           border: 0;
           border-radius: 0;
         }
-        .simulation-stage:fullscreen > .simulation-panel {
-          position: absolute;
+        .simulation-stage:fullscreen > .simulation-side-stack {
           inset: 1rem 1rem auto auto;
-          width: min(300px, calc(100vw - 2rem));
-          max-height: calc(100dvh - 2rem);
+          width: min(340px, calc(100vw - 2rem));
+          max-height: 64dvh;
           overflow: auto;
           padding-top: 0.85rem;
+        }
+        .simulation-stage:fullscreen > .simulation-legend {
+          display: none;
+        }
+        .simulation-stage:fullscreen > .simulation-severity {
+          display: none;
         }
         .simulation-stage:fullscreen > .simulation-camera-tools {
           position: absolute;
           top: auto;
           right: auto;
-          bottom: 1rem;
-          left: 50%;
-          transform: translateX(-50%);
+          bottom: 0.65rem;
+          left: auto;
+          transform: none;
+          width: calc(50vw - 1rem);
+          flex-wrap: wrap;
+          justify-content: center;
         }
         .simulation-stage:fullscreen > .simulation-touch-hint {
-          top: auto;
-          bottom: 4.5rem;
-          left: 50%;
-          transform: translateX(-50%);
+          display: none;
+        }
+        .simulation-stage:fullscreen > .simulation-camera-tools {
+          left: 0.5rem;
         }
         .simulation-panel { border-radius: 14px; }
         .simulation-panel-heading { flex-wrap: wrap; }
