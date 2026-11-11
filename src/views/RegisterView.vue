@@ -8,7 +8,8 @@ import {
 } from 'lucide-vue-next'
 
 const router = useRouter()
-const agroniaMark = `${import.meta.env.BASE_URL}agronia-mark.png`
+const agroniaMark = `${import.meta.env.BASE_URL}agronia-wordmark-mark.png`
+const agroniaWordmark = `${import.meta.env.BASE_URL}agronia-wordmark.png`
 const fullName = ref('')
 const email = ref('')
 const password = ref('')
@@ -248,8 +249,7 @@ const translateError = (msg: string): string => {
     <div class="auth-shell">
       <aside class="story-panel">
         <RouterLink to="/" class="story-brand" aria-label="AgronIA, inicio">
-          <img class="story-brand-mark" :src="agroniaMark" alt="" />
-          <span>Agron<span>IA</span></span>
+          <img class="story-brand-wordmark" :src="agroniaWordmark" alt="" />
         </RouterLink>
 
         <div class="story-copy">
@@ -1578,13 +1578,12 @@ const translateError = (msg: string): string => {
   text-decoration: none;
 }
 
-.story-brand > span:last-child > span { color: #d8b36d; }
-
-.story-brand-mark {
-  width: 36px;
-  height: 36px;
+.story-brand-wordmark {
+  display: block;
+  width: clamp(112px, 12vw, 142px);
+  height: auto;
   object-fit: contain;
-  filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.22));
+  filter: drop-shadow(0 5px 14px rgba(0, 0, 0, 0.2));
 }
 
 .story-copy {
@@ -1865,10 +1864,37 @@ const translateError = (msg: string): string => {
   animation: none;
 }
 
+.story-brand-wordmark {
+  animation: brand-arrive 0.8s 0.08s cubic-bezier(0.2, 0.75, 0.25, 1) both;
+  transition: transform 0.3s ease, filter 0.3s ease;
+}
+
+.story-brand:hover .story-brand-wordmark {
+  filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.28));
+  transform: translateY(-2px);
+}
+
+.story-copy {
+  animation: story-arrive 0.75s 0.18s cubic-bezier(0.2, 0.75, 0.25, 1) both;
+}
+
+.field-visual {
+  animation: field-arrive 0.9s 0.3s cubic-bezier(0.2, 0.75, 0.25, 1) both;
+}
+
+.logo-wrapper {
+  animation: logo-arrive 0.65s 0.12s cubic-bezier(0.2, 0.75, 0.25, 1) both;
+}
+
 .form-brand-mark {
   width: 40px;
   height: 40px;
   object-fit: contain;
+  transition: transform 0.35s cubic-bezier(0.2, 0.75, 0.25, 1);
+}
+
+.logo-wrapper:hover .form-brand-mark {
+  transform: rotate(-7deg) scale(1.05);
 }
 
 .logo-icon {
@@ -1921,42 +1947,75 @@ const translateError = (msg: string): string => {
   color: #39463a;
   font-size: 11px;
   font-weight: 650;
+  transition: color 0.22s ease, transform 0.22s ease;
+}
+
+.input-wrapper:focus-within .field-label {
+  color: #456b4d;
+  transform: translateX(2px);
 }
 
 .input-group {
+  position: relative;
   min-height: 49px;
   padding: 0 14px;
   border: 1px solid #e4e7df;
   border-radius: 11px;
   background: #fff;
   box-shadow: 0 1px 2px rgba(26, 43, 30, 0.025);
+  transition: border-color 0.28s ease, background 0.28s ease, box-shadow 0.28s ease, transform 0.28s ease;
+}
+
+.input-group::after {
+  position: absolute;
+  right: 14px;
+  bottom: -1px;
+  left: 14px;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #6e8c6f, #cfaa61);
+  content: '';
+  pointer-events: none;
+  transform: scaleX(0);
+  transform-origin: center;
+  transition: transform 0.32s cubic-bezier(0.2, 0.75, 0.25, 1);
 }
 
 .input-group:hover {
   border-color: #c8d3c5;
-  transform: none;
+  transform: translateY(-1px);
   box-shadow: 0 3px 10px rgba(37, 67, 45, 0.05);
 }
 
 .input-group:focus-within {
   border-color: #65846a;
   background: #fff;
-  box-shadow: 0 0 0 3px rgba(92, 128, 97, 0.12);
-  transform: none;
+  box-shadow: 0 0 0 3px rgba(92, 128, 97, 0.1), 0 8px 18px rgba(37, 67, 45, 0.07);
+  transform: translateY(-1px);
 }
 
+.input-group:focus-within::after { transform: scaleX(1); }
+
 .input-icon { color: #98a095; }
-.input-group:focus-within .input-icon { color: #56765b; }
+.input-group:focus-within .input-icon {
+  color: #56765b;
+  filter: drop-shadow(0 2px 3px rgba(86, 118, 91, 0.16));
+}
 
 .input-group input {
   padding: 13px 0;
   color: #28372c;
   font-size: 12px;
+  transition: color 0.2s ease;
 }
 
 .input-group input::placeholder { color: #aab0a7; }
 .toggle-pass { color: #8a9389; }
-.toggle-pass:hover { color: #456b4d; background: #eff3ed; }
+.toggle-pass:hover {
+  color: #456b4d;
+  background: #eff3ed;
+  transform: rotate(-6deg) scale(1.06);
+}
 
 .password-strength {
   gap: 7px;
@@ -1968,7 +2027,7 @@ const translateError = (msg: string): string => {
 .strength-segment { height: 3px; background: #e8ebe4; }
 .strength-segment.active {
   background: linear-gradient(90deg, #789476, #cfaa61);
-  box-shadow: none;
+  box-shadow: 0 0 8px rgba(120, 148, 118, 0.2);
 }
 
 .caps-warning {
@@ -2011,6 +2070,22 @@ const translateError = (msg: string): string => {
   transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
 }
 
+.btn-login::before {
+  left: 0;
+  width: 42%;
+  transform: translateX(-150%);
+  transition: transform 0.7s ease;
+  animation: button-shine 6.5s 1.2s ease-in-out infinite;
+}
+
+.btn-login:hover:not(:disabled)::before {
+  left: 0;
+  transform: translateX(310%);
+  animation: none;
+}
+
+.btn-login:disabled::before { animation: none; }
+
 .btn-login:hover:not(:disabled) {
   filter: brightness(1.06);
   transform: translateY(-1px);
@@ -2033,6 +2108,7 @@ const translateError = (msg: string): string => {
 }
 
 .review-note svg { color: #788d71; }
+.review-note:hover svg { animation: shield-nod 0.55s ease; }
 
 .footer-text {
   margin: 20px 0 0;
@@ -2047,7 +2123,12 @@ const translateError = (msg: string): string => {
   font-weight: 700;
 }
 
-.footer-link:hover { color: #2f5739; }
+.footer-link { transition: color 0.2s ease, transform 0.2s ease; }
+.footer-link:hover {
+  display: inline-block;
+  color: #2f5739;
+  transform: translateX(2px);
+}
 
 .bottom-credit {
   position: static;
@@ -2078,7 +2159,9 @@ const translateError = (msg: string): string => {
     border-radius: 22px;
   }
 
+
   .story-panel { min-height: 250px; padding: 24px 27px 20px; }
+  .story-brand-wordmark { width: 108px; }
   .story-copy { margin-top: 31px; }
   .story-copy h2 { font-size: 32px; }
   .story-eyebrow { margin-bottom: 12px; font-size: 9px; }
@@ -2096,6 +2179,7 @@ const translateError = (msg: string): string => {
 @media (max-width: 420px) {
   .login-root { padding: 12px; }
   .story-panel { min-height: 232px; padding: 20px 21px 17px; }
+  .story-brand-wordmark { width: 100px; }
   .story-copy { margin-top: 28px; }
   .story-copy h2 { font-size: 29px; }
   .story-description { max-width: 260px; }
@@ -2114,9 +2198,50 @@ const translateError = (msg: string): string => {
 
 @media (prefers-reduced-motion: reduce) {
   .auth-shell, .login-card, .reveal-item, .error-box, .success-box,
-  .progress-fill::after, .password-strength, .strength-segment.active {
+  .progress-fill::after, .password-strength, .strength-segment.active,
+  .story-brand-wordmark, .story-copy, .field-visual, .logo-wrapper,
+  .review-note:hover svg, .btn-login::before {
     animation: none !important;
     transition-duration: 0.01ms !important;
   }
+
+  .login-card:hover, .story-brand:hover .story-brand-wordmark { transform: none; }
+  .input-group:hover, .input-group:focus-within, .toggle-pass:hover,
+  .footer-link:hover, .logo-wrapper:hover .form-brand-mark {
+    transform: none;
+  }
+  .btn-login:hover:not(:disabled), .btn-login:active:not(:disabled),
+  .btn-login:hover:not(:disabled)::before { transform: none; }
+  .input-group::after { transition-duration: 0.01ms !important; }
+}
+
+@keyframes button-shine {
+  0%, 68% { transform: translateX(-150%); }
+  82%, 100% { transform: translateX(310%); }
+}
+
+@keyframes shield-nod {
+  35% { transform: rotate(-12deg) scale(1.12); }
+  70% { transform: rotate(8deg) scale(1.05); }
+}
+
+@keyframes brand-arrive {
+  from { opacity: 0; transform: translateY(8px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes story-arrive {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes field-arrive {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes logo-arrive {
+  from { opacity: 0; transform: translateY(6px) scale(0.92); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 </style>
