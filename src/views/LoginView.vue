@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { supabase } from '../services/supabase'
 import { useMainStore } from '../stores'
+import agroniaLogo from '../assets/agronia-logo.png'
 import {
   Mail, Lock, Eye, EyeOff, Leaf, AlertCircle,
   Loader2, ShieldCheck, AlertTriangle, CheckCircle2, Sparkles
@@ -268,17 +269,7 @@ const translateError = (msg: string): string => {
 
     <!-- ═══ TARJETA PRINCIPAL ═══ -->
     <div class="login-card">
-      <!-- Logo con radar animado -->
-      <div class="logo-wrapper">
-        <div class="logo-ring ring-1"></div>
-        <div class="logo-ring ring-2"></div>
-        <div class="logo-pulse"></div>
-        <Leaf class="logo-icon" :size="30" :stroke-width="2.5" />
-      </div>
-
-      <h1 class="title">
-Agron<span class="accent">IA</span>
-      </h1>
+      <img class="login-brand-logo" :src="agroniaLogo" alt="AgronIA" />
 
       <div class="badge">
         <ShieldCheck :size="12" />
@@ -615,6 +606,14 @@ Agron<span class="accent">IA</span>
     0 0 0 1px rgba(255, 255, 255, 0.03) inset,
     inset 0 1px 0 rgba(255, 255, 255, 0.06);
   text-align: center;
+}
+
+.login-brand-logo {
+  display: block;
+  width: min(220px, 72%);
+  height: auto;
+  margin: 0 auto 20px;
+  filter: drop-shadow(0 10px 24px rgba(0, 0, 0, 0.3));
 }
 
 /* ═══════════════════════════════════════

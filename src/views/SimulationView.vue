@@ -1443,12 +1443,29 @@ onBeforeUnmount(() => {
         </button>
       </div>
 
+
+      <div class="simulation-side-stack">
+      <!-- Menú de Dron / Análisis -->
+      <div class="simulation-panel simulation-controls absolute top-6 right-6 bg-black/80 backdrop-blur-md border border-white/10 rounded-xl p-4 text-white shadow-2xl z-10 w-64 transition-all">
+        <div class="simulation-panel-heading">
+          <span class="simulation-panel-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path d="m5 10 7-4 7 4v4l-7 4-7-4v-4Zm2 1 5 3 5-3M12 6v8m-7-1-3 2m17-2 3 2" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6" />
+            </svg>
+          </span>
+          <span class="simulation-panel-title"><strong>Centro de misión</strong><small>Operaciones autónomas</small></span>
+          <span class="simulation-status" :class="droneState === 'IDLE' ? 'status-ready' : 'status-active'">
+            <span></span>
+            {{ droneState === 'IDLE' ? 'Disponible' : (droneState === 'SCANNING' ? 'Escaneando' : (droneState === 'CENTINELAS' ? 'Centinelas' : 'En misión')) }}
+          </span>
+
       <!-- Columna Izquierda Fija: Estado + Leyenda + Inspector Fijo de Planta -->
       <div class="simulation-hud-left">
         <div class="simulation-demo-badge" :aria-label="selectedFieldGeometry ? 'Geometría real del campo a escala métrica; cultivo visual demostrativo' : 'Entorno demostrativo'">
           <span class="simulation-demo-dot"></span>
           <span>{{ selectedFieldGeometry ? 'GEOMETRÍA REAL · ESCALA 1:1' : 'ENTORNO DEMOSTRATIVO · DATOS SIMULADOS' }}</span>
           <small v-if="selectedFieldGeometry">{{ fieldDimensionsLabel }} · cultivo visual demostrativo</small>
+
         </div>
 
         <!-- Leyendas -->
@@ -1570,6 +1587,10 @@ onBeforeUnmount(() => {
             </div>
           </template>
         </div>
+
+        </div>
+      </div>
+    </div>
 
         <!-- Leyenda de Sectores -->
         <div v-if="droneState !== 'IDLE' || sectorMarkers.length > 0" class="simulation-panel simulation-severity p-3.5 text-white shadow-2xl w-64 transition-all">
@@ -1883,6 +1904,39 @@ onBeforeUnmount(() => {
 
       .simulation-stage > canvas:active { cursor: grabbing; }
 
+      .simulation-side-stack {
+        position: absolute;
+        z-index: 10;
+        top: 1.5rem;
+        right: 1.5rem;
+        bottom: 1.5rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        width: min(300px, calc(100% - 3rem));
+        pointer-events: none;
+      }
+
+      .simulation-side-stack > .simulation-panel {
+        position: relative;
+        inset: auto;
+        width: 100%;
+        margin: 0;
+        pointer-events: auto;
+      }
+
+      .simulation-side-stack > .simulation-controls {
+        flex: 0 0 auto;
+        max-height: 58%;
+        overflow: auto;
+      }
+
+      .simulation-side-stack > .simulation-telemetry {
+        min-height: 0;
+        flex: 1 1 auto;
+        overflow: auto;
+
+
       .simulation-hud-left {
         position: absolute;
         z-index: 10;
@@ -1922,6 +1976,7 @@ onBeforeUnmount(() => {
       .simulation-hud-right > * {
         pointer-events: auto;
         flex-shrink: 0;
+
       }
 
       .simulation-touch-hint {
@@ -1945,8 +2000,13 @@ onBeforeUnmount(() => {
       .simulation-demo-badge {
         position: relative;
         z-index: 2;
+
+        top: 1rem;
+        left: 50%;
+
         width: fit-content;
         max-width: 100%;
+
         display: grid;
         grid-template-columns: 6px auto;
         align-items: center;
@@ -1960,7 +2020,11 @@ onBeforeUnmount(() => {
         backdrop-filter: blur(12px);
         font-size: 0.56rem;
         font-weight: 750;
+        letter-spacing: 0.08em;
+        transform: translateX(-50%);
+
         letter-spacing: 0.06em;
+
         pointer-events: none;
       }
 
@@ -2081,6 +2145,16 @@ onBeforeUnmount(() => {
         border-radius: 0;
       }
 
+      .simulation-stage:fullscreen > .simulation-side-stack {
+        inset: 1rem 1rem 1rem auto;
+        width: min(340px, calc(100vw - 2rem));
+      }
+
+      .simulation-stage:fullscreen > .simulation-legend {
+        position: absolute;
+        inset: 1rem auto auto 1rem;
+        width: min(270px, calc(100vw - 2rem));
+
       .simulation-stage:fullscreen > .simulation-hud-left {
         top: 1rem;
         left: 1rem;
@@ -2092,7 +2166,16 @@ onBeforeUnmount(() => {
         top: 1rem;
         right: 1rem;
         bottom: 1rem;
+
         max-height: calc(100dvh - 2rem);
+      }
+
+      .simulation-stage:fullscreen > .simulation-severity {
+        position: absolute;
+        inset: auto auto 4.5rem 1rem;
+        width: min(270px, calc(100vw - 2rem));
+        max-height: calc(100dvh - 7rem);
+        overflow: auto;
       }
 
       .simulation-stage:fullscreen > .simulation-camera-tools {
@@ -2332,12 +2415,25 @@ onBeforeUnmount(() => {
         .desktop-camera-hint { display: none; }
         .mobile-camera-hint { display: inline; }
 
+        .simulation-side-stack {
+          position: relative;
+          inset: auto;
+          z-index: 1;
+          width: 100%;
+          margin: 0;
+          order: 1;
+          pointer-events: auto;
+        }
+
+        .simulation-stage > .simulation-panel {
+
         .simulation-hud-left,
         .simulation-hud-right {
           display: contents;
         }
 
         .simulation-stage .simulation-panel {
+
           position: relative;
           inset: auto;
           z-index: 1;
@@ -2352,6 +2448,7 @@ onBeforeUnmount(() => {
           left: 0.75rem;
           padding: 7px 9px;
           font-size: 0.52rem;
+          transform: none;
         }
 
         .simulation-live-badge {
@@ -2395,27 +2492,40 @@ onBeforeUnmount(() => {
           border: 0;
           border-radius: 0;
         }
+
+        .simulation-stage:fullscreen > .simulation-side-stack {
+
         .simulation-stage:fullscreen .simulation-panel {
           position: absolute;
+
           inset: 1rem 1rem auto auto;
-          width: min(300px, calc(100vw - 2rem));
-          max-height: calc(100dvh - 2rem);
+          width: min(340px, calc(100vw - 2rem));
+          max-height: 64dvh;
           overflow: auto;
           padding-top: 0.85rem;
+        }
+        .simulation-stage:fullscreen > .simulation-legend {
+          display: none;
+        }
+        .simulation-stage:fullscreen > .simulation-severity {
+          display: none;
         }
         .simulation-stage:fullscreen > .simulation-camera-tools {
           position: absolute;
           top: auto;
           right: auto;
-          bottom: 1rem;
-          left: 50%;
-          transform: translateX(-50%);
+          bottom: 0.65rem;
+          left: auto;
+          transform: none;
+          width: calc(50vw - 1rem);
+          flex-wrap: wrap;
+          justify-content: center;
         }
         .simulation-stage:fullscreen > .simulation-touch-hint {
-          top: auto;
-          bottom: 4.5rem;
-          left: 50%;
-          transform: translateX(-50%);
+          display: none;
+        }
+        .simulation-stage:fullscreen > .simulation-camera-tools {
+          left: 0.5rem;
         }
         .simulation-panel { border-radius: 14px; }
         .simulation-panel-heading { flex-wrap: wrap; }

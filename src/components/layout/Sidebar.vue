@@ -4,6 +4,7 @@ import { Home, Map, MapPin, PieChart, Database, Settings, LogOut, MonitorPlay, S
 import { useMainStore } from '../../stores'
 import { supabase } from '../../services/supabase'
 import { computed } from 'vue'
+import agroniaLogo from '../../assets/agronia-logo.png'
 
 const route = useRoute()
 const router = useRouter()
@@ -99,14 +100,8 @@ const sidebarDrones = ['gold', 'orange', 'green', 'lime', 'teal']
       </svg>
     </div>
     <div class="topo-brand h-16 flex items-center px-6 border-b border-gray-100">
-      <div class="topo-brand-content flex items-center gap-2">
-        <div class="topo-brand-mark w-8 h-8 rounded-lg bg-agron-green flex items-center justify-center shadow-sm">
-          <span class="text-white font-bold text-xl leading-none">A</span>
-        </div>
-        <div class="topo-brand-copy">
-          <span class="topo-brand-name text-xl font-bold text-gray-900 tracking-tight">AgronIA</span>
-          <span class="block text-[10px] text-gray-400 leading-none -mt-0.5">Agricultura de Precisión</span>
-        </div>
+      <div class="topo-brand-content flex items-center">
+        <img class="topo-brand-logo" :src="agroniaLogo" alt="AgronIA" />
       </div>
       <span class="topo-brand-version">FIELD</span>
     </div>
