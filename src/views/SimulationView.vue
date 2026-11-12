@@ -1444,21 +1444,6 @@ onBeforeUnmount(() => {
       </div>
 
 
-      <div class="simulation-side-stack">
-      <!-- Menú de Dron / Análisis -->
-      <div class="simulation-panel simulation-controls absolute top-6 right-6 bg-black/80 backdrop-blur-md border border-white/10 rounded-xl p-4 text-white shadow-2xl z-10 w-64 transition-all">
-        <div class="simulation-panel-heading">
-          <span class="simulation-panel-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-              <path d="m5 10 7-4 7 4v4l-7 4-7-4v-4Zm2 1 5 3 5-3M12 6v8m-7-1-3 2m17-2 3 2" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6" />
-            </svg>
-          </span>
-          <span class="simulation-panel-title"><strong>Centro de misión</strong><small>Operaciones autónomas</small></span>
-          <span class="simulation-status" :class="droneState === 'IDLE' ? 'status-ready' : 'status-active'">
-            <span></span>
-            {{ droneState === 'IDLE' ? 'Disponible' : (droneState === 'SCANNING' ? 'Escaneando' : (droneState === 'CENTINELAS' ? 'Centinelas' : 'En misión')) }}
-          </span>
-
       <!-- Columna Izquierda Fija: Estado + Leyenda + Inspector Fijo de Planta -->
       <div class="simulation-hud-left">
         <div class="simulation-demo-badge" :aria-label="selectedFieldGeometry ? 'Geometría real del campo a escala métrica; cultivo visual demostrativo' : 'Entorno demostrativo'">
@@ -1588,9 +1573,7 @@ onBeforeUnmount(() => {
           </template>
         </div>
 
-        </div>
       </div>
-    </div>
 
         <!-- Leyenda de Sectores -->
         <div v-if="droneState !== 'IDLE' || sectorMarkers.length > 0" class="simulation-panel simulation-severity p-3.5 text-white shadow-2xl w-64 transition-all">
@@ -1606,8 +1589,6 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </div>
-      </div>
-
       <!-- Columna Derecha Fija: Centro de Misión + Estado del Cultivo (sin superposición) -->
       <div class="simulation-hud-right">
         <!-- Menú de Dron / Análisis -->
@@ -1628,18 +1609,18 @@ onBeforeUnmount(() => {
           <p class="simulation-control-hint">
             {{ simulationPaused ? 'Simulación pausada.' : 'Selecciona una operación para el dron.' }}
           </p>
-          <div class="space-y-1.5">
-            <button @click="handleAction('ANALYZE')" :disabled="droneState !== 'IDLE' || simulationPaused" class="simulation-action simulation-action-primary w-full disabled:cursor-not-allowed p-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2">
+          <div class="simulation-actions">
+            <button @click="handleAction('ANALYZE')" :disabled="droneState !== 'IDLE' || simulationPaused" class="simulation-action simulation-action-wide simulation-action-primary w-full disabled:cursor-not-allowed p-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
               Analizar cultivo
             </button>
             
-            <button @click="handleAction('CENTINELAS')" :disabled="simulationPaused || (droneState !== 'IDLE' && droneState !== 'CENTINELAS')" class="simulation-action simulation-action-sentinel w-full disabled:cursor-not-allowed p-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2">
+            <button @click="handleAction('CENTINELAS')" :disabled="simulationPaused || (droneState !== 'IDLE' && droneState !== 'CENTINELAS')" class="simulation-action simulation-action-wide simulation-action-sentinel w-full disabled:cursor-not-allowed p-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
               {{ droneState === 'CENTINELAS' ? 'Detener Centinelas' : 'Activar Centinelas' }}
             </button>
             
-            <div class="grid grid-cols-2 gap-2">
+            <div class="simulation-action-row">
               <button @click="handleAction('WATER')" :disabled="droneState !== 'IDLE' || simulationPaused" class="simulation-action simulation-action-water disabled:cursor-not-allowed p-2 rounded-lg text-sm font-medium flex items-center justify-center gap-1.5">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1M4.22 4.22l.71.71m14.14 14.14l.71.71M1 12h1m20 0h1M4.22 19.78l.71-.71M18.07 5.93l.71-.71M12 6a6 6 0 100 12 6 6 0 000-12z"/></svg>
                 Regar
@@ -1904,39 +1885,6 @@ onBeforeUnmount(() => {
 
       .simulation-stage > canvas:active { cursor: grabbing; }
 
-      .simulation-side-stack {
-        position: absolute;
-        z-index: 10;
-        top: 1.5rem;
-        right: 1.5rem;
-        bottom: 1.5rem;
-        display: flex;
-        flex-direction: column;
-        gap: 0.75rem;
-        width: min(300px, calc(100% - 3rem));
-        pointer-events: none;
-      }
-
-      .simulation-side-stack > .simulation-panel {
-        position: relative;
-        inset: auto;
-        width: 100%;
-        margin: 0;
-        pointer-events: auto;
-      }
-
-      .simulation-side-stack > .simulation-controls {
-        flex: 0 0 auto;
-        max-height: 58%;
-        overflow: auto;
-      }
-
-      .simulation-side-stack > .simulation-telemetry {
-        min-height: 0;
-        flex: 1 1 auto;
-        overflow: auto;
-      }
-
       .simulation-hud-left {
         position: absolute;
         z-index: 10;
@@ -1974,6 +1922,9 @@ onBeforeUnmount(() => {
 
       .simulation-hud-left > *,
       .simulation-hud-right > * {
+        box-sizing: border-box;
+        width: 100%;
+        max-width: 100%;
         pointer-events: auto;
         flex-shrink: 0;
 
@@ -2145,11 +2096,6 @@ onBeforeUnmount(() => {
         border-radius: 0;
       }
 
-      .simulation-stage:fullscreen > .simulation-side-stack {
-        inset: 1rem 1rem 1rem auto;
-        width: min(340px, calc(100vw - 2rem));
-      }
-
       .simulation-stage:fullscreen > .simulation-legend {
         position: absolute;
         inset: 1rem auto auto 1rem;
@@ -2207,6 +2153,7 @@ onBeforeUnmount(() => {
       .simulation-panel-heading {
         display: flex;
         align-items: center;
+        flex-wrap: wrap;
         gap: 10px;
         margin-bottom: 12px;
         padding-bottom: 12px;
@@ -2226,7 +2173,7 @@ onBeforeUnmount(() => {
       }
 
       .simulation-panel-icon svg { width: 19px; height: 19px; }
-      .simulation-panel-title { min-width: 0; }
+      .simulation-panel-title { min-width: 0; flex: 1 1 5rem; }
       .simulation-panel-title strong,
       .simulation-panel-title small { display: block; }
       .simulation-panel-title strong { color: #f1f2eb; font-size: 0.86rem; }
@@ -2268,6 +2215,12 @@ onBeforeUnmount(() => {
       }
 
       .simulation-controls button:disabled { opacity: 0.48; }
+      .simulation-controls { box-sizing: border-box; min-width: 0; }
+      .simulation-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.55rem; }
+      .simulation-action-wide { grid-column: 1 / -1; }
+      .simulation-action-row { display: grid; grid-column: 1 / -1; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.55rem; }
+      .simulation-actions .simulation-action { width: 100%; min-width: 0; padding-inline: 0.45rem; line-height: 1.25; white-space: normal; }
+      .simulation-actions .simulation-action svg { flex: 0 0 auto; }
 
       .simulation-action {
         color: #f2f2e9;
@@ -2416,16 +2369,6 @@ onBeforeUnmount(() => {
         .desktop-camera-hint { display: none; }
         .mobile-camera-hint { display: inline; }
 
-        .simulation-side-stack {
-          position: relative;
-          inset: auto;
-          z-index: 1;
-          width: 100%;
-          margin: 0;
-          order: 1;
-          pointer-events: auto;
-        }
-
         .simulation-hud-left,
         .simulation-hud-right {
           display: contents;
@@ -2548,7 +2491,7 @@ onBeforeUnmount(() => {
         .simulation-demo-badge { max-width: calc(100% - 8.5rem); font-size: 0.47rem; }
         .simulation-camera-tools { gap: 2px; }
         .simulation-camera-tools button { min-width: 40px; min-height: 42px; padding-inline: 7px; }
-        .simulation-controls .grid.grid-cols-2 { gap: 0.55rem; }
+        .simulation-action-row { gap: 0.55rem; }
       }
 
       @media (prefers-reduced-motion: reduce) {
