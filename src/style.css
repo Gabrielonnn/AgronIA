@@ -111,54 +111,41 @@
   box-shadow: 12px 0 40px rgba(0, 0, 0, 0.2);
 }
 
-.topo-drone-scene {
-  position: absolute;
-  z-index: 0;
-  inset: 0;
-  pointer-events: none;
-  overflow: hidden;
-}
-
-.topo-drone {
-  position: absolute;
-  left: 0;
-  width: 42px;
-  height: 21px;
-  color: var(--drone-color);
-  opacity: 0.64;
-  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--drone-color) 75%, transparent));
-  animation: sidebar-drone-flight 19s ease-in-out infinite;
-}
-
-.topo-drone-gold { --drone-color: #ffc400; top: 16%; animation-delay: -2s; }
-.topo-drone-orange { --drone-color: #f58a00; top: 34%; animation-delay: -9s; animation-duration: 23s; }
-.topo-drone-green { --drone-color: #78b653; top: 53%; animation-delay: -14s; animation-duration: 21s; }
-.topo-drone-lime { --drone-color: #b4d18b; top: 72%; animation-delay: -6s; animation-duration: 25s; }
-.topo-drone-teal { --drone-color: #48c7a1; top: 89%; animation-delay: -18s; animation-duration: 22s; }
-.topo-drone-rotor { transform-box: fill-box; transform-origin: center; animation: sidebar-drone-rotor 0.24s ease-in-out infinite alternate; }
-.topo-drone-beacon { opacity: 0.32; transform-box: fill-box; transform-origin: center; animation: sidebar-drone-beacon 1.8s ease-out infinite; }
-
-.app-sidebar > :not(.topo-drone-scene) { position: relative; z-index: 1; }
-
 .topo-brand {
   position: relative;
-  height: 68px;
-  flex: 0 0 68px;
-  padding-inline: 18px;
+  height: 72px;
+  flex: 0 0 72px;
+  padding-inline: 15px;
   border-color: rgba(211, 189, 103, 0.16);
   background:
-    linear-gradient(100deg, rgba(255, 196, 0, 0.07), transparent 70%),
+    linear-gradient(105deg, rgba(255, 196, 0, 0.09), transparent 58%),
     rgba(4, 12, 10, 0.19);
 }
 
-.topo-brand-content { min-width: 0; }
+.topo-brand-content { min-width: 0; gap: 5px; }
 .topo-brand-logo {
   display: block;
-  width: 78px;
-  height: 60px;
+  width: 74px;
+  height: 58px;
+  flex: 0 0 74px;
   object-fit: contain;
 }
-.topo-brand-copy { min-width: 0; }
+.topo-brand-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+  color: #a9b39a;
+  font-size: 0.44rem;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  line-height: 1.1;
+}
+.topo-brand-copy strong {
+  color: #e2cb7d;
+  font-size: 0.47rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
 .topo-brand { justify-content: space-between; }
 .topo-brand-name {
   color: #efe7ca;
@@ -185,14 +172,24 @@
 .topo-menu-title { color: #a69b6d !important; }
 
 .topo-brand-version {
-  padding: 4px 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 7px;
   border: 1px solid rgba(222, 193, 103, 0.23);
-  border-radius: 6px;
+  border-radius: 8px;
   color: #dfc574;
-  background: rgba(222, 193, 103, 0.08);
+  background: linear-gradient(135deg, rgba(222, 193, 103, 0.12), rgba(222, 193, 103, 0.04));
   font-size: 0.5rem;
   font-weight: 850;
   letter-spacing: 0.12em;
+}
+.topo-brand-version i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #dfc574;
+  box-shadow: 0 0 8px rgba(223, 197, 116, 0.5);
 }
 
 .app-sidebar nav {
@@ -465,25 +462,6 @@
 @keyframes active-menu-pulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(255, 196, 0, 0.12); }
   50% { box-shadow: 0 0 0 5px rgba(255, 196, 0, 0); }
-}
-
-@keyframes sidebar-drone-flight {
-  0% { transform: translate3d(-65px, 5px, 0) rotate(-5deg); opacity: 0; }
-  12% { opacity: 0.64; }
-  35% { transform: translate3d(50px, -4px, 0) rotate(2deg); opacity: 0.76; }
-  64% { transform: translate3d(150px, 7px, 0) rotate(-2deg); opacity: 0.68; }
-  88% { opacity: 0.58; }
-  100% { transform: translate3d(275px, -5px, 0) rotate(4deg); opacity: 0; }
-}
-
-@keyframes sidebar-drone-rotor {
-  from { transform: scaleX(0.7); }
-  to { transform: scaleX(1.15); }
-}
-
-@keyframes sidebar-drone-beacon {
-  0% { opacity: 0.32; transform: scale(0.75); }
-  70%, 100% { opacity: 0; transform: scale(1.55); }
 }
 
 @media (max-width: 767px) {
