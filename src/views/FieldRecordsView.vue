@@ -318,7 +318,21 @@ const readAlert = (alert: { id: string }) => runSave(
             <select v-model="deviceForm.status" class="field-input">
               <option value="active">Activo</option><option value="inactive">Inactivo</option><option value="maintenance">Mantenimiento</option>
             </select>
-            <textarea v-model="deviceForm.configuration" rows="2" placeholder='Configuración JSON (ej. {"interval": 60})' class="field-input"></textarea>
+            <div class="device-config-field sm:col-span-2">
+              <div class="device-config-heading">
+                <label for="device-configuration">Configuración del dispositivo</label>
+                <span>JSON</span>
+              </div>
+              <textarea
+                id="device-configuration"
+                v-model="deviceForm.configuration"
+                rows="3"
+                placeholder='{"interval": 60}'
+                aria-describedby="device-configuration-hint"
+                class="field-input device-config-editor"
+              ></textarea>
+              <p id="device-configuration-hint">Opcional · agrega parámetros del sensor o dron en formato JSON.</p>
+            </div>
             <Button type="submit" variant="primary" :disabled="saving">Añadir dispositivo</Button>
           </form>
           <ul class="mt-4 divide-y divide-gray-100">
@@ -381,4 +395,64 @@ const readAlert = (alert: { id: string }) => runSave(
   font-size: 0.875rem;
 }
 .field-input:focus { outline: 2px solid #4d7c0f; outline-offset: 1px; }
+
+.device-config-field {
+  display: grid;
+  min-width: 0;
+  gap: 0.5rem;
+  padding: 0.8rem;
+  border: 1px solid rgba(196, 218, 147, 0.15);
+  border-radius: 0.8rem;
+  background: linear-gradient(145deg, rgba(28, 36, 25, 0.72), rgba(17, 24, 19, 0.72));
+}
+
+.device-config-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.device-config-heading label {
+  color: #dce5ce;
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
+.device-config-heading span {
+  padding: 0.2rem 0.45rem;
+  border: 1px solid rgba(211, 189, 103, 0.2);
+  border-radius: 5px;
+  color: #d9bd68;
+  background: rgba(211, 189, 103, 0.07);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.62rem;
+  font-weight: 700;
+}
+
+.device-config-editor {
+  width: 100%;
+  min-height: 82px;
+  border-color: rgba(196, 218, 147, 0.2);
+  border-radius: 0.65rem;
+  color: #d7e4ce;
+  background: rgba(8, 14, 10, 0.82);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+  line-height: 1.55;
+  resize: vertical;
+}
+
+.device-config-editor::placeholder { color: #78836e; }
+.device-config-editor:focus {
+  border-color: rgba(142, 180, 91, 0.55);
+  outline: 2px solid rgba(142, 180, 91, 0.25);
+  outline-offset: 1px;
+}
+
+.device-config-field > p {
+  color: #929b88;
+  font-size: 0.68rem;
+  line-height: 1.4;
+}
 </style>
