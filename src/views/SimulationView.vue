@@ -177,11 +177,16 @@ const frameCameraOnField = () => {
     controls.value.maxDistance = 180
   } else {
     const maxDimension = Math.max(geometry.widthMeters, geometry.depthMeters)
-    const fitDepth = Math.max(geometry.depthMeters, geometry.widthMeters / (camera.value.aspect || 1))
-    const distance = fitDepth / (2 * Math.tan(THREE.MathUtils.degToRad(camera.value.fov / 2))) * 1.18
+    const fieldRadius = Math.hypot(geometry.widthMeters, geometry.depthMeters) / 2
+    const aspect = Math.max(camera.value.aspect, 0.01)
+    const halfVerticalFov = THREE.MathUtils.degToRad(camera.value.fov / 2)
+    const halfFitFov = Math.atan(Math.tan(halfVerticalFov) * Math.min(aspect, 1))
+    const distance = fieldRadius / Math.sin(halfFitFov) * 1.2
     camera.value.position.set(0, distance * 0.58, distance * 0.82)
     controls.value.minDistance = 3
-    controls.value.maxDistance = Math.max(120, maxDimension * 4)
+    controls.value.maxDistance = Math.max(120, distance * 2, maxDimension * 4)
+    camera.value.far = Math.max(1000, distance * 4)
+    camera.value.updateProjectionMatrix()
   }
   controls.value.update()
 }

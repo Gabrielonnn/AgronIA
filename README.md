@@ -20,7 +20,7 @@ El registro solicita un código de seis dígitos mediante Supabase Auth y no con
 1. En **Authentication → Providers → Email**, habilita el registro por correo y la confirmación de email.
 2. En **Authentication → Email Templates → Confirm signup**, usa la plantilla de código OTP de Supabase con `{{ .Token }}` (no únicamente el enlace `{{ .ConfirmationURL }}`).
 3. Configura un proveedor SMTP propio en **Project Settings → Authentication → SMTP Settings** y verifica el dominio/remitente. El SMTP de prueba de Supabase tiene restricciones de destinatarios y límites de envío; no es adecuado para usuarios reales en producción.
-4. En **Authentication → URL Configuration**, registra las URL locales y públicas autorizadas para el proyecto.
+4. En **Authentication → URL Configuration**, registra las URL locales y públicas autorizadas para el proyecto. El flujo de recuperación redirige a `/recuperar-acceso?mode=reset`; permite esa URL en **Redirect URLs** para que el enlace de restablecimiento pueda volver a la aplicación.
 
 La aplicación nunca recibe ni almacena credenciales SMTP. Sin confirmación de email y un proveedor de correo configurados en Supabase, el envío a direcciones reales no se puede garantizar; la pantalla de registro avisa si el proyecto permite crear sesiones sin verificar el correo.
 

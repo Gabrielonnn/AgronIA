@@ -18,6 +18,12 @@ const router = createRouter({
       meta: { public: true }
     },
     {
+      path: '/recuperar-acceso',
+      name: 'recover-access',
+      component: () => import('../views/RecoveryView.vue'),
+      meta: { public: true, allowAuthenticated: true }
+    },
+    {
       path: '/',
       name: 'home',
       component: () => import('../views/HomeView.vue'),
@@ -110,7 +116,7 @@ router.beforeEach(async (to) => {
     return { name: 'login' }
   }
 
-  if (to.meta.public && store.user) {
+  if (to.meta.public && store.user && !to.meta.allowAuthenticated) {
     return { name: 'home' }
   }
 

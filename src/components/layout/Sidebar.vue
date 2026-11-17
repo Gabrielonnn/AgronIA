@@ -77,40 +77,19 @@ const roleColor = computed(() => {
   return 'text-blue-600'
 })
 
-const sidebarDrones = ['gold', 'orange', 'green', 'lime', 'teal']
 </script>
 
 <template>
   <aside class="app-sidebar topo-sidebar w-64 bg-white border-r border-gray-200 h-screen flex flex-col" aria-label="Navegación principal">
-    <div class="topo-drone-scene" aria-hidden="true">
-      <svg
-        v-for="drone in sidebarDrones"
-        :key="drone"
-        class="topo-drone"
-        :class="`topo-drone-${drone}`"
-        viewBox="0 0 64 32"
-        fill="none"
-      >
-        <ellipse class="topo-drone-rotor" cx="12" cy="10" rx="10" ry="2" fill="currentColor" opacity="0.62" />
-        <ellipse class="topo-drone-rotor" cx="52" cy="10" rx="10" ry="2" fill="currentColor" opacity="0.62" />
-        <path d="M24 14 12 10m28 4 12-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
-        <rect x="24" y="12" width="16" height="8" rx="3" fill="#17200f" stroke="currentColor" stroke-width="1.5" />
-        <circle cx="32" cy="22" r="3" fill="currentColor" />
-        <circle class="topo-drone-beacon" cx="32" cy="22" r="6" fill="currentColor" />
-      </svg>
-    </div>
     <div class="topo-brand h-16 flex items-center px-6 border-b border-gray-100">
       <div class="topo-brand-content flex items-center">
         <img class="topo-brand-logo" :src="agroniaLogo" alt="AgronIA" />
+        <div class="topo-brand-copy" aria-hidden="true">
+          <span>AGRICULTURA</span>
+          <strong>DE PRECISIÓN</strong>
+        </div>
       </div>
-      <span class="topo-brand-version">FIELD</span>
-      <span class="topo-brand-drone" aria-hidden="true">
-        <svg viewBox="0 0 48 32" fill="none">
-          <path d="M24 13 13 5M24 13l11-8M24 18 13 27m11-9 11 9" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
-          <rect x="18" y="12" width="12" height="8" rx="3" fill="currentColor" />
-          <path class="topo-drone-rotor" d="M7 5h7m20 0h7M7 27h7m20 0h7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" />
-        </svg>
-      </span>
+      <span class="topo-brand-version"><i aria-hidden="true"></i> FIELD</span>
     </div>
     
     <nav class="topo-navigation flex-1 overflow-y-auto py-4" aria-label="Secciones de AgronIA">
