@@ -1,10 +1,20 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { onMounted, ref } from 'vue'
 import { Activity, Bug, Droplets, Flame, Layers, Leaf, ScanSearch, Thermometer } from 'lucide-vue-next'
 import MultispectralPlantScanner from '../components/diagnosis/MultispectralPlantScanner.vue'
+import { checkAgroVisionHealth, resolveDiagnosisBaseUrl } from '../services/plantDiagnosis'
 
-const endpoint = import.meta.env.VITE_PLANT_DIAGNOSIS_API_URL?.trim() ?? ''
-const hasEndpoint = computed(() => endpoint.length > 0)
+const baseUrl = resolveDiagnosisBaseUrl(import.meta.env.VITE_PLANT_DIAGNOSIS_API_URL)
+const backendOnline = ref(false)
+const onnxReady = ref(false)
+
+onMounted(async () => {
+  const health = await checkAgroVisionHealth(baseUrl)
+  if (health) {
+    backendOnline.value = true
+    onnxReady.value = Boolean(health.onnx_ready)
+  }
+})
 </script>
 
 <template>
@@ -14,8 +24,12 @@ const hasEndpoint = computed(() => endpoint.length > 0)
         <div class="diagnosis-hero-meta">
           <p class="diagnosis-eyebrow"><span></span> AGRONOMÍA DE PRECISIÓN · 01</p>
           <span class="diagnosis-engine-status">
-            <i :class="{ 'is-hybrid': hasEndpoint }"></i>
-            {{ hasEndpoint ? 'Motor híbrido' : 'Motor local' }}
+            <i class="is-hybrid"></i>
+            {{
+              onnxReady
+                ? 'AgroVision ONNX + Servidor IA Activo'
+                : 'AgroVision ONNX + PlantLens (Web AI)'
+            }}
           </span>
         </div>
 

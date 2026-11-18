@@ -4,6 +4,9 @@ import { defineConfig } from 'vite'
 
 export default defineConfig({
   base: '/AgronIA/',
+  optimizeDeps: {
+    exclude: ['onnxruntime-web'],
+  },
   plugins: [
     vue(),
     tailwindcss(),
