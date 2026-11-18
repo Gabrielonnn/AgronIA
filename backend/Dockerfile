@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app.py agrovision_engine.py class_indices.json THIRD_PARTY_NOTICES.md ./
+COPY app.py agrovision_engine.py ./
 COPY models ./models
 
 EXPOSE 8000

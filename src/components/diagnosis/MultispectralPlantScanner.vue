@@ -10,7 +10,6 @@ import {
   Crosshair,
   Download,
   Droplets,
-  ExternalLink,
   Eye,
   Flame,
   ImagePlus,
@@ -21,7 +20,6 @@ import {
   Play,
   RefreshCw,
   ScanSearch,
-  Search,
   ShieldCheck,
   Sliders,
   Sparkles,
@@ -40,21 +38,12 @@ import {
 } from '../../services/multispectralPlantEngine'
 import {
   analyzeAgroVisionBackend,
-  analyzeMultispectralBackend,
   checkAgroVisionHealth,
   resolveDiagnosisBaseUrl,
   type AgroVisionAnalysis,
   type AgroVisionHealthStatus,
-  type DetectedPlantBox,
-  type PlantDiagnosis
+  type DetectedPlantBox
 } from '../../services/plantDiagnosis'
-import {
-  identifyPlantSpecies,
-  searchBotanicalTaxonOnline,
-  submitImageToGoogleLens,
-  type BotanicalCandidate,
-  type PlantSpeciesIdentificationResult
-} from '../../services/plantSpeciesIdentification'
 import {
   browserAgroVisionEngine,
   type BrowserEngineStatus
@@ -66,7 +55,7 @@ export interface MultispectralCapturePayload {
   analysis: MultispectralFrameAnalysis
   preset: SimulationPresetId
   spectrumMode: SpectrumMode
-  species?: BotanicalCandidate
+  agrovision?: AgroVisionAnalysis | null
 }
 
 const props = withDefaults(
@@ -87,10 +76,8 @@ const emit = defineEmits<{
 const maxImageSize = 10 * 1024 * 1024
 const configuredEndpoint = import.meta.env.VITE_PLANT_DIAGNOSIS_API_URL?.trim() ?? ''
 const agrovisionBaseUrl = resolveDiagnosisBaseUrl(configuredEndpoint)
-const endpoint = configuredEndpoint || (agrovisionBaseUrl ? `${agrovisionBaseUrl}/predict` : '')
 const backendOnline = ref(false)
 const backendCapabilities = ref<AgroVisionHealthStatus | null>(null)
-const hasEndpoint = computed(() => backendOnline.value || endpoint.length > 0)
 
 // Media & DOM refs
 const fileInput = ref<HTMLInputElement | null>(null)
@@ -138,9 +125,8 @@ const isDraggingBox = ref(false)
 const dragStartNorm = ref<{ x: number; y: number } | null>(null)
 const dragCurrentNorm = ref<{ x: number; y: number } | null>(null)
 
-// Live analysis & backend state
+// Live analysis & AgroVision ONNX engine state
 const liveAnalysis = ref<MultispectralFrameAnalysis | null>(null)
-const backendDiagnosis = ref<PlantDiagnosis | null>(null)
 const browserEngineStatus = ref<BrowserEngineStatus>(browserAgroVisionEngine.status)
 const isAnalyzing = ref(false)
 let unsubscribeEngineStatus: (() => void) | null = null
@@ -149,15 +135,7 @@ const statusMessage = ref('')
 const errorMessage = ref('')
 const fpsCount = ref(30)
 
-// Botanical Species & Google Lens identification state
-const speciesResult = ref<PlantSpeciesIdentificationResult | null>(null)
-const isIdentifyingSpecies = ref(false)
-const autoConnectGoogleLens = ref(false)
-const customSpeciesQuery = ref('')
-const isSearchingTaxon = ref(false)
-
 let rafId = 0
-let cameraSpeciesTimer: number | null = null
 let realTimeLoopTimer: number | null = null
 let agrovisionInFlight = false
 let lastFrameTime = performance.now()
@@ -393,10 +371,6 @@ function resumeLiveCamera() {
 
 function stopCamera() {
   stopRealTimeLoop()
-  if (cameraSpeciesTimer !== null) {
-    window.clearInterval(cameraSpeciesTimer)
-    cameraSpeciesTimer = null
-  }
   cameraStream.value?.getTracks().forEach(track => {
     track.onended = null
     track.stop()
@@ -439,111 +413,14 @@ function activateSyntheticDemo() {
   hasAnalyzedImage.value = true
   errorMessage.value = ''
   renderSinglePass(performance.now(), true)
-  void runSpeciesIdentification(outputCanvas.value, 'solanum_lycopersicum_demo')
+  void runAgroVisionAnalysis({ silent: true })
   statusMessage.value =
     'Modo Planta Interactiva activo: simulando captura óptica y espectros RGB, NDVI y Térmico a 30 FPS.'
-}
-
-async function runSpeciesIdentification(
-  src?: HTMLVideoElement | HTMLImageElement | HTMLCanvasElement | null,
-  hintName = ''
-) {
-  isIdentifyingSpecies.value = true
-  try {
-    const activeSrc =
-      src ??
-      (sourceMode.value === 'camera' && cameraActive.value
-        ? videoElement.value
-        : sourceMode.value === 'image'
-          ? loadedImage.value
-          : outputCanvas.value)
-
-    const result = await identifyPlantSpecies({
-      source: activeSrc,
-      fileName: hintName || uploadedFileName.value,
-      backendDiseaseLabel: backendDiagnosis.value?.disease || '',
-      boundingBox: liveAnalysis.value?.boundingBox ?? null,
-      polygonContour: liveAnalysis.value?.polygonContour ?? [],
-      plantCoveragePercent: liveAnalysis.value?.plantCoveragePercent ?? 35
-    })
-    speciesResult.value = result
-  } finally {
-    isIdentifyingSpecies.value = false
-  }
-}
-
-async function connectAndUploadToGoogleLens() {
-  errorMessage.value = ''
-  let sourceToSend: File | HTMLVideoElement | HTMLImageElement | HTMLCanvasElement | null = null
-
-  if (sourceMode.value === 'image' && selectedFile.value) {
-    sourceToSend = selectedFile.value
-  } else if (sourceMode.value === 'camera' && cameraActive.value && videoElement.value) {
-    sourceToSend = videoElement.value
-  } else if (loadedImage.value) {
-    sourceToSend = loadedImage.value
-  } else if (outputCanvas.value) {
-    sourceToSend = outputCanvas.value
-  }
-
-  if (!sourceToSend) {
-    errorMessage.value = 'Sube una imagen o enciende la cámara para enviarla a Google Lens.'
-    return
-  }
-
-  const submitted = await submitImageToGoogleLens(sourceToSend)
-  if (submitted) {
-    statusMessage.value =
-      'Imagen enviada a Google Lens para identificación visual de especie y nombre botánico.'
-  }
-}
-
-function selectSpeciesCandidate(candidate: BotanicalCandidate) {
-  if (!speciesResult.value) return
-  const currentPrimary = speciesResult.value.primary
-  const remaining = speciesResult.value.alternatives.filter(alt => alt.id !== candidate.id)
-  if (currentPrimary.id !== candidate.id) {
-    remaining.unshift(currentPrimary)
-  }
-  speciesResult.value = {
-    ...speciesResult.value,
-    primary: candidate,
-    alternatives: remaining.slice(0, 3)
-  }
-  statusMessage.value = `Planta seleccionada: ${candidate.commonName} (${candidate.scientificName}) · ${candidate.plantType}.`
-}
-
-async function handleCustomTaxonSearch() {
-  const query = customSpeciesQuery.value.trim()
-  if (!query) return
-  isSearchingTaxon.value = true
-  try {
-    const found = await searchBotanicalTaxonOnline(query)
-    if (found && speciesResult.value) {
-      speciesResult.value = {
-        ...speciesResult.value,
-        identifiedAt: new Date().toLocaleTimeString(),
-        source: 'google-lens-sync',
-        primary: found,
-        alternatives: [
-          speciesResult.value.primary,
-          ...speciesResult.value.alternatives.filter(a => a.id !== found.id)
-        ].slice(0, 3)
-      }
-      customSpeciesQuery.value = ''
-      statusMessage.value = `Especie sincronizada: ${found.commonName} (${found.scientificName}) · ${found.plantType}.`
-    } else {
-      errorMessage.value = `No se encontró el taxón "${query}". Prueba con el nombre común o científico (ej. Tomate, Monstera, Rosa, Maíz).`
-    }
-  } finally {
-    isSearchingTaxon.value = false
-  }
 }
 
 function loadFileImage(file: File) {
   errorMessage.value = ''
   statusMessage.value = ''
-  backendDiagnosis.value = null
 
   if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
     errorMessage.value = 'Selecciona una imagen en formato JPG, PNG o WebP.'
@@ -574,11 +451,8 @@ function loadFileImage(file: File) {
     hasAnalyzedImage.value = true
     renderSinglePass(performance.now(), true)
     await runAgroVisionAnalysis({ fileOverride: file })
-    if (autoConnectGoogleLens.value) {
-      void submitImageToGoogleLens(file)
-      statusMessage.value = `Foto "${file.name}" analizada con AgroVision AI y enviada a Google Lens.`
-    } else if (agrovisionResult.value) {
-      statusMessage.value = `Foto "${file.name}" analizada: ${agrovisionResult.value.crop} · ${agrovisionResult.value.health_status}.`
+    if (agrovisionResult.value) {
+      statusMessage.value = `Foto "${file.name}" analizada con AgroVision ONNX: ${agrovisionResult.value.crop} · ${agrovisionResult.value.health_status}.`
     } else {
       statusMessage.value = `Foto "${file.name}" cargada y analizada.`
     }
@@ -782,9 +656,7 @@ function renderSinglePass(now: number, forceUpdate = false) {
 
   const hudLabel = agrovisionResult.value
     ? `${agrovisionResult.value.crop} · ${agrovisionResult.value.health_status}`
-    : speciesResult.value
-      ? `${speciesResult.value.primary.commonName} (${speciesResult.value.primary.scientificName}) · ${speciesResult.value.primary.plantType}`
-      : undefined
+    : undefined
 
   const analysis = processMultispectralFrame(activeSource, canvas, {
     spectrumMode: spectrumMode.value,
@@ -891,34 +763,6 @@ function applyAgroVisionResult(res: AgroVisionAnalysis) {
   if (!customCropBox.value) {
     selectedPlantId.value = res.selected_plant_id || (detectedPlants.value[0]?.id ?? null)
   }
-
-  backendDiagnosis.value = {
-    disease: res.disease,
-    confidence: res.confidence,
-    cause: res.cause,
-    recommendation: res.recommendation,
-    engineMode: res.engine_mode,
-    ndviMean: res.ndvi_mean,
-    tempMeanC: res.temp_mean_c,
-    cwsi: res.cwsi,
-    plantCoveragePercent: res.plant_coverage_percent
-  }
-
-  if (res.lens && speciesResult.value) {
-    speciesResult.value = {
-      ...speciesResult.value,
-      identifiedAt: new Date().toLocaleTimeString(),
-      source: 'google-lens-sync',
-      primary: {
-        ...speciesResult.value.primary,
-        commonName: res.lens.plant_name,
-        scientificName: res.lens.scientific_name,
-        plantType: res.in_trained_dataset ? 'Cultivo Agrícola Entrenado' : 'Especie Identificada (Lens AI)',
-        confidence: Math.min(1, res.lens.confidence_pct / 100),
-        summary: res.lens.wiki_summary || res.lens.care
-      }
-    }
-  }
 }
 
 async function runAgroVisionAnalysis(opts?: {
@@ -952,9 +796,6 @@ async function runAgroVisionAnalysis(opts?: {
           ambientTempC: ambientTempC.value
         })
         applyAgroVisionResult(res)
-        if (!speciesResult.value) {
-          await runSpeciesIdentification(undefined, uploadedFileName.value)
-        }
         return
       } catch {
         backendOnline.value = false
@@ -976,14 +817,6 @@ async function runAgroVisionAnalysis(opts?: {
         plantCoveragePercent: liveAnalysis.value?.plantCoveragePercent
       })
       applyAgroVisionResult(res)
-      if (!speciesResult.value) {
-        await runSpeciesIdentification(undefined, uploadedFileName.value)
-      }
-      return
-    }
-
-    if (!opts?.silent) {
-      await runSpeciesIdentification(undefined, uploadedFileName.value)
     }
   } finally {
     agrovisionInFlight = false
@@ -1006,43 +839,8 @@ async function analyzeImage() {
       statusMessage.value = agrovisionResult.value.in_trained_dataset
         ? `Diagnóstico AgroVision ONNX completado: ${agrovisionResult.value.crop} — ${agrovisionResult.value.health_status} (${agrovisionResult.value.inference_time_ms} ms).`
         : `Análisis PlantLens completado: ${agrovisionResult.value.crop} — ${agrovisionResult.value.health_status}.`
-      return
-    }
-
-    if (hasEndpoint.value) {
-      try {
-        backendDiagnosis.value = await analyzeMultispectralBackend(
-          endpoint,
-          imageToSend,
-          activePreset.value,
-          presetIntensity.value,
-          ambientTempC.value
-        )
-        await runSpeciesIdentification(undefined, uploadedFileName.value)
-        statusMessage.value =
-          'Análisis completado: especie identificada, área total segmentada y datos multiespectrales (RGB, NDVI, Térmico) generados.'
-        return
-      } catch {
-        // Fallback seamlessly to local AI + Multispectral engine when backend is unreachable
-      }
-    }
-
-    await runSpeciesIdentification(undefined, uploadedFileName.value)
-
-    if (liveAnalysis.value) {
-      backendDiagnosis.value = {
-        disease: liveAnalysis.value.aiClassification.label,
-        confidence: liveAnalysis.value.aiClassification.confidence,
-        cause: liveAnalysis.value.aiClassification.cause,
-        recommendation: liveAnalysis.value.aiClassification.recommendation,
-        engineMode: 'local-multispectral-ai',
-        ndviMean: liveAnalysis.value.ndvi.mean,
-        tempMeanC: liveAnalysis.value.thermal.meanTempC,
-        cwsi: liveAnalysis.value.thermal.cwsi,
-        plantCoveragePercent: liveAnalysis.value.plantCoveragePercent
-      }
-      statusMessage.value =
-        'Análisis completado en modo local: tipo y nombre de planta identificados junto con datos RGB, NDVI y Térmicos.'
+    } else {
+      errorMessage.value = 'No se pudo obtener una imagen válida del lienzo para AgroVision ONNX.'
     }
   } catch (error) {
     errorMessage.value =
@@ -1055,19 +853,7 @@ async function analyzeImage() {
 function selectPresetFromTable(presetId: SimulationPresetId) {
   activePreset.value = presetId
   renderSinglePass(performance.now(), true)
-  if (liveAnalysis.value) {
-    backendDiagnosis.value = {
-      disease: liveAnalysis.value.aiClassification.label,
-      confidence: liveAnalysis.value.aiClassification.confidence,
-      cause: liveAnalysis.value.aiClassification.cause,
-      recommendation: liveAnalysis.value.aiClassification.recommendation,
-      engineMode: 'local-multispectral-ai',
-      ndviMean: liveAnalysis.value.ndvi.mean,
-      tempMeanC: liveAnalysis.value.thermal.meanTempC,
-      cwsi: liveAnalysis.value.thermal.cwsi,
-      plantCoveragePercent: liveAnalysis.value.plantCoveragePercent
-    }
-  }
+  statusMessage.value = `Preset espectral "${SIMULATION_PRESETS[presetId].name}" aplicado sobre la vista multiespectral.`
 }
 
 async function downloadSnapshotPng() {
@@ -1084,14 +870,13 @@ async function downloadSnapshotPng() {
 function exportTelemetryCsv() {
   const a = liveAnalysis.value
   if (!a) return
-  const sp = speciesResult.value?.primary
+  const ag = agrovisionResult.value
   const rows = [
     [
       'Timestamp',
       'Nombre Planta',
       'Nombre Cientifico',
-      'Tipo de Planta',
-      'Familia Botanica',
+      'Origen Deteccion',
       'Modo Espectral',
       'Preset Simulado',
       'Intensidad Preset (%)',
@@ -1114,21 +899,20 @@ function exportTelemetryCsv() {
       'Humedad Foliar (%)',
       'Clorosis (%)',
       'Necrosis (%)',
-      'Diagnostico IA',
+      'Diagnostico AgroVision',
       'Recomendacion'
     ],
     [
       new Date().toISOString(),
-      sp?.commonName || 'En identificacion',
-      sp?.scientificName || 'Plantae',
-      sp?.plantType || 'Cultivo Vegetal',
-      sp?.family || 'Angiospermae',
+      ag?.lens?.plant_name || ag?.crop || 'Pendiente de analisis',
+      ag?.lens?.scientific_name || (ag?.in_trained_dataset ? ag.crop : 'Plantae'),
+      ag ? ag.engine_mode : 'Multiespectral',
       spectrumMode.value.toUpperCase(),
       currentPresetConfig.value.name,
       Math.round(presetIntensity.value * 100),
       a.plantDetected ? 'SI' : 'NO',
       a.plantCoveragePercent,
-      Math.round(a.detectionConfidence * 100),
+      ag ? Math.round(ag.confidence * 100) : Math.round(a.detectionConfidence * 100),
       a.ndvi.mean,
       a.ndvi.min,
       a.ndvi.max,
@@ -1145,8 +929,8 @@ function exportTelemetryCsv() {
       a.rgbMetrics.foliarMoisturePct,
       a.rgbMetrics.chlorosisPct,
       a.rgbMetrics.necrosisPct,
-      a.aiClassification.label,
-      a.aiClassification.recommendation
+      ag?.disease_es || 'Pendiente de analisis AgroVision',
+      ag?.recommendation || 'Analizar muestra con AgroVision ONNX + PlantLens'
     ]
   ]
 
@@ -1160,7 +944,7 @@ function exportTelemetryCsv() {
   link.download = `agronia-telemetria-multiespectral-${new Date().toISOString().slice(0, 10)}.csv`
   link.click()
   setTimeout(() => URL.revokeObjectURL(url), 0)
-  statusMessage.value = 'Reporte CSV de telemetría multiespectral y especie botánica exportado.'
+  statusMessage.value = 'Reporte CSV de telemetría multiespectral y diagnóstico AgroVision exportado.'
 }
 
 async function sendToFieldScouting() {
@@ -1174,10 +958,10 @@ async function sendToFieldScouting() {
       analysis: liveAnalysis.value,
       preset: activePreset.value,
       spectrumMode: spectrumMode.value,
-      species: speciesResult.value?.primary
+      agrovision: agrovisionResult.value
     })
     statusMessage.value =
-      'Captura multiespectral, especie botánica y diagnóstico transferidos al formulario de Registro de Campo.'
+      'Captura multiespectral y diagnóstico AgroVision transferidos al formulario de Registro de Campo.'
   } catch (error) {
     errorMessage.value =
       error instanceof Error ? error.message : 'No se pudo transferir la captura.'
@@ -1198,8 +982,8 @@ onMounted(() => {
     }
   })
   window.setTimeout(() => {
-    void runSpeciesIdentification(outputCanvas.value, 'solanum_lycopersicum_demo')
-  }, 150)
+    void runAgroVisionAnalysis({ silent: true })
+  }, 250)
 })
 
 onBeforeUnmount(() => {
@@ -1332,17 +1116,6 @@ onBeforeUnmount(() => {
               :class="realTimeMode && cameraActive && !isCameraFrozen ? 'animate-pulse text-emerald-300' : 'text-stone-400'"
             />
             <span>{{ realTimeMode ? 'Tiempo Real: ON' : 'Tiempo Real (Opcional)' }}</span>
-          </button>
-
-          <!-- GOOGLE LENS DIRECT UPLOAD BUTTON -->
-          <button
-            type="button"
-            class="inline-flex items-center gap-1.5 rounded-xl border border-sky-400/40 bg-sky-500/15 px-3 py-2 text-xs font-bold text-sky-200 shadow transition hover:bg-sky-500/25"
-            title="Subir imagen o fotograma actual de la cámara a Google Lens Web"
-            @click="connectAndUploadToGoogleLens"
-          >
-            <ExternalLink class="h-4 w-4 text-sky-300" />
-            Google Lens Web
           </button>
 
           <!-- Camera Device Selector -->
@@ -1872,26 +1645,27 @@ onBeforeUnmount(() => {
               </div>
               <div>
                 <span class="text-[10px] font-bold uppercase tracking-widest text-sky-300">
-                  GOOGLE LENS · TAXONOMÍA Y RECONOCIMIENTO BOTÁNICO
+                  PLANTLENS AI · IDENTIFICACIÓN BOTÁNICA Y CUIDADOS
                 </span>
                 <h3 class="text-base font-semibold text-white">
-                  Tipo de Planta y Nombre de la Especie
+                  Especie, Ficha Botánica y Recomendaciones
                 </h3>
               </div>
             </div>
 
             <button
               type="button"
-              class="inline-flex items-center gap-1.5 rounded-xl border border-sky-400/40 bg-sky-500/20 px-3 py-1.5 text-xs font-bold text-sky-100 transition hover:bg-sky-500/30"
-              @click="connectAndUploadToGoogleLens"
+              :disabled="!canAnalyze"
+              class="inline-flex items-center gap-1.5 rounded-xl border border-sky-400/40 bg-sky-500/20 px-3 py-1.5 text-xs font-bold text-sky-100 transition hover:bg-sky-500/30 disabled:opacity-50"
+              @click="runAgroVisionAnalysis({ forceLens: true })"
             >
-              <ExternalLink class="h-3.5 w-3.5 text-sky-300" />
-              {{ cameraActive ? 'Subir cámara a Google Lens' : 'Abrir en Google Lens' }}
+              <Sparkles class="h-3.5 w-3.5 text-sky-300" />
+              Consultar PlantLens AI
             </button>
           </div>
 
-          <div v-if="speciesResult" class="mt-3.5 space-y-3">
-            <!-- Primary Identified Plant Banner (PlantLens AI o Motor Local) -->
+          <div v-if="agrovisionResult" class="mt-3.5 space-y-3">
+            <!-- Primary Identified Plant Banner (AgroVision ONNX + PlantLens AI) -->
             <div
               class="flex flex-col justify-between gap-3 rounded-xl border border-sky-300/25 bg-black/35 p-3.5 sm:flex-row sm:items-center"
             >
@@ -1901,58 +1675,39 @@ onBeforeUnmount(() => {
                     class="rounded-md bg-sky-400/20 px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wider text-sky-200"
                   >
                     {{
-                      agrovisionResult?.lens
-                        ? 'PlantLens AI Integrado'
-                        : agrovisionResult?.in_trained_dataset
+                      agrovisionResult.lens
+                        ? 'PlantLens AI Integrado (CLIP + Wikipedia)'
+                        : agrovisionResult.in_trained_dataset
                           ? 'Cultivo del Dataset Entrenado'
-                          : speciesResult.primary.plantType
+                          : 'Evaluación AgroVision AI'
                     }}
-                  </span>
-                  <span
-                    v-if="!agrovisionResult?.lens"
-                    class="rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-semibold text-stone-300"
-                  >
-                    Familia: {{ speciesResult.primary.family }}
                   </span>
                   <span
                     class="rounded-md bg-emerald-400/15 px-2 py-0.5 text-[10px] font-bold text-emerald-300"
                   >
                     Coincidencia
                     {{
-                      agrovisionResult?.lens
+                      agrovisionResult.lens
                         ? `${agrovisionResult.lens.confidence_pct}%`
-                        : `${Math.round(speciesResult.primary.confidence * 100)}%`
+                        : `${Math.round(agrovisionResult.confidence * 100)}%`
                     }}
                   </span>
                 </div>
 
                 <h4 class="text-xl font-extrabold text-white">
-                  {{ agrovisionResult?.lens ? agrovisionResult.lens.plant_name : speciesResult.primary.commonName }}
+                  {{ agrovisionResult.lens ? agrovisionResult.lens.plant_name : agrovisionResult.crop }}
                 </h4>
-                <p class="text-xs italic text-sky-200/90">
+                <p v-if="agrovisionResult.lens?.scientific_name" class="text-xs italic text-sky-200/90">
                   Nombre científico:
-                  <strong class="font-semibold">
-                    {{
-                      agrovisionResult?.lens
-                        ? agrovisionResult.lens.scientific_name
-                        : speciesResult.primary.scientificName
-                    }}
-                  </strong>
+                  <strong class="font-semibold">{{ agrovisionResult.lens.scientific_name }}</strong>
                 </p>
               </div>
-
-              <img
-                v-if="speciesResult.primary.thumbnailUrl && !agrovisionResult?.lens"
-                :src="speciesResult.primary.thumbnailUrl"
-                :alt="speciesResult.primary.commonName"
-                class="h-16 w-16 shrink-0 rounded-xl border border-white/15 object-cover shadow"
-              />
             </div>
 
-            <!-- Cuidados específicos de PlantLens (Luz, Riego, Sustrato) cuando hay planta detectada -->
+            <!-- Cuidados específicos de PlantLens (Luz, Riego, Sustrato) -->
             <div
-              v-if="agrovisionResult?.lens"
-              class="rounded-xl border border-sky-300/20 bg-black/30 p-3 text-xs text-stone-200 space-y-2"
+              v-if="agrovisionResult.lens"
+              class="space-y-2 rounded-xl border border-sky-300/20 bg-black/30 p-3 text-xs text-stone-200"
             >
               <div class="grid gap-2 sm:grid-cols-2">
                 <div class="rounded-lg bg-white/5 p-2.5">
@@ -1985,64 +1740,36 @@ onBeforeUnmount(() => {
               </p>
             </div>
 
-            <!-- Morphological & Botanical Summary (fallback o complemento) -->
-            <div v-else class="rounded-xl border border-white/10 bg-black/25 p-3 text-xs text-stone-300 space-y-1.5">
-              <p class="leading-relaxed">
-                {{ speciesResult.primary.summary }}
-              </p>
-              <div class="grid gap-1.5 pt-1 text-[11px] sm:grid-cols-2">
-                <div class="rounded-lg bg-white/5 px-2.5 py-1.5">
-                  <span class="block text-[10px] uppercase text-stone-400">Morfología Foliar Detectada</span>
-                  <strong class="text-stone-100">{{ speciesResult.primary.leafMorphology }}</strong>
-                </div>
-                <div class="rounded-lg bg-white/5 px-2.5 py-1.5">
-                  <span class="block text-[10px] uppercase text-stone-400">Parámetros Ideales de Especie</span>
-                  <strong class="text-emerald-300">
-                    NDVI {{ speciesResult.primary.idealNdviRange[0] }}–{{ speciesResult.primary.idealNdviRange[1] }}
-                    · {{ speciesResult.primary.idealTempRangeC[0] }}–{{ speciesResult.primary.idealTempRangeC[1] }}°C
-                    · Riego {{ speciesResult.primary.waterDemand }}
-                  </strong>
-                </div>
-              </div>
-            </div>
-
-            <!-- Alternative Species Candidates -->
-            <div v-if="speciesResult.alternatives.length > 0" class="flex flex-wrap items-center gap-1.5 text-[11px]">
-              <span class="text-stone-400">Otras posibles especies:</span>
-              <button
-                v-for="alt in speciesResult.alternatives"
-                :key="alt.id"
-                type="button"
-                class="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 font-medium text-stone-200 transition hover:border-sky-300/40 hover:bg-sky-400/15 hover:text-white"
-                @click="selectSpeciesCandidate(alt)"
-              >
-                {{ alt.commonName }} ({{ Math.round(alt.confidence * 100) }}%)
-              </button>
-            </div>
-
-            <!-- Live Taxon Search / Sync with Google Lens Result -->
-            <form
-              class="flex items-center gap-2 pt-1"
-              @submit.prevent="handleCustomTaxonSearch"
+            <div
+              v-else
+              class="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-black/25 p-3 text-xs text-stone-300"
             >
-              <div class="relative flex-1">
-                <Search class="pointer-events-none absolute left-2.5 top-2 h-3.5 w-3.5 text-stone-400" />
-                <input
-                  v-model="customSpeciesQuery"
-                  type="text"
-                  placeholder="¿Google Lens indicó otra especie? Escríbela aquí (ej. Monstera, Maíz, Bugambilia)…"
-                  class="w-full rounded-xl border border-white/15 bg-black/40 py-1.5 pl-8 pr-3 text-xs text-white placeholder-stone-400 focus:border-sky-400 focus:outline-none"
-                />
-              </div>
+              <span>
+                Cultivo clasificado directamente por el modelo fitosanitario entrenado (15 clases). Puedes consultar
+                PlantLens AI para obtener su ficha botánica y cuidados generales.
+              </span>
               <button
-                type="submit"
-                :disabled="isSearchingTaxon || !customSpeciesQuery.trim()"
-                class="inline-flex items-center gap-1 rounded-xl border border-sky-400/40 bg-sky-400/15 px-3 py-1.5 text-xs font-bold text-sky-200 transition hover:bg-sky-400/25 disabled:opacity-50"
+                type="button"
+                class="shrink-0 rounded-lg border border-sky-400/40 bg-sky-500/20 px-2.5 py-1.5 text-[11px] font-bold text-sky-100 transition hover:bg-sky-500/30"
+                @click="runAgroVisionAnalysis({ forceLens: true })"
               >
-                <LoaderCircle v-if="isSearchingTaxon" class="h-3.5 w-3.5 animate-spin" />
-                <span>Fijar planta</span>
+                Abrir PlantLens AI
               </button>
-            </form>
+            </div>
+          </div>
+
+          <div
+            v-else
+            class="mt-3.5 flex items-center gap-2 rounded-xl border border-white/10 bg-black/25 p-3 text-xs text-stone-300"
+          >
+            <LoaderCircle v-if="browserEngineStatus.stage === 'loading'" class="h-4 w-4 animate-spin text-sky-300" />
+            <span>
+              {{
+                browserEngineStatus.stage === 'loading'
+                  ? 'Inicializando modelo AgroVision ONNX y PlantLens AI…'
+                  : 'Captura un cuadro, sube una foto o presiona "Analizar imagen" para identificar la especie con PlantLens AI.'
+              }}
+            </span>
           </div>
         </div>
 
@@ -2055,17 +1782,13 @@ onBeforeUnmount(() => {
               </div>
               <div>
                 <span class="text-[10px] font-bold uppercase tracking-widest text-emerald-300">
-                  {{
-                    agrovisionResult
-                      ? 'AGROVISION AI · EFFICIENTNET-B2 ONNX + PLANTLENS'
-                      : 'RESULTADO DEL ANÁLISIS IA Y MULTIESPECTRAL'
-                  }}
+                  AGROVISION AI · EFFICIENTNET-B2 ONNX + PLANTLENS
                 </span>
                 <h3 class="text-base font-semibold text-white">
                   {{
                     agrovisionResult && selectedPlantId
                       ? `Diagnóstico de Planta #${selectedPlantId}`
-                      : 'Diagnóstico del Área Total de la Planta'
+                      : 'Diagnóstico Fitosanitario IA (ONNX + PlantLens)'
                   }}
                 </h3>
               </div>
@@ -2075,12 +1798,6 @@ onBeforeUnmount(() => {
               class="rounded-full border border-emerald-300/30 bg-emerald-400/10 px-2.5 py-1 text-xs font-bold text-emerald-200"
             >
               Confianza {{ Math.round(agrovisionResult.confidence * 100) }}%
-            </span>
-            <span
-              v-else-if="liveAnalysis"
-              class="rounded-full border border-emerald-300/30 bg-emerald-400/10 px-2.5 py-1 text-xs font-bold text-emerald-200"
-            >
-              Confianza {{ (liveAnalysis.detectionConfidence * 100).toFixed(0) }}%
             </span>
           </div>
 
@@ -2101,94 +1818,54 @@ onBeforeUnmount(() => {
             </div>
 
             <div
+              v-if="agrovisionResult"
               class="rounded-xl border p-3.5"
               :class="
-                agrovisionResult
-                  ? agrovisionResult.health_status.includes('SALUDABLE')
-                    ? 'border-emerald-400/40 bg-emerald-500/10'
-                    : agrovisionResult.detection_mode === 'OUT_OF_DATASET'
-                      ? 'border-sky-400/40 bg-sky-500/10'
-                      : 'border-red-400/40 bg-red-500/10'
-                  : ''
-              "
-              :style="
-                agrovisionResult
-                  ? undefined
-                  : {
-                      borderColor: `${currentPresetConfig.accentColor}44`,
-                      backgroundColor: `${currentPresetConfig.accentColor}12`
-                    }
+                agrovisionResult.health_status.includes('SALUDABLE')
+                  ? 'border-emerald-400/40 bg-emerald-500/10'
+                  : agrovisionResult.detection_mode === 'OUT_OF_DATASET'
+                    ? 'border-sky-400/40 bg-sky-500/10'
+                    : 'border-red-400/40 bg-red-500/10'
               "
             >
               <div class="flex flex-wrap items-center justify-between gap-2">
                 <span
                   class="rounded-md px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wider"
                   :class="
-                    agrovisionResult
-                      ? agrovisionResult.health_status.includes('SALUDABLE')
-                        ? 'bg-emerald-400/20 text-emerald-200'
-                        : 'bg-amber-400/20 text-amber-200'
-                      : ''
-                  "
-                  :style="
-                    agrovisionResult
-                      ? undefined
-                      : { color: currentPresetConfig.accentColor }
+                    agrovisionResult.health_status.includes('SALUDABLE')
+                      ? 'bg-emerald-400/20 text-emerald-200'
+                      : 'bg-amber-400/20 text-amber-200'
                   "
                 >
-                  {{
-                    agrovisionResult
-                      ? `ESTADO: ${agrovisionResult.health_status}`
-                      : currentPresetConfig.badge
-                  }}
+                  ESTADO: {{ agrovisionResult.health_status }}
                 </span>
                 <span class="text-xs text-stone-300">
-                  <template v-if="agrovisionResult">
-                    Severidad: <strong class="text-white">{{ agrovisionResult.severity }}</strong>
-                  </template>
-                  <template v-else>
-                    Área afectada:
-                    <strong class="text-white">{{ liveAnalysis.aiClassification.affectedAreaPct }}%</strong>
-                  </template>
+                  Severidad: <strong class="text-white">{{ agrovisionResult.severity }}</strong>
                 </span>
               </div>
 
               <h4 class="mt-1.5 text-lg font-bold text-white">
-                {{
-                  agrovisionResult
-                    ? agrovisionResult.crop
-                    : backendDiagnosis
-                      ? formatDiseaseName(backendDiagnosis.disease)
-                      : liveAnalysis.aiClassification.label
-                }}
+                {{ agrovisionResult.crop }}
               </h4>
 
-              <p class="mt-1 text-xs font-medium text-stone-200" v-if="agrovisionResult">
+              <p class="mt-1 text-xs font-medium text-stone-200">
                 {{ agrovisionResult.disease_es }}
               </p>
 
               <p class="mt-1.5 text-xs leading-relaxed text-stone-300">
-                {{
-                  agrovisionResult?.cause ||
-                  backendDiagnosis?.cause ||
-                  liveAnalysis.aiClassification.cause
-                }}
+                {{ agrovisionResult.cause }}
               </p>
 
               <div class="mt-2.5 rounded-lg bg-black/30 p-2.5 text-xs text-emerald-200">
                 <strong class="block text-[10px] uppercase tracking-wider text-emerald-300">
                   Recomendación y cuidados:
                 </strong>
-                {{
-                  agrovisionResult?.recommendation ||
-                  backendDiagnosis?.recommendation ||
-                  liveAnalysis.aiClassification.recommendation
-                }}
+                {{ agrovisionResult.recommendation }}
               </div>
 
               <!-- Top-3 Predicciones del modelo entrenado cuando aplica -->
               <div
-                v-if="agrovisionResult?.in_trained_dataset && agrovisionResult.top_k?.length"
+                v-if="agrovisionResult.in_trained_dataset && agrovisionResult.top_k?.length"
                 class="mt-3 space-y-1.5 border-t border-white/10 pt-2.5"
               >
                 <span class="block text-[10px] font-bold uppercase tracking-wider text-stone-400">
@@ -2211,6 +1888,23 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
               </div>
+            </div>
+
+            <div
+              v-else
+              class="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-black/30 p-3.5 text-xs text-stone-300"
+            >
+              <div class="flex items-center gap-2">
+                <LoaderCircle class="h-4 w-4 animate-spin text-emerald-300" />
+                <span>Ejecutando modelo AgroVision EfficientNet-B2 ONNX…</span>
+              </div>
+              <button
+                type="button"
+                class="rounded-lg bg-emerald-400/20 px-2.5 py-1 text-[11px] font-bold text-emerald-200 transition hover:bg-emerald-400/30"
+                @click="analyzeImage"
+              >
+                Analizar ahora
+              </button>
             </div>
 
             <!-- Whole-plant geometry summary -->
