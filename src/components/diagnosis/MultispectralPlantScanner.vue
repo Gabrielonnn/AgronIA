@@ -300,12 +300,13 @@ function stopRealTimeLoop() {
 function startRealTimeLoop() {
   stopRealTimeLoop()
   if (!cameraActive.value || isCameraFrozen.value || !realTimeMode.value) return
-  void runAgroVisionAnalysis({ silent: true })
+  void runAgroVisionAnalysis({ silent: true, realTimeTick: true })
+  const intervalMs = backendOnline.value ? 180 : 800
   realTimeLoopTimer = window.setInterval(() => {
     if (cameraActive.value && !isCameraFrozen.value && realTimeMode.value && !agrovisionInFlight) {
-      void runAgroVisionAnalysis({ silent: true })
+      void runAgroVisionAnalysis({ silent: true, realTimeTick: true })
     }
-  }, 650)
+  }, intervalMs)
 }
 
 function toggleRealTimeMode() {
@@ -733,24 +734,38 @@ async function getRawSourceFileForAI(): Promise<File> {
   return (await canvasToFile('agronia-scan')).file
 }
 
+let rawAiScratchCanvas: HTMLCanvasElement | null = null
+
 function getRawSourceCanvasForAI(): HTMLCanvasElement | null {
-  const tmp = document.createElement('canvas')
+  if (!rawAiScratchCanvas) {
+    rawAiScratchCanvas = document.createElement('canvas')
+  }
+  const tmp = rawAiScratchCanvas
   if (sourceMode.value === 'camera' && isCameraFrozen.value && frozenImage.value) {
-    tmp.width = frozenImage.value.naturalWidth || 1280
-    tmp.height = frozenImage.value.naturalHeight || 720
+    const sw = frozenImage.value.naturalWidth || 1280
+    const sh = frozenImage.value.naturalHeight || 720
+    const s = Math.min(1, 640 / Math.max(sw, sh))
+    tmp.width = Math.max(128, Math.round(sw * s))
+    tmp.height = Math.max(128, Math.round(sh * s))
     tmp.getContext('2d')?.drawImage(frozenImage.value, 0, 0, tmp.width, tmp.height)
     return tmp
   }
   if (sourceMode.value === 'camera' && cameraActive.value && videoElement.value && videoElement.value.readyState >= 2) {
     const v = videoElement.value
-    tmp.width = v.videoWidth || 1280
-    tmp.height = v.videoHeight || 720
+    const sw = v.videoWidth || 1280
+    const sh = v.videoHeight || 720
+    const s = Math.min(1, 640 / Math.max(sw, sh))
+    tmp.width = Math.max(128, Math.round(sw * s))
+    tmp.height = Math.max(128, Math.round(sh * s))
     tmp.getContext('2d')?.drawImage(v, 0, 0, tmp.width, tmp.height)
     return tmp
   }
   if (sourceMode.value === 'image' && loadedImage.value) {
-    tmp.width = loadedImage.value.naturalWidth || 720
-    tmp.height = loadedImage.value.naturalHeight || 540
+    const sw = loadedImage.value.naturalWidth || 720
+    const sh = loadedImage.value.naturalHeight || 540
+    const s = Math.min(1, 640 / Math.max(sw, sh))
+    tmp.width = Math.max(128, Math.round(sw * s))
+    tmp.height = Math.max(128, Math.round(sh * s))
     tmp.getContext('2d')?.drawImage(loadedImage.value, 0, 0, tmp.width, tmp.height)
     return tmp
   }
@@ -771,6 +786,7 @@ async function runAgroVisionAnalysis(opts?: {
   cropBox?: { x: number; y: number; width: number; height: number } | null
   forceLens?: boolean
   silent?: boolean
+  realTimeTick?: boolean
 }) {
   if (agrovisionInFlight && opts?.silent) return
   agrovisionInFlight = true
@@ -811,6 +827,7 @@ async function runAgroVisionAnalysis(opts?: {
         cropBox: opts?.cropBox !== undefined ? opts.cropBox : customCropBox.value,
         detectPlants: true,
         forceLens: opts?.forceLens ?? false,
+        realTimeTick: opts?.realTimeTick ?? false,
         ndviMean: liveAnalysis.value?.ndvi.mean,
         tempMeanC: liveAnalysis.value?.thermal.meanTempC,
         cwsi: liveAnalysis.value?.thermal.cwsi,

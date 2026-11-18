@@ -1,5 +1,13 @@
 import * as ort from 'onnxruntime-web'
-import { env as transformersEnv, pipeline, RawImage } from '@huggingface/transformers'
+import {
+  AutoProcessor,
+  AutoTokenizer,
+  CLIPTextModelWithProjection,
+  CLIPVisionModelWithProjection,
+  env as transformersEnv,
+  pipeline,
+  RawImage
+} from '@huggingface/transformers'
 import type {
   AgroVisionAnalysis,
   AgroVisionLensInfo,
@@ -525,10 +533,24 @@ class BrowserAgroVisionEngine {
   private classNames: string[] = []
   private detectorPipe: ObjectDetectionPipeline | null = null
   private clipPipe: ZeroShotPipeline | null = null
+  private clipProcessor: ((img: RawImage) => Promise<Record<string, unknown>>) | null = null
+  private clipVisionModel:
+    | ((inputs: Record<string, unknown>) => Promise<{ image_embeds?: { data: Float32Array; dims: number[] } }>)
+    | null = null
+  private clipTextEmbeds: Float32Array[] = []
+  private clipAllLabels: string[] = []
 
   private initPromise: Promise<void> | null = null
   private clipInitPromise: Promise<void> | null = null
   private detectorInitPromise: Promise<void> | null = null
+
+  private prepCanvas: HTMLCanvasElement | null = null
+  private detCanvas: HTMLCanvasElement | null = null
+  private cropCanvas: HTMLCanvasElement | null = null
+  private cachedDetections: DetectedPlantBox[] = []
+  private lastDetTime = 0
+  private lastClipTime = 0
+  private lastClipResult: { scoreByLabel: Map<string, number> } | null = null
 
   private wikiCache = new Map<string, string>()
   private pendingWiki = new Set<string>()
@@ -571,7 +593,9 @@ class BrowserAgroVisionEngine {
           message: 'Cargando modelo EfficientNet-B2 ONNX en navegador…'
         })
         const base = this.getBaseAssetPath()
-        ort.env.wasm.numThreads = 1
+        ort.env.wasm.simd = true
+        const isolated = typeof self !== 'undefined' && Boolean((self as { crossOriginIsolated?: boolean }).crossOriginIsolated)
+        ort.env.wasm.numThreads = isolated ? Math.min(4, navigator.hardwareConcurrency || 4) : 1
 
         const [mapRes, modelBuf] = await Promise.all([
           fetch(`${base}models/class_mapping.json`),
@@ -586,12 +610,26 @@ class BrowserAgroVisionEngine {
           this.classNames = mapData.class_names ?? []
         }
 
-        this.ortSession = await ort.InferenceSession.create(new Uint8Array(modelBuf), {
-          executionProviders: ['wasm']
-        })
+        const modelBytes = new Uint8Array(modelBuf)
+        const hasWebGpu = typeof navigator !== 'undefined' && 'gpu' in navigator
+        if (hasWebGpu) {
+          try {
+            this.ortSession = await ort.InferenceSession.create(modelBytes, {
+              executionProviders: ['webgpu']
+            })
+          } catch {
+            this.ortSession = await ort.InferenceSession.create(modelBytes, {
+              executionProviders: ['wasm']
+            })
+          }
+        } else {
+          this.ortSession = await ort.InferenceSession.create(modelBytes, {
+            executionProviders: ['wasm']
+          })
+        }
         this.updateStatus({
           onnxReady: true,
-          stage: this.clipPipe ? 'ready' : 'loading',
+          stage: this.clipVisionModel || this.clipPipe ? 'ready' : 'loading',
           message: 'Modelo EfficientNet-B2 ONNX listo en navegador.'
         })
       } catch (err) {
@@ -608,7 +646,7 @@ class BrowserAgroVisionEngine {
   }
 
   public async ensureClipLoaded(): Promise<void> {
-    if (this.clipPipe) return
+    if (this.clipVisionModel || this.clipPipe) return
     if (this.clipInitPromise) return this.clipInitPromise
 
     this.clipInitPromise = (async () => {
@@ -620,11 +658,59 @@ class BrowserAgroVisionEngine {
         transformersEnv.allowLocalModels = false
         transformersEnv.useBrowserCache = true
 
-        this.clipPipe = (await pipeline(
-          'zero-shot-image-classification',
-          'Xenova/clip-vit-base-patch32',
-          { dtype: 'q8' }
-        )) as unknown as ZeroShotPipeline
+        const modelId = 'Xenova/clip-vit-base-patch32'
+        this.clipAllLabels = [
+          ...BOTANICAL_CATALOG.map(b => b.prompt_en),
+          ...EMPTY_BACKGROUND_PROMPTS,
+          ...VISUAL_HEALTH_PROMPTS.map(h => h.prompt_en)
+        ]
+
+        try {
+          // Pre-computar embeddings de texto UNA sola vez para ahorrar ~85% del tiempo en cada cuadro
+          const [tokenizer, textModel, processor, visionModel] = await Promise.all([
+            AutoTokenizer.from_pretrained(modelId),
+            CLIPTextModelWithProjection.from_pretrained(modelId, { dtype: 'q8' }),
+            AutoProcessor.from_pretrained(modelId),
+            CLIPVisionModelWithProjection.from_pretrained(modelId, { dtype: 'q8' })
+          ])
+
+          const textInputs = tokenizer(this.clipAllLabels, { padding: true, truncation: true })
+          const textOut = await (textModel as unknown as (inp: unknown) => Promise<{
+            text_embeds?: { data: Float32Array; dims: number[] }
+          }>)(textInputs)
+
+          const embedsTensor = textOut.text_embeds
+          if (embedsTensor && embedsTensor.dims.length === 2) {
+            const [numPrompts, dim] = embedsTensor.dims
+            const normalized: Float32Array[] = []
+            for (let i = 0; i < numPrompts; i++) {
+              const vec = new Float32Array(dim)
+              let normSq = 0
+              const offset = i * dim
+              for (let j = 0; j < dim; j++) {
+                const v = embedsTensor.data[offset + j]
+                vec[j] = v
+                normSq += v * v
+              }
+              const invNorm = 1.0 / Math.max(1e-8, Math.sqrt(normSq))
+              for (let j = 0; j < dim; j++) {
+                vec[j] *= invNorm
+              }
+              normalized.push(vec)
+            }
+            this.clipTextEmbeds = normalized
+            this.clipProcessor = processor as unknown as (img: RawImage) => Promise<Record<string, unknown>>
+            this.clipVisionModel = visionModel as unknown as (
+              inputs: Record<string, unknown>
+            ) => Promise<{ image_embeds?: { data: Float32Array; dims: number[] } }>
+          } else {
+            throw new Error('Missing text_embeds')
+          }
+        } catch {
+          this.clipPipe = (await pipeline('zero-shot-image-classification', modelId, {
+            dtype: 'q8'
+          })) as unknown as ZeroShotPipeline
+        }
 
         this.updateStatus({
           clipReady: true,
@@ -632,7 +718,6 @@ class BrowserAgroVisionEngine {
           message: 'AgroVision ONNX + PlantLens activos en tu navegador.'
         })
       } catch {
-        // Si no hay conexión para descargar CLIP la primera vez, seguimos con ONNX
         this.updateStatus({
           clipReady: false,
           stage: this.ortSession ? 'ready' : 'error',
@@ -665,17 +750,21 @@ class BrowserAgroVisionEngine {
   }
 
   public async warmUpAll(): Promise<void> {
-    await Promise.allSettled([
-      this.ensureOnnxLoaded(),
-      this.ensureDetectorLoaded(),
-      this.ensureClipLoaded()
-    ])
+    await this.ensureOnnxLoaded()
     if (this.ortSession) {
       this.updateStatus({
         stage: 'ready',
-        message: this.clipPipe
-          ? 'Motor AgroVision ONNX + PlantLens + Multi-Planta 100% operativo en navegador.'
-          : 'Motor AgroVision ONNX operativo en navegador.'
+        message: 'Modelo AgroVision ONNX operativo. Cargando PlantLens en segundo plano…'
+      })
+    }
+    await Promise.allSettled([this.ensureDetectorLoaded(), this.ensureClipLoaded()])
+    if (this.ortSession) {
+      this.updateStatus({
+        stage: 'ready',
+        message:
+          this.clipVisionModel || this.clipPipe
+            ? 'Motor AgroVision ONNX + PlantLens + Multi-Planta 100% operativo en navegador.'
+            : 'Motor AgroVision ONNX operativo en navegador.'
       })
     }
   }
@@ -714,11 +803,32 @@ class BrowserAgroVisionEngine {
     return inter / Math.min(areaA, areaB)
   }
 
-  private async detectPlantsInBrowser(sourceCanvas: HTMLCanvasElement): Promise<DetectedPlantBox[]> {
-    if (!this.detectorPipe) return []
+  private async detectPlantsInBrowser(
+    sourceCanvas: HTMLCanvasElement,
+    realTimeTick = false
+  ): Promise<DetectedPlantBox[]> {
+    const now = performance.now()
+    if (realTimeTick && this.cachedDetections.length > 0 && now - this.lastDetTime < 2400) {
+      return this.cachedDetections
+    }
+    if (!this.detectorPipe) return this.cachedDetections
 
     try {
-      const rawImg = RawImage.fromCanvas(sourceCanvas)
+      // Reducir tamaño máximo a 320px para acelerar ~4x la detección multi-planta en navegador
+      const maxDim = 320
+      const sw = sourceCanvas.width || 720
+      const sh = sourceCanvas.height || 540
+      const scale = Math.min(1, maxDim / Math.max(sw, sh))
+      const dw = Math.max(96, Math.round(sw * scale))
+      const dh = Math.max(96, Math.round(sh * scale))
+      if (!this.detCanvas) {
+        this.detCanvas = document.createElement('canvas')
+      }
+      this.detCanvas.width = dw
+      this.detCanvas.height = dh
+      this.detCanvas.getContext('2d')?.drawImage(sourceCanvas, 0, 0, dw, dh)
+
+      const rawImg = RawImage.fromCanvas(this.detCanvas)
       const detections = await this.detectorPipe(rawImg, { threshold: 0.25, percentage: true })
 
       const plantKeywords = new Set([
@@ -796,7 +906,7 @@ class BrowserAgroVisionEngine {
 
       clusters.sort((a, b) => a.x - b.x)
 
-      return clusters.map((c, idx) => ({
+      const finalBoxes = clusters.map((c, idx) => ({
         id: idx + 1,
         label: c.label,
         confidence: Number(c.score.toFixed(3)),
@@ -811,8 +921,11 @@ class BrowserAgroVisionEngine {
           height: Number(Math.max(0.08, c.height * 0.66).toFixed(4))
         }
       }))
+      this.cachedDetections = finalBoxes
+      this.lastDetTime = performance.now()
+      return finalBoxes
     } catch {
-      return []
+      return this.cachedDetections
     }
   }
 
@@ -825,10 +938,12 @@ class BrowserAgroVisionEngine {
     }
 
     const size = 224
-    const prepCanvas = document.createElement('canvas')
-    prepCanvas.width = size
-    prepCanvas.height = size
-    const ctx = prepCanvas.getContext('2d', { willReadFrequently: true })!
+    if (!this.prepCanvas) {
+      this.prepCanvas = document.createElement('canvas')
+      this.prepCanvas.width = size
+      this.prepCanvas.height = size
+    }
+    const ctx = this.prepCanvas.getContext('2d', { willReadFrequently: true })!
     ctx.drawImage(cropCanvas, 0, 0, size, size)
     const { data } = ctx.getImageData(0, 0, size, size)
 
@@ -887,6 +1002,73 @@ class BrowserAgroVisionEngine {
     }
   }
 
+  private async runClipFast(rawCrop: RawImage): Promise<{
+    speciesScores: Map<string, number>
+    healthScores: Map<string, number>
+  } | null> {
+    if (this.clipVisionModel && this.clipProcessor && this.clipTextEmbeds.length === this.clipAllLabels.length) {
+      const imageInputs = await this.clipProcessor(rawCrop)
+      const out = await this.clipVisionModel(imageInputs)
+      const embed = out.image_embeds
+      if (embed && embed.data.length > 0) {
+        const dim = embed.data.length
+        let normSq = 0
+        for (let j = 0; j < dim; j++) normSq += embed.data[j] * embed.data[j]
+        const invNorm = 1.0 / Math.max(1e-8, Math.sqrt(normSq))
+
+        const nSpeciesBg = BOTANICAL_CATALOG.length + EMPTY_BACKGROUND_PROMPTS.length
+        const speciesLogits = new Array<number>(nSpeciesBg)
+        for (let i = 0; i < nSpeciesBg; i++) {
+          const tv = this.clipTextEmbeds[i]
+          let dot = 0
+          for (let j = 0; j < dim; j++) dot += embed.data[j] * invNorm * tv[j]
+          speciesLogits[i] = 100.0 * dot
+        }
+        const spMax = Math.max(...speciesLogits)
+        const spExps = speciesLogits.map(v => Math.exp(v - spMax))
+        const spSum = spExps.reduce((a, b) => a + b, 0)
+        const speciesScores = new Map<string, number>()
+        for (let i = 0; i < nSpeciesBg; i++) {
+          speciesScores.set(this.clipAllLabels[i], spExps[i] / spSum)
+        }
+
+        const nHealth = VISUAL_HEALTH_PROMPTS.length
+        const healthLogits = new Array<number>(nHealth)
+        for (let i = 0; i < nHealth; i++) {
+          const tv = this.clipTextEmbeds[nSpeciesBg + i]
+          let dot = 0
+          for (let j = 0; j < dim; j++) dot += embed.data[j] * invNorm * tv[j]
+          healthLogits[i] = 100.0 * dot
+        }
+        const hlMax = Math.max(...healthLogits)
+        const hlExps = healthLogits.map(v => Math.exp(v - hlMax))
+        const hlSum = hlExps.reduce((a, b) => a + b, 0)
+        const healthScores = new Map<string, number>()
+        for (let i = 0; i < nHealth; i++) {
+          healthScores.set(this.clipAllLabels[nSpeciesBg + i], hlExps[i] / hlSum)
+        }
+        return { speciesScores, healthScores }
+      }
+    }
+
+    if (this.clipPipe) {
+      const allLabels = [...BOTANICAL_CATALOG.map(b => b.prompt_en), ...EMPTY_BACKGROUND_PROMPTS]
+      const clipResults = await this.clipPipe(rawCrop, allLabels)
+      const speciesScores = new Map<string, number>()
+      for (const item of clipResults) speciesScores.set(item.label, item.score)
+
+      const healthResults = await this.clipPipe(
+        rawCrop,
+        VISUAL_HEALTH_PROMPTS.map(h => h.prompt_en)
+      )
+      const healthScores = new Map<string, number>()
+      for (const hr of healthResults) healthScores.set(hr.label, hr.score)
+      return { speciesScores, healthScores }
+    }
+
+    return null
+  }
+
   public async analyzeSource(
     sourceCanvas: HTMLCanvasElement,
     options: {
@@ -894,6 +1076,7 @@ class BrowserAgroVisionEngine {
       cropBox?: { x: number; y: number; width: number; height: number } | null
       detectPlants?: boolean
       forceLens?: boolean
+      realTimeTick?: boolean
       ndviMean?: number
       tempMeanC?: number
       cwsi?: number
@@ -901,13 +1084,20 @@ class BrowserAgroVisionEngine {
     } = {}
   ): Promise<AgroVisionAnalysis> {
     const t0 = performance.now()
-    await this.warmUpAll()
+    // Prioridad 1: cargar ONNX inmediatamente (~15-35 ms por inferencia), sin bloquear esperando a YOLOS/CLIP
+    await this.ensureOnnxLoaded()
+    if (!options.realTimeTick) {
+      void this.ensureClipLoaded()
+      if (options.detectPlants !== false) void this.ensureDetectorLoaded()
+    }
 
     const w = sourceCanvas.width || 720
     const h = sourceCanvas.height || 540
 
     const detectedPlants =
-      options.detectPlants !== false ? await this.detectPlantsInBrowser(sourceCanvas) : []
+      options.detectPlants !== false
+        ? await this.detectPlantsInBrowser(sourceCanvas, Boolean(options.realTimeTick))
+        : []
 
     let activePlantId = options.selectedPlantId ?? (detectedPlants[0]?.id ?? 1)
     let cropX = 0
@@ -932,14 +1122,26 @@ class BrowserAgroVisionEngine {
       cropH = Math.max(24, Math.floor(fb.height * h))
     }
 
-    const cropCanvas = document.createElement('canvas')
-    cropCanvas.width = Math.min(480, Math.max(64, cropW))
-    cropCanvas.height = Math.min(480, Math.max(64, cropH))
-    const cctx = cropCanvas.getContext('2d')!
-    cctx.drawImage(sourceCanvas, cropX, cropY, cropW, cropH, 0, 0, cropCanvas.width, cropCanvas.height)
+    if (!this.cropCanvas) {
+      this.cropCanvas = document.createElement('canvas')
+    }
+    this.cropCanvas.width = Math.min(320, Math.max(64, cropW))
+    this.cropCanvas.height = Math.min(320, Math.max(64, cropH))
+    const cctx = this.cropCanvas.getContext('2d')!
+    cctx.drawImage(
+      sourceCanvas,
+      cropX,
+      cropY,
+      cropW,
+      cropH,
+      0,
+      0,
+      this.cropCanvas.width,
+      this.cropCanvas.height
+    )
 
     // 1. Ejecutar clasificador entrenado EfficientNet-B2 ONNX
-    const { topK, maxProb, entropy } = await this.runOnnxClassifier(cropCanvas)
+    const { topK, maxProb, entropy } = await this.runOnnxClassifier(this.cropCanvas)
     const bestCls = topK[0]?.class_name || 'Tomato_healthy'
     const bestConf = topK[0]?.confidence || 0.85
     const agroInfo = this.getAgronomicInfo(bestCls)
@@ -947,91 +1149,104 @@ class BrowserAgroVisionEngine {
     let detectionMode: 'IN_DATASET' | 'OUT_OF_DATASET' | 'NO_PLANT' = 'IN_DATASET'
     let lensPayload: AgroVisionLensInfo | null = null
 
-    // 2. Ejecutar PlantLens CLIP Zero-Shot en navegador
-    if (this.clipPipe) {
-      const rawCrop = RawImage.fromCanvas(cropCanvas)
-      const allLabels = [...BOTANICAL_CATALOG.map(b => b.prompt_en), ...EMPTY_BACKGROUND_PROMPTS]
-      const clipResults = await this.clipPipe(rawCrop, allLabels)
+    const clipAvailable = Boolean(this.clipVisionModel || this.clipPipe)
+    const skipClipThisTick =
+      Boolean(options.realTimeTick) && !options.forceLens && maxProb >= 0.88 && entropy < 0.22
 
-      const scoreByLabel = new Map<string, number>()
-      for (const item of clipResults) {
-        scoreByLabel.set(item.label, item.score)
+    // 2. Ejecutar PlantLens CLIP Zero-Shot con embeddings de texto cacheados (1 sola pasada de visión)
+    if (clipAvailable && !skipClipThisTick) {
+      const nowMs = performance.now()
+      let clipOut: { speciesScores: Map<string, number>; healthScores: Map<string, number> } | null = null
+      if (
+        options.realTimeTick &&
+        !options.forceLens &&
+        this.lastClipResult &&
+        nowMs - this.lastClipTime < 1500
+      ) {
+        clipOut = {
+          speciesScores: this.lastClipResult.scoreByLabel,
+          healthScores: this.lastClipResult.scoreByLabel
+        }
+      } else {
+        const rawCrop = RawImage.fromCanvas(this.cropCanvas)
+        clipOut = await this.runClipFast(rawCrop)
+        if (clipOut) {
+          const merged = new Map<string, number>(clipOut.speciesScores)
+          clipOut.healthScores.forEach((v, k) => merged.set(k, v))
+          this.lastClipResult = { scoreByLabel: merged }
+          this.lastClipTime = performance.now()
+        }
       }
 
-      const emptyScore = EMPTY_BACKGROUND_PROMPTS.reduce(
-        (acc, lbl) => acc + (scoreByLabel.get(lbl) ?? 0),
-        0
-      )
-      const plantScores = BOTANICAL_CATALOG.map(b => ({
-        entry: b,
-        score: scoreByLabel.get(b.prompt_en) ?? 0
-      }))
-      const totalPlantScore = plantScores.reduce((a, b) => a + b.score, 0)
+      if (clipOut) {
+        const { speciesScores: scoreByLabel, healthScores: healthMap } = clipOut
 
-      if (
-        !options.forceLens &&
-        detHint === null &&
-        detectedPlants.length === 0 &&
-        emptyScore > 0.72 &&
-        totalPlantScore < 0.28
-      ) {
-        detectionMode = 'NO_PLANT'
-      } else {
-        plantScores.sort((a, b) => b.score - a.score)
-        let bestPlant = plantScores[0].entry
-        let bestPlantScore = plantScores[0].score / Math.max(totalPlantScore, 1e-6)
+        const emptyScore = EMPTY_BACKGROUND_PROMPTS.reduce(
+          (acc, lbl) => acc + (scoreByLabel.get(lbl) ?? 0),
+          0
+        )
+        const plantScores = BOTANICAL_CATALOG.map(b => ({
+          entry: b,
+          score: scoreByLabel.get(b.prompt_en) ?? 0
+        }))
+        const totalPlantScore = plantScores.reduce((a, b) => a + b.score, 0)
 
-        const inDatasetClipProb = plantScores
-          .filter(p => p.entry.in_dataset)
-          .reduce((a, b) => a + b.score / Math.max(totalPlantScore, 1e-6), 0)
+        if (
+          !options.forceLens &&
+          detHint === null &&
+          detectedPlants.length === 0 &&
+          emptyScore > 0.72 &&
+          totalPlantScore < 0.28
+        ) {
+          detectionMode = 'NO_PLANT'
+        } else {
+          plantScores.sort((a, b) => b.score - a.score)
+          let bestPlant = plantScores[0].entry
+          let bestPlantScore = plantScores[0].score / Math.max(totalPlantScore, 1e-6)
 
-        const isUntrained = !bestPlant.in_dataset && inDatasetClipProb < 0.45
-        const isLowCertainty = maxProb < 0.80 || entropy > 0.36
+          const inDatasetClipProb = plantScores
+            .filter(p => p.entry.in_dataset)
+            .reduce((a, b) => a + b.score / Math.max(totalPlantScore, 1e-6), 0)
 
-        if (options.forceLens || isUntrained || isLowCertainty) {
-          if (bestPlant.in_dataset && !options.forceLens && isLowCertainty) {
-            const bestOut = plantScores.find(p => !p.entry.in_dataset)
-            if (bestOut && bestOut.score / Math.max(totalPlantScore, 1e-6) > 0.1) {
-              bestPlant = bestOut.entry
-              bestPlantScore = bestOut.score / Math.max(totalPlantScore, 1e-6)
+          const isUntrained = !bestPlant.in_dataset && inDatasetClipProb < 0.45
+          const isLowCertainty = maxProb < 0.80 || entropy > 0.36
+
+          if (options.forceLens || isUntrained || isLowCertainty) {
+            if (bestPlant.in_dataset && !options.forceLens && isLowCertainty) {
+              const bestOut = plantScores.find(p => !p.entry.in_dataset)
+              if (bestOut && bestOut.score / Math.max(totalPlantScore, 1e-6) > 0.1) {
+                bestPlant = bestOut.entry
+                bestPlantScore = bestOut.score / Math.max(totalPlantScore, 1e-6)
+              }
             }
-          }
 
-          if (!bestPlant.in_dataset || isLowCertainty) {
-            this.fetchWikipediaAsync(bestPlant.wiki_query)
-            const wikiSummary = this.wikiCache.get(bestPlant.wiki_query) ?? ''
+            if (!bestPlant.in_dataset || isLowCertainty || options.forceLens) {
+              this.fetchWikipediaAsync(bestPlant.wiki_query)
+              const wikiSummary = this.wikiCache.get(bestPlant.wiki_query) ?? ''
 
-            // Evaluación visual de salud con CLIP
-            const healthResults = await this.clipPipe(
-              rawCrop,
-              VISUAL_HEALTH_PROMPTS.map(h => h.prompt_en)
-            )
-            const healthMap = new Map<string, number>()
-            for (const hr of healthResults) {
-              healthMap.set(hr.label, hr.score)
-            }
-            const weightedHealth = VISUAL_HEALTH_PROMPTS.map((hp, i) => ({
-              hp,
-              score: (healthMap.get(hp.prompt_en) ?? 0) + (i === 0 ? 0.2 : 0)
-            }))
-            weightedHealth.sort((a, b) => b.score - a.score)
-            const chosenHealth = weightedHealth[0].hp
+              const weightedHealth = VISUAL_HEALTH_PROMPTS.map((hp, i) => ({
+                hp,
+                score: (healthMap.get(hp.prompt_en) ?? 0) + (i === 0 ? 0.2 : 0)
+              }))
+              weightedHealth.sort((a, b) => b.score - a.score)
+              const chosenHealth = weightedHealth[0].hp
 
-            detectionMode = 'OUT_OF_DATASET'
-            lensPayload = {
-              plant_name: bestPlant.name_es,
-              scientific_name: bestPlant.scientific_name,
-              confidence_pct: Number(Math.min(99.4, Math.max(bestPlantScore * 145, 74)).toFixed(1)),
-              light: bestPlant.light,
-              water: bestPlant.water,
-              soil_temp: bestPlant.soil_temp,
-              care: bestPlant.care,
-              wiki_summary: wikiSummary,
-              visual_health_status: chosenHealth.status,
-              visual_severity: chosenHealth.severity,
-              visual_diagnosis_es: chosenHealth.diagnosis_es,
-              visual_action_es: chosenHealth.action_es,
-              source: 'AgroVision WebGPU/WASM (CLIP + Wikipedia ES)'
+              detectionMode = 'OUT_OF_DATASET'
+              lensPayload = {
+                plant_name: bestPlant.name_es,
+                scientific_name: bestPlant.scientific_name,
+                confidence_pct: Number(Math.min(99.4, Math.max(bestPlantScore * 145, 74)).toFixed(1)),
+                light: bestPlant.light,
+                water: bestPlant.water,
+                soil_temp: bestPlant.soil_temp,
+                care: bestPlant.care,
+                wiki_summary: wikiSummary,
+                visual_health_status: chosenHealth.status,
+                visual_severity: chosenHealth.severity,
+                visual_diagnosis_es: chosenHealth.diagnosis_es,
+                visual_action_es: chosenHealth.action_es,
+                source: 'AgroVision Web (CLIP Cached + Wikipedia ES)'
+              }
             }
           }
         }

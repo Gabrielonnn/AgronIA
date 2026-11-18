@@ -549,6 +549,7 @@ class AgroVisionBackendEngine:
         self._onnx_lock = threading.Lock()
 
         self.device = "cuda" if (torch is not None and torch.cuda.is_available()) else "cpu"
+        self.use_half = self.device == "cuda"
         self.clip_ready = False
         self.detector_ready = False
         self._yolo_lock = threading.Lock()
@@ -607,6 +608,8 @@ class AgroVisionBackendEngine:
                 "ViT-B-32", pretrained="laion2b_s34b_b79k", device=self.device
             )
             model.eval()
+            if self.use_half:
+                model = model.half()
             tokenizer = open_clip.get_tokenizer("ViT-B-32")
 
             plant_prompts = [item["prompt_en"] for item in BOTANICAL_CATALOG]
@@ -681,7 +684,13 @@ class AgroVisionBackendEngine:
         bgr = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
         with self._yolo_lock:
             results = self.yolo_detector.predict(
-                bgr, conf=conf_thres, iou=0.45, verbose=False, device=self.device
+                bgr,
+                conf=conf_thres,
+                iou=0.45,
+                imgsz=480,
+                half=self.use_half,
+                verbose=False,
+                device=self.device,
             )[0]
 
         raw_dets: list[dict[str, Any]] = []
@@ -869,12 +878,14 @@ class AgroVisionBackendEngine:
             crop_pil = Image.fromarray(rgb_crop)
             with self._clip_lock, torch.no_grad():
                 img_tensor = self.clip_preprocess(crop_pil).unsqueeze(0).to(self.device)
+                if self.use_half:
+                    img_tensor = img_tensor.half()
                 img_features = self.clip_model.encode_image(img_tensor)
                 img_features = img_features / img_features.norm(dim=-1, keepdim=True)
-                sim_logits = (100.0 * img_features @ self.text_features.T)[0]
+                sim_logits = (100.0 * img_features @ self.text_features.T)[0].float()
                 all_probs = torch.softmax(sim_logits, dim=-1).cpu().numpy()
 
-                hl_logits = (100.0 * img_features @ self.health_features.T)[0]
+                hl_logits = (100.0 * img_features @ self.health_features.T)[0].float()
                 hl_probs = torch.softmax(hl_logits, dim=-1).cpu().numpy()
 
             plant_probs = all_probs[: self.num_plant_classes].copy()
