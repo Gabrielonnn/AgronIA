@@ -707,6 +707,47 @@ class AgroVisionBackendEngine:
             raw_dets.append({"box": (x1, y1, x2, y2), "label": label, "conf": conf})
 
         if not raw_dets:
+            # Fallback rápido por agrupación de dosel verde dominante (para macetas pequeñas o poca luz)
+            gw, gh = 160, 120
+            small = cv2.resize(rgb_image, (gw, gh), interpolation=cv2.INTER_AREA).astype(np.int16)
+            r_ch, g_ch, b_ch = small[:, :, 0], small[:, :, 1], small[:, :, 2]
+            exg = (2 * g_ch - r_ch - b_ch)
+            green_mask = ((exg > 20) & (g_ch > r_ch + 6) & (g_ch > b_ch + 4) & (g_ch > 35)).astype(np.uint8) * 255
+            green_mask = cv2.morphologyEx(green_mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+            num_labels, _, stats, _ = cv2.connectedComponentsWithStats(green_mask, connectivity=8)
+            best_box = None
+            best_area = int(gw * gh * 0.01)
+            for lbl in range(1, num_labels):
+                sx, sy, sw_b, sh_b, area = stats[lbl]
+                if area > best_area and sw_b < int(gw * 0.85) and sh_b < int(gh * 0.85):
+                    best_area = int(area)
+                    best_box = (sx, sy, sw_b, sh_b)
+            if best_box is not None:
+                sx, sy, sw_b, sh_b = best_box
+                pad_x = max(4, int(sw_b * 0.14))
+                pad_y_top = max(4, int(sh_b * 0.12))
+                pad_y_bot = max(6, int(sh_b * 0.35))
+                nx1 = max(0.01, (sx - pad_x) / gw)
+                ny1 = max(0.01, (sy - pad_y_top) / gh)
+                nx2 = min(0.99, (sx + sw_b + pad_x) / gw)
+                ny2 = min(0.99, (sy + sh_b + pad_y_bot) / gh)
+                return [
+                    {
+                        "id": 1,
+                        "label": "potted plant",
+                        "confidence": 0.72,
+                        "x": round(nx1, 4),
+                        "y": round(ny1, 4),
+                        "width": round(nx2 - nx1, 4),
+                        "height": round(ny2 - ny1, 4),
+                        "foliage_box": {
+                            "x": round(max(0.01, (sx - 2) / gw), 4),
+                            "y": round(max(0.01, (sy - 2) / gh), 4),
+                            "width": round(min(0.98, (sw_b + 4) / gw), 4),
+                            "height": round(min(0.98, (sh_b + 4) / gh), 4),
+                        },
+                    }
+                ]
             return []
 
         raw_dets.sort(key=lambda d: (d["label"] != "flower pot", d["conf"]), reverse=True)

@@ -110,9 +110,9 @@ const activePreset = ref<SimulationPresetId>('live_raw')
 const presetIntensity = ref(0.85)
 const detectionMode = ref<DetectionMode>('auto_vegetation')
 const sensitivity = ref(0.55)
-const isolatePlantBackground = ref(true)
+const isolatePlantBackground = ref(false)
 const showContours = ref(true)
-const showHotspots = ref(true)
+const showHotspots = ref(false)
 const ambientTempC = ref(25.0)
 const pointerNorm = ref<{ x: number; y: number } | null>(null)
 
@@ -659,6 +659,8 @@ function renderSinglePass(now: number, forceUpdate = false) {
     ? `${agrovisionResult.value.crop} · ${agrovisionResult.value.health_status}`
     : undefined
 
+  const hasAiBoxes = detectedPlants.value.length > 0 || customCropBox.value !== null
+
   const analysis = processMultispectralFrame(activeSource, canvas, {
     spectrumMode: spectrumMode.value,
     preset: activePreset.value,
@@ -667,6 +669,7 @@ function renderSinglePass(now: number, forceUpdate = false) {
     sensitivity: sensitivity.value,
     isolatePlantBackground: isolatePlantBackground.value,
     showContours: showContours.value,
+    showBoxOverlay: showContours.value && !hasAiBoxes,
     showHotspots: showHotspots.value,
     ambientTempC: ambientTempC.value,
     pointerNorm: pointerNorm.value,
@@ -674,7 +677,7 @@ function renderSinglePass(now: number, forceUpdate = false) {
     plantLabelHud: hudLabel
   })
 
-  if (detectedPlants.value.length > 0 || customCropBox.value || isDraggingBox.value) {
+  if ((showContours.value && (detectedPlants.value.length > 0 || customCropBox.value)) || isDraggingBox.value) {
     drawMultiPlantOverlays(canvas)
   }
 
@@ -1334,7 +1337,7 @@ onBeforeUnmount(() => {
                 "
                 @click="showContours = !showContours"
               >
-                Área y Contorno
+                Recuadro de Planta
               </button>
               <button
                 type="button"

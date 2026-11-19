@@ -803,6 +803,107 @@ class BrowserAgroVisionEngine {
     return inter / Math.min(areaA, areaB)
   }
 
+  private detectGreenCanopyFallbackBox(sourceCanvas: HTMLCanvasElement): DetectedPlantBox[] {
+    const gw = 160
+    const gh = 120
+    if (!this.detCanvas) {
+      this.detCanvas = document.createElement('canvas')
+    }
+    this.detCanvas.width = gw
+    this.detCanvas.height = gh
+    const ctx = this.detCanvas.getContext('2d', { willReadFrequently: true })
+    if (!ctx) return []
+    ctx.drawImage(sourceCanvas, 0, 0, gw, gh)
+    const { data } = ctx.getImageData(0, 0, gw, gh)
+
+    const total = gw * gh
+    const mask = new Uint8Array(total)
+    for (let i = 0; i < total; i++) {
+      const p = i * 4
+      const r = data[p]
+      const g = data[p + 1]
+      const b = data[p + 2]
+      const exg = 2 * g - r - b
+      if (exg > 20 && g > r + 6 && g > b + 4 && g > 35) {
+        mask[i] = 1
+      }
+    }
+
+    const visited = new Uint8Array(total)
+    const queue = new Int32Array(total)
+    let bestArea = Math.floor(total * 0.01)
+    let bestBox: { minX: number; minY: number; maxX: number; maxY: number } | null = null
+
+    for (let i = 0; i < total; i++) {
+      if (mask[i] !== 1 || visited[i] === 1) continue
+      let head = 0
+      let tail = 0
+      queue[tail++] = i
+      visited[i] = 1
+      let minX = gw
+      let maxX = 0
+      let minY = gh
+      let maxY = 0
+      while (head < tail) {
+        const cur = queue[head++]
+        const cy = Math.floor(cur / gw)
+        const cx = cur - cy * gw
+        if (cx < minX) minX = cx
+        if (cx > maxX) maxX = cx
+        if (cy < minY) minY = cy
+        if (cy > maxY) maxY = cy
+        for (let dy = -1; dy <= 1; dy++) {
+          const ny = cy + dy
+          if (ny < 0 || ny >= gh) continue
+          for (let dx = -1; dx <= 1; dx++) {
+            const nx = cx + dx
+            if (nx < 0 || nx >= gw) continue
+            const ni = ny * gw + nx
+            if (mask[ni] === 1 && visited[ni] === 0) {
+              visited[ni] = 1
+              queue[tail++] = ni
+            }
+          }
+        }
+      }
+      const bw = maxX - minX + 1
+      const bh = maxY - minY + 1
+      if (tail > bestArea && bw < gw * 0.85 && bh < gh * 0.85) {
+        bestArea = tail
+        bestBox = { minX, minY, maxX, maxY }
+      }
+    }
+
+    if (!bestBox) return []
+    const bw = Math.max(4, bestBox.maxX - bestBox.minX + 1)
+    const bh = Math.max(4, bestBox.maxY - bestBox.minY + 1)
+    const padX = Math.max(4, Math.round(bw * 0.14))
+    const padTop = Math.max(4, Math.round(bh * 0.12))
+    const padBot = Math.max(6, Math.round(bh * 0.35))
+    const nx1 = Math.max(0.01, (bestBox.minX - padX) / gw)
+    const ny1 = Math.max(0.01, (bestBox.minY - padTop) / gh)
+    const nx2 = Math.min(0.99, (bestBox.maxX + padX) / gw)
+    const ny2 = Math.min(0.99, (bestBox.maxY + padBot) / gh)
+
+    return [
+      {
+        id: 1,
+        label: 'potted plant',
+        confidence: 0.72,
+        x: Number(nx1.toFixed(4)),
+        y: Number(ny1.toFixed(4)),
+        width: Number((nx2 - nx1).toFixed(4)),
+        height: Number((ny2 - ny1).toFixed(4)),
+        foliage_box: {
+          x: Number(Math.max(0.01, bestBox.minX / gw).toFixed(4)),
+          y: Number(Math.max(0.01, bestBox.minY / gh).toFixed(4)),
+          width: Number(Math.min(0.98, bw / gw).toFixed(4)),
+          height: Number(Math.min(0.98, bh / gh).toFixed(4))
+        }
+      }
+    ]
+  }
+
   private async detectPlantsInBrowser(
     sourceCanvas: HTMLCanvasElement,
     realTimeTick = false
@@ -811,7 +912,9 @@ class BrowserAgroVisionEngine {
     if (realTimeTick && this.cachedDetections.length > 0 && now - this.lastDetTime < 2400) {
       return this.cachedDetections
     }
-    if (!this.detectorPipe) return this.cachedDetections
+    if (!this.detectorPipe) {
+      return this.detectGreenCanopyFallbackBox(sourceCanvas)
+    }
 
     try {
       // Reducir tamaño máximo a 320px para acelerar ~4x la detección multi-planta en navegador
@@ -873,7 +976,12 @@ class BrowserAgroVisionEngine {
         })
       }
 
-      if (rawBoxes.length === 0) return []
+      if (rawBoxes.length === 0) {
+        const fb = this.detectGreenCanopyFallbackBox(sourceCanvas)
+        this.cachedDetections = fb
+        this.lastDetTime = performance.now()
+        return fb
+      }
 
       // Fusionar cajas que pertenecen a la misma maceta/planta
       rawBoxes.sort((a, b) => b.score - a.score)
