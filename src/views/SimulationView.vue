@@ -2,8 +2,14 @@
 import { computed, ref, onMounted, onBeforeUnmount, shallowRef } from 'vue'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { Download, LocateFixed, Maximize2, Minimize2, Move, Pause, Play, Wind } from 'lucide-vue-next'
+import { Cpu, Download, LocateFixed, Maximize2, Minimize2, Move, Pause, Play, Wind } from 'lucide-vue-next'
 import DroneConnectionPanel from '../components/simulation/DroneConnectionPanel.vue'
+import {
+  detectHardwareGpuModel,
+  graphicsQuality,
+  setGraphicsQuality,
+  type GraphicsQualityPreset,
+} from '../services/desktopRuntime'
 import {
   createAlert,
   createSimulation,
@@ -56,6 +62,11 @@ const windEnabled = ref(true)
 const cameraFollowEnabled = ref(true)
 const cameraPanMode = ref(false)
 const isFullscreen = ref(false)
+const liveFps = ref(60)
+const frameTimeMs = ref(16.6)
+const gpuRendererName = ref(detectHardwareGpuModel())
+let mainDirLight: THREE.DirectionalLight | null = null
+let pointerDirty = true
 
 // Datos de interacción (panel fijo de inspección en la columna izquierda)
 const hoveredPlant = ref<PlantData | null>(null)
@@ -897,17 +908,31 @@ const initThree = () => {
   if (!canvasRef.value || !containerRef.value) return
   const width = canvasRef.value.clientWidth, height = canvasRef.value.clientHeight
   const isSmallScreen = window.matchMedia('(max-width: 767px)').matches
-  renderer.value = new THREE.WebGLRenderer({ canvas: canvasRef.value, antialias: !isSmallScreen })
-  renderer.value.setPixelRatio(Math.min(window.devicePixelRatio, isSmallScreen ? 1.5 : 2))
+  const quality = graphicsQuality.value
+  renderer.value = new THREE.WebGLRenderer({
+    canvas: canvasRef.value,
+    antialias: quality !== 'performance' && !isSmallScreen,
+    powerPreference: 'high-performance',
+    precision: 'highp',
+  })
+  gpuRendererName.value = detectHardwareGpuModel(renderer.value.getContext())
+  const targetPixelRatio =
+    quality === 'ultra'
+      ? Math.min(window.devicePixelRatio, 2.5)
+      : quality === 'balanced'
+        ? Math.min(window.devicePixelRatio, 1.75)
+        : 1.0
+  renderer.value.setPixelRatio(isSmallScreen ? Math.min(window.devicePixelRatio, 1.5) : targetPixelRatio)
   renderer.value.setSize(width, height, false)
-  renderer.value.shadowMap.enabled = !isSmallScreen
-  renderer.value.shadowMap.type = THREE.PCFSoftShadowMap
+  renderer.value.shadowMap.enabled = quality !== 'performance' && !isSmallScreen
+  renderer.value.shadowMap.type = quality === 'ultra' ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap
   renderer.value.outputColorSpace = THREE.SRGBColorSpace
   renderer.value.toneMapping = THREE.ACESFilmicToneMapping
-  renderer.value.toneMappingExposure = 1.12
+  renderer.value.toneMappingExposure = 1.14
 
   scene.value = new THREE.Scene()
   scene.value.background = new THREE.Color(0x9fc6d7)
+  scene.value.fog = quality === 'performance' ? null : new THREE.FogExp2(0x9fc6d7, 0.0038)
 
   camera.value = new THREE.PerspectiveCamera(60, width / height, 0.1, 1000)
   camera.value.position.set(0, 29, 42)
@@ -924,20 +949,27 @@ const initThree = () => {
   controls.value.addEventListener('start', () => {
     cameraFollowEnabled.value = false
   })
+  controls.value.addEventListener('change', () => {
+    pointerDirty = true
+  })
 
-  scene.value.add(new THREE.HemisphereLight(0xeaf1df, 0x493b2c, 1.45))
-  const dirLight = new THREE.DirectionalLight(0xfff0d2, 2.1)
+  scene.value.add(new THREE.HemisphereLight(0xeaf1df, 0x493b2c, 1.48))
+  const dirLight = new THREE.DirectionalLight(0xfff0d2, 2.15)
   dirLight.position.set(-35, 65, 25)
-  dirLight.castShadow = true
-  dirLight.shadow.mapSize.set(2048, 2048)
-  dirLight.shadow.camera.left = -40
-  dirLight.shadow.camera.right = 40
-  dirLight.shadow.camera.top = 40
-  dirLight.shadow.camera.bottom = -40
+  dirLight.castShadow = quality !== 'performance'
+  const shadowRes = quality === 'ultra' ? 4096 : quality === 'balanced' ? 2048 : 1024
+  dirLight.shadow.mapSize.set(shadowRes, shadowRes)
+  dirLight.shadow.camera.left = -45
+  dirLight.shadow.camera.right = 45
+  dirLight.shadow.camera.top = 45
+  dirLight.shadow.camera.bottom = -45
   dirLight.shadow.bias = -0.0002
+  mainDirLight = dirLight
   scene.value.add(dirLight)
 
-  groundMaterial = new THREE.MeshLambertMaterial({ color: 0xffffff, map: createSoilTexture() })
+  const soilTex = createSoilTexture()
+  soilTex.anisotropy = renderer.value.capabilities.getMaxAnisotropy() || 16
+  groundMaterial = new THREE.MeshLambertMaterial({ color: 0xffffff, map: soilTex })
   sectorFalloffTexture = createSectorFalloffTexture()
   const fieldExtent = selectedFieldGeometry.value
     ? Math.max(selectedFieldGeometry.value.widthMeters, selectedFieldGeometry.value.depthMeters)
@@ -1093,9 +1125,28 @@ const initThree = () => {
   raycaster.value = new THREE.Raycaster(); mouse.value = new THREE.Vector2()
 
   let actionTimer = 0
+  let lastFrameTimestamp = performance.now()
+  let fpsFrameCounter = 0
+  let fpsWindowStart = performance.now()
+  let raycastTick = 0
 
   const animate = () => {
     animationId.value = requestAnimationFrame(animate)
+    const now = performance.now()
+    const deltaSec = Math.min(0.05, Math.max(0.001, (now - lastFrameTimestamp) / 1000))
+    const dtScale = deltaSec * 60
+    lastFrameTimestamp = now
+
+    fpsFrameCounter++
+    if (now - fpsWindowStart >= 500) {
+      const elapsed = now - fpsWindowStart
+      const currentFps = Math.round((fpsFrameCounter * 1000) / elapsed)
+      liveFps.value = Math.max(1, Math.min(240, currentFps))
+      frameTimeMs.value = Number((elapsed / fpsFrameCounter).toFixed(1))
+      fpsFrameCounter = 0
+      fpsWindowStart = now
+    }
+
     controls.value?.update()
     updateLiveDrone()
     updateCameraFollow()
@@ -1103,21 +1154,23 @@ const initThree = () => {
       if (renderer.value && scene.value && camera.value) renderer.value.render(scene.value, camera.value)
       return
     }
-    simulationTime += 0.016
+    simulationTime += deltaSec
     if (leafWindUniform) leafWindUniform.value = simulationTime
     if (leafWindStrengthUniform) leafWindStrengthUniform.value = windEnabled.value ? 1 : 0
 
     if (droneState.value === 'IDLE') {
-      const hover = Math.sin(performance.now() * 0.0018) * 0.08
+      const hover = Math.sin(now * 0.0018) * 0.08
       droneGroup.position.y = DRONE_BASE.y + hover
-      droneGroup.rotation.z = Math.sin(performance.now() * 0.0012) * 0.012
+      droneGroup.rotation.z = Math.sin(now * 0.0012) * 0.012
       propellers.forEach((propeller, index) => {
-        propeller.rotation.y += index % 2 === 0 ? 0.12 : -0.12
+        propeller.rotation.y += (index % 2 === 0 ? 0.12 : -0.12) * dtScale
       })
     }
     
-    // Raycaster para Plantas y Zonas
-    if (raycaster.value && mouse.value && camera.value && scene.value) {
+    // Raycaster optimizado: solo evalúa intersecciones cuando el cursor se mueve o durante barrido activo
+    raycastTick++
+    if ((pointerDirty || (droneState.value !== 'IDLE' && raycastTick % 12 === 0)) && raycaster.value && mouse.value && camera.value && scene.value) {
+      pointerDirty = false
       raycaster.value.setFromCamera(mouse.value, camera.value)
       
       const plantHits = raycaster.value.intersectObject(hitboxMesh)
@@ -1282,6 +1335,39 @@ const onMouseMove = (event: PointerEvent) => {
   const rect = canvasRef.value.getBoundingClientRect()
   mouse.value.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
   mouse.value.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
+  pointerDirty = true
+}
+
+const onGraphicsQualityChange = (preset: GraphicsQualityPreset) => {
+  setGraphicsQuality(preset)
+  if (!renderer.value || !scene.value) return
+  const isSmallScreen = window.matchMedia('(max-width: 767px)').matches
+  const targetPixelRatio =
+    preset === 'ultra'
+      ? Math.min(window.devicePixelRatio, 2.5)
+      : preset === 'balanced'
+        ? Math.min(window.devicePixelRatio, 1.75)
+        : 1.0
+  renderer.value.setPixelRatio(isSmallScreen ? Math.min(window.devicePixelRatio, 1.5) : targetPixelRatio)
+  renderer.value.shadowMap.enabled = preset !== 'performance' && !isSmallScreen
+  renderer.value.shadowMap.type = preset === 'ultra' ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap
+  renderer.value.shadowMap.needsUpdate = true
+  scene.value.fog = preset === 'performance' ? null : new THREE.FogExp2(0x9fc6d7, 0.0038)
+  if (mainDirLight) {
+    mainDirLight.castShadow = preset !== 'performance'
+    const shadowRes = preset === 'ultra' ? 4096 : preset === 'balanced' ? 2048 : 1024
+    mainDirLight.shadow.mapSize.set(shadowRes, shadowRes)
+    mainDirLight.shadow.map?.dispose()
+    mainDirLight.shadow.map = null
+  }
+  onWindowResize()
+  setActionFeedback(
+    preset === 'ultra'
+      ? `Motor Gráfico Ultra PC activado: Sombras 4K, Supersampling GPU (${targetPixelRatio.toFixed(2)}x) y Anisotropía 16x.`
+      : preset === 'balanced'
+        ? 'Motor Gráfico Equilibrado activado: Sombras 2K y consumo optimizado.'
+        : 'Modo Máximo Rendimiento (FPS Desbloqueados) activado.'
+  )
 }
 
 const onWindowResize = () => {
@@ -1291,9 +1377,17 @@ const onWindowResize = () => {
   camera.value.aspect = width / height
   camera.value.updateProjectionMatrix()
   const isSmallScreen = window.matchMedia('(max-width: 767px)').matches
-  renderer.value.shadowMap.enabled = !isSmallScreen
-  renderer.value.setPixelRatio(Math.min(window.devicePixelRatio, isSmallScreen ? 1.5 : 2))
+  const preset = graphicsQuality.value
+  const targetPixelRatio =
+    preset === 'ultra'
+      ? Math.min(window.devicePixelRatio, 2.5)
+      : preset === 'balanced'
+        ? Math.min(window.devicePixelRatio, 1.75)
+        : 1.0
+  renderer.value.shadowMap.enabled = preset !== 'performance' && !isSmallScreen
+  renderer.value.setPixelRatio(isSmallScreen ? Math.min(window.devicePixelRatio, 1.5) : targetPixelRatio)
   renderer.value.setSize(width, height, false)
+  pointerDirty = true
 }
 
 onMounted(async () => {
@@ -1328,12 +1422,33 @@ onBeforeUnmount(() => {
     <!-- Header -->
     <div class="simulation-header px-6 py-4 bg-white border-b border-gray-200 flex justify-between items-center z-20 shadow-sm relative">
       <div>
-        <span class="simulation-eyebrow">LABORATORIO AGRÍCOLA</span>
+        <div class="flex items-center gap-2.5 flex-wrap">
+          <span class="simulation-eyebrow">LABORATORIO AGRÍCOLA · MOTOR GPU</span>
+          <span
+            class="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/25 bg-emerald-950/60 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-300"
+            :title="`Aceleración por hardware activa: ${gpuRendererName}`"
+          >
+            <Cpu :size="12" class="text-emerald-400" />
+            <span>{{ liveFps }} FPS · {{ frameTimeMs }} ms</span>
+            <span class="hidden xl:inline text-emerald-400/75">· {{ gpuRendererName.slice(0, 28) }}</span>
+          </span>
+        </div>
         <h1 class="text-2xl font-bold text-gray-900">Simulador de cultivos</h1>
-        <p class="text-sm text-gray-500 mt-1">Explora el cultivo, analiza su vigor y ejecuta misiones con drones.</p>
+        <p class="text-sm text-gray-500 mt-1">Explora el cultivo con aceleración GPU dedicada, analiza su vigor y ejecuta misiones con drones.</p>
       </div>
       
       <div class="simulation-header-actions">
+        <select
+          :value="graphicsQuality"
+          class="simulation-field-select"
+          aria-label="Calidad gráfica y aceleración de hardware"
+          title="Nivel de optimización y calidad gráfica GPU"
+          @change="onGraphicsQualityChange(($event.target as HTMLSelectElement).value as GraphicsQualityPreset)"
+        >
+          <option value="ultra">Gráficos: Ultra PC (4K · 16x)</option>
+          <option value="balanced">Gráficos: Equilibrado (2K)</option>
+          <option value="performance">Gráficos: Máx. FPS</option>
+        </select>
         <select
           v-model="selectedFieldId"
           class="simulation-field-select"

@@ -1,7 +1,25 @@
 import { createClient } from '@supabase/supabase-js'
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY
+const DEFAULT_PUBLIC_SUPABASE_URL = 'https://njakkhbrjkpraqubzviw.supabase.co'
+const DEFAULT_PUBLIC_SUPABASE_ANON_KEY =
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5qYWtraGJyamtwcmFxdWJ6dml3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkxNzg0NzksImV4cCI6MjEwNDc1NDQ3OX0.c0eyoBPgQ1ktN1wofAyn1GPzrDLFEGasYV3dacK9wLw'
+
+const envUrl = import.meta.env.VITE_SUPABASE_URL?.trim()
+const envKey = (
+  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+  import.meta.env.VITE_SUPABASE_ANON_KEY ||
+  ''
+).trim()
+
+const supabaseUrl =
+  envUrl && !envUrl.includes('your-project.supabase.co')
+    ? envUrl
+    : DEFAULT_PUBLIC_SUPABASE_URL
+
+const supabaseAnonKey =
+  envKey && !envKey.includes('your-supabase-publishable')
+    ? envKey
+    : DEFAULT_PUBLIC_SUPABASE_ANON_KEY
 
 export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey)
 
@@ -23,5 +41,14 @@ const fetchWithTimeout: typeof fetch = async (input, init) => {
 }
 
 export const supabase = isSupabaseConfigured
-  ? createClient(supabaseUrl, supabaseAnonKey, { global: { fetch: fetchWithTimeout } })
+  ? createClient(supabaseUrl, supabaseAnonKey, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+        storageKey: 'agronia-desktop-supabase-auth',
+      },
+      global: { fetch: fetchWithTimeout },
+    })
   : null
+

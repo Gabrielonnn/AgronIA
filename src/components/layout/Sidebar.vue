@@ -3,6 +3,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { Home, Map, MapPin, PieChart, Database, Settings, LogOut, MonitorPlay, ShieldCheck, Users, ScanSearch, Sprout } from 'lucide-vue-next'
 import { useMainStore } from '../../stores'
 import { supabase } from '../../services/supabase'
+import { isDesktopApp } from '../../services/desktopRuntime'
 import { computed } from 'vue'
 import agroniaLogo from '../../assets/agronia-logo.png'
 
@@ -89,7 +90,7 @@ const roleColor = computed(() => {
           <strong>DE PRECISIÓN</strong>
         </div>
       </div>
-      <span class="topo-brand-version"><i aria-hidden="true"></i> FIELD</span>
+      <span class="topo-brand-version"><i aria-hidden="true"></i> {{ isDesktopApp ? 'DESKTOP' : 'FIELD' }}</span>
     </div>
     
     <nav class="topo-navigation flex-1 overflow-y-auto py-4" aria-label="Secciones de AgronIA">

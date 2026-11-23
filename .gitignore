@@ -10,6 +10,8 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+release-desktop
+.env
 *.local
 __pycache__/
 backend/models/*.h5

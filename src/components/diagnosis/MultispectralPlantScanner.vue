@@ -221,13 +221,15 @@ async function startCamera(useSpecificDevice = false) {
       useSpecificDevice && selectedDeviceId.value
         ? {
             deviceId: { exact: selectedDeviceId.value },
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            frameRate: { ideal: 60 }
           }
         : {
             facingMode: { ideal: cameraFacingMode.value },
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            frameRate: { ideal: 60 }
           }
 
     const stream = await navigator.mediaDevices.getUserMedia({
@@ -692,11 +694,13 @@ function startRenderLoop() {
     rafId = requestAnimationFrame(loop)
     frameCounter++
     if (now - fpsTimer >= 1000) {
-      fpsCount.value = Math.min(60, Math.max(1, Math.round((frameCounter * 1000) / (now - fpsTimer))))
+      fpsCount.value = Math.min(120, Math.max(1, Math.round((frameCounter * 1000) / (now - fpsTimer))))
       frameCounter = 0
       fpsTimer = now
     }
-    if (now - lastFrameTime >= 30) {
+    // En modo cámara en vivo o planta interactiva corremos a 60 FPS; en imagen estática a intervalos ligeros
+    const targetIntervalMs = sourceMode.value === 'image' ? 45 : 15
+    if (now - lastFrameTime >= targetIntervalMs) {
       lastFrameTime = now
       renderSinglePass(now)
     }
