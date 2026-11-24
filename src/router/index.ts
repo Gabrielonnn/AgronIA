@@ -1,9 +1,17 @@
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHashHistory, createWebHistory } from 'vue-router'
 import { useMainStore } from '../stores'
 import { isSupabaseConfigured } from '../services/supabase'
 
+const isDesktopRuntime =
+  typeof window !== 'undefined' &&
+  (window.location.protocol === 'file:' ||
+    navigator.userAgent.toLowerCase().includes('electron') ||
+    import.meta.env.VITE_DESKTOP === 'true')
+
 const router = createRouter({
-  history: createWebHistory(import.meta.env.BASE_URL),
+  history: isDesktopRuntime
+    ? createWebHashHistory()
+    : createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
       path: '/login',
@@ -16,6 +24,12 @@ const router = createRouter({
       name: 'register',
       component: () => import('../views/RegisterView.vue'),
       meta: { public: true }
+    },
+    {
+      path: '/recuperar-acceso',
+      name: 'recover-access',
+      component: () => import('../views/RecoveryView.vue'),
+      meta: { public: true, allowAuthenticated: true }
     },
     {
       path: '/',
@@ -110,7 +124,7 @@ router.beforeEach(async (to) => {
     return { name: 'login' }
   }
 
-  if (to.meta.public && store.user) {
+  if (to.meta.public && store.user && !to.meta.allowAuthenticated) {
     return { name: 'home' }
   }
 

@@ -2,8 +2,14 @@
 import { computed, ref, onMounted, onBeforeUnmount, shallowRef } from 'vue'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { Download, LocateFixed, Maximize2, Minimize2, Move, Pause, Play, Wind } from 'lucide-vue-next'
+import { Cpu, Download, LocateFixed, Maximize2, Minimize2, Move, Pause, Play, Wind } from 'lucide-vue-next'
 import DroneConnectionPanel from '../components/simulation/DroneConnectionPanel.vue'
+import {
+  detectHardwareGpuModel,
+  graphicsQuality,
+  setGraphicsQuality,
+  type GraphicsQualityPreset,
+} from '../services/desktopRuntime'
 import {
   createAlert,
   createSimulation,
@@ -58,10 +64,18 @@ const windEnabled = ref(true)
 const cameraFollowEnabled = ref(true)
 const cameraPanMode = ref(false)
 const isFullscreen = ref(false)
+
 const coverageRoute = ref<CoverageRoute | null>(null)
 const trendHistory = ref<Array<{ elapsed: number; health: number; humidity: number; ndvi: number }>>([])
 const simulationElapsedSeconds = ref(0)
 const affectedPlants = ref<PlantData[]>([])
+
+const liveFps = ref(60)
+const frameTimeMs = ref(16.6)
+const gpuRendererName = ref(detectHardwareGpuModel())
+let mainDirLight: THREE.DirectionalLight | null = null
+let pointerDirty = true
+
 
 // Datos de interacción (panel fijo de inspección en la columna izquierda)
 const hoveredPlant = ref<PlantData | null>(null)
@@ -254,11 +268,16 @@ const frameCameraOnField = () => {
     controls.value.maxDistance = 180
   } else {
     const maxDimension = Math.max(geometry.widthMeters, geometry.depthMeters)
-    const fitDepth = Math.max(geometry.depthMeters, geometry.widthMeters / (camera.value.aspect || 1))
-    const distance = fitDepth / (2 * Math.tan(THREE.MathUtils.degToRad(camera.value.fov / 2))) * 1.18
+    const fieldRadius = Math.hypot(geometry.widthMeters, geometry.depthMeters) / 2
+    const aspect = Math.max(camera.value.aspect, 0.01)
+    const halfVerticalFov = THREE.MathUtils.degToRad(camera.value.fov / 2)
+    const halfFitFov = Math.atan(Math.tan(halfVerticalFov) * Math.min(aspect, 1))
+    const distance = fieldRadius / Math.sin(halfFitFov) * 1.2
     camera.value.position.set(0, distance * 0.58, distance * 0.82)
     controls.value.minDistance = 3
-    controls.value.maxDistance = Math.max(120, maxDimension * 4)
+    controls.value.maxDistance = Math.max(120, distance * 2, maxDimension * 4)
+    camera.value.far = Math.max(1000, distance * 4)
+    camera.value.updateProjectionMatrix()
   }
   controls.value.update()
 }
@@ -1183,17 +1202,31 @@ const initThree = () => {
   if (!canvasRef.value || !containerRef.value) return
   const width = canvasRef.value.clientWidth, height = canvasRef.value.clientHeight
   const isSmallScreen = window.matchMedia('(max-width: 767px)').matches
-  renderer.value = new THREE.WebGLRenderer({ canvas: canvasRef.value, antialias: !isSmallScreen })
-  renderer.value.setPixelRatio(Math.min(window.devicePixelRatio, isSmallScreen ? 1.5 : 2))
+  const quality = graphicsQuality.value
+  renderer.value = new THREE.WebGLRenderer({
+    canvas: canvasRef.value,
+    antialias: quality !== 'performance' && !isSmallScreen,
+    powerPreference: 'high-performance',
+    precision: 'highp',
+  })
+  gpuRendererName.value = detectHardwareGpuModel(renderer.value.getContext())
+  const targetPixelRatio =
+    quality === 'ultra'
+      ? Math.min(window.devicePixelRatio, 2.5)
+      : quality === 'balanced'
+        ? Math.min(window.devicePixelRatio, 1.75)
+        : 1.0
+  renderer.value.setPixelRatio(isSmallScreen ? Math.min(window.devicePixelRatio, 1.5) : targetPixelRatio)
   renderer.value.setSize(width, height, false)
-  renderer.value.shadowMap.enabled = !isSmallScreen
-  renderer.value.shadowMap.type = THREE.PCFSoftShadowMap
+  renderer.value.shadowMap.enabled = quality !== 'performance' && !isSmallScreen
+  renderer.value.shadowMap.type = quality === 'ultra' ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap
   renderer.value.outputColorSpace = THREE.SRGBColorSpace
   renderer.value.toneMapping = THREE.ACESFilmicToneMapping
-  renderer.value.toneMappingExposure = 1.12
+  renderer.value.toneMappingExposure = 1.14
 
   scene.value = new THREE.Scene()
   scene.value.background = new THREE.Color(0x9fc6d7)
+  scene.value.fog = quality === 'performance' ? null : new THREE.FogExp2(0x9fc6d7, 0.0038)
 
   camera.value = new THREE.PerspectiveCamera(60, width / height, 0.1, 1000)
   camera.value.position.set(0, 29, 42)
@@ -1210,20 +1243,27 @@ const initThree = () => {
   controls.value.addEventListener('start', () => {
     cameraFollowEnabled.value = false
   })
+  controls.value.addEventListener('change', () => {
+    pointerDirty = true
+  })
 
-  scene.value.add(new THREE.HemisphereLight(0xeaf1df, 0x493b2c, 1.45))
-  const dirLight = new THREE.DirectionalLight(0xfff0d2, 2.1)
+  scene.value.add(new THREE.HemisphereLight(0xeaf1df, 0x493b2c, 1.48))
+  const dirLight = new THREE.DirectionalLight(0xfff0d2, 2.15)
   dirLight.position.set(-35, 65, 25)
-  dirLight.castShadow = true
-  dirLight.shadow.mapSize.set(2048, 2048)
-  dirLight.shadow.camera.left = -40
-  dirLight.shadow.camera.right = 40
-  dirLight.shadow.camera.top = 40
-  dirLight.shadow.camera.bottom = -40
+  dirLight.castShadow = quality !== 'performance'
+  const shadowRes = quality === 'ultra' ? 4096 : quality === 'balanced' ? 2048 : 1024
+  dirLight.shadow.mapSize.set(shadowRes, shadowRes)
+  dirLight.shadow.camera.left = -45
+  dirLight.shadow.camera.right = 45
+  dirLight.shadow.camera.top = 45
+  dirLight.shadow.camera.bottom = -45
   dirLight.shadow.bias = -0.0002
+  mainDirLight = dirLight
   scene.value.add(dirLight)
 
-  groundMaterial = new THREE.MeshLambertMaterial({ color: 0xffffff, map: createSoilTexture() })
+  const soilTex = createSoilTexture()
+  soilTex.anisotropy = renderer.value.capabilities.getMaxAnisotropy() || 16
+  groundMaterial = new THREE.MeshLambertMaterial({ color: 0xffffff, map: soilTex })
   sectorFalloffTexture = createSectorFalloffTexture()
   const fieldExtent = selectedFieldGeometry.value
     ? Math.max(selectedFieldGeometry.value.widthMeters, selectedFieldGeometry.value.depthMeters)
@@ -1396,15 +1436,39 @@ const initThree = () => {
   raycaster.value = new THREE.Raycaster(); mouse.value = new THREE.Vector2()
 
   let actionTimer = 0
+
   let stressTickElapsed = 0
   let trendTickElapsed = 0
   let lastAnimationFrameAt = performance.now()
 
+  let lastFrameTimestamp = performance.now()
+  let fpsFrameCounter = 0
+  let fpsWindowStart = performance.now()
+  let raycastTick = 0
+
+
   const animate = () => {
     animationId.value = requestAnimationFrame(animate)
     const now = performance.now()
+
     const frameDelta = Math.min(0.1, Math.max(0, (now - lastAnimationFrameAt) / 1000))
     lastAnimationFrameAt = now
+
+    const deltaSec = Math.min(0.05, Math.max(0.001, (now - lastFrameTimestamp) / 1000))
+    const dtScale = deltaSec * 60
+    lastFrameTimestamp = now
+
+    fpsFrameCounter++
+    if (now - fpsWindowStart >= 500) {
+      const elapsed = now - fpsWindowStart
+      const currentFps = Math.round((fpsFrameCounter * 1000) / elapsed)
+      liveFps.value = Math.max(1, Math.min(240, currentFps))
+      frameTimeMs.value = Number((elapsed / fpsFrameCounter).toFixed(1))
+      fpsFrameCounter = 0
+      fpsWindowStart = now
+    }
+
+
     controls.value?.update()
     updateLiveDrone()
     updateCameraFollow()
@@ -1412,9 +1476,13 @@ const initThree = () => {
       if (renderer.value && scene.value && camera.value) renderer.value.render(scene.value, camera.value)
       return
     }
+
     simulationTime += frameDelta
     stressTickElapsed += frameDelta
     trendTickElapsed += frameDelta
+
+    simulationTime += deltaSec
+
     if (leafWindUniform) leafWindUniform.value = simulationTime
     if (leafWindStrengthUniform) leafWindStrengthUniform.value = windEnabled.value ? 1 : 0
     if (stressTickElapsed >= 2) {
@@ -1431,16 +1499,18 @@ const initThree = () => {
     }
 
     if (droneState.value === 'IDLE') {
-      const hover = Math.sin(performance.now() * 0.0018) * 0.08
+      const hover = Math.sin(now * 0.0018) * 0.08
       droneGroup.position.y = DRONE_BASE.y + hover
-      droneGroup.rotation.z = Math.sin(performance.now() * 0.0012) * 0.012
+      droneGroup.rotation.z = Math.sin(now * 0.0012) * 0.012
       propellers.forEach((propeller, index) => {
-        propeller.rotation.y += index % 2 === 0 ? 0.12 : -0.12
+        propeller.rotation.y += (index % 2 === 0 ? 0.12 : -0.12) * dtScale
       })
     }
     
-    // Raycaster para Plantas y Zonas
-    if (raycaster.value && mouse.value && camera.value && scene.value) {
+    // Raycaster optimizado: solo evalúa intersecciones cuando el cursor se mueve o durante barrido activo
+    raycastTick++
+    if ((pointerDirty || (droneState.value !== 'IDLE' && raycastTick % 12 === 0)) && raycaster.value && mouse.value && camera.value && scene.value) {
+      pointerDirty = false
       raycaster.value.setFromCamera(mouse.value, camera.value)
       
       const plantHits = raycaster.value.intersectObject(hitboxMesh)
@@ -1597,6 +1667,39 @@ const onMouseMove = (event: PointerEvent) => {
   const rect = canvasRef.value.getBoundingClientRect()
   mouse.value.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
   mouse.value.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
+  pointerDirty = true
+}
+
+const onGraphicsQualityChange = (preset: GraphicsQualityPreset) => {
+  setGraphicsQuality(preset)
+  if (!renderer.value || !scene.value) return
+  const isSmallScreen = window.matchMedia('(max-width: 767px)').matches
+  const targetPixelRatio =
+    preset === 'ultra'
+      ? Math.min(window.devicePixelRatio, 2.5)
+      : preset === 'balanced'
+        ? Math.min(window.devicePixelRatio, 1.75)
+        : 1.0
+  renderer.value.setPixelRatio(isSmallScreen ? Math.min(window.devicePixelRatio, 1.5) : targetPixelRatio)
+  renderer.value.shadowMap.enabled = preset !== 'performance' && !isSmallScreen
+  renderer.value.shadowMap.type = preset === 'ultra' ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap
+  renderer.value.shadowMap.needsUpdate = true
+  scene.value.fog = preset === 'performance' ? null : new THREE.FogExp2(0x9fc6d7, 0.0038)
+  if (mainDirLight) {
+    mainDirLight.castShadow = preset !== 'performance'
+    const shadowRes = preset === 'ultra' ? 4096 : preset === 'balanced' ? 2048 : 1024
+    mainDirLight.shadow.mapSize.set(shadowRes, shadowRes)
+    mainDirLight.shadow.map?.dispose()
+    mainDirLight.shadow.map = null
+  }
+  onWindowResize()
+  setActionFeedback(
+    preset === 'ultra'
+      ? `Motor Gráfico Ultra PC activado: Sombras 4K, Supersampling GPU (${targetPixelRatio.toFixed(2)}x) y Anisotropía 16x.`
+      : preset === 'balanced'
+        ? 'Motor Gráfico Equilibrado activado: Sombras 2K y consumo optimizado.'
+        : 'Modo Máximo Rendimiento (FPS Desbloqueados) activado.'
+  )
 }
 
 const onWindowResize = () => {
@@ -1606,9 +1709,17 @@ const onWindowResize = () => {
   camera.value.aspect = width / height
   camera.value.updateProjectionMatrix()
   const isSmallScreen = window.matchMedia('(max-width: 767px)').matches
-  renderer.value.shadowMap.enabled = !isSmallScreen
-  renderer.value.setPixelRatio(Math.min(window.devicePixelRatio, isSmallScreen ? 1.5 : 2))
+  const preset = graphicsQuality.value
+  const targetPixelRatio =
+    preset === 'ultra'
+      ? Math.min(window.devicePixelRatio, 2.5)
+      : preset === 'balanced'
+        ? Math.min(window.devicePixelRatio, 1.75)
+        : 1.0
+  renderer.value.shadowMap.enabled = preset !== 'performance' && !isSmallScreen
+  renderer.value.setPixelRatio(isSmallScreen ? Math.min(window.devicePixelRatio, 1.5) : targetPixelRatio)
   renderer.value.setSize(width, height, false)
+  pointerDirty = true
 }
 
 onMounted(async () => {
@@ -1646,12 +1757,33 @@ onBeforeUnmount(() => {
     <!-- Header -->
     <div class="simulation-header px-6 py-4 bg-white border-b border-gray-200 flex justify-between items-center z-20 shadow-sm relative">
       <div>
-        <span class="simulation-eyebrow">LABORATORIO AGRÍCOLA</span>
+        <div class="flex items-center gap-2.5 flex-wrap">
+          <span class="simulation-eyebrow">LABORATORIO AGRÍCOLA · MOTOR GPU</span>
+          <span
+            class="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/25 bg-emerald-950/60 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-300"
+            :title="`Aceleración por hardware activa: ${gpuRendererName}`"
+          >
+            <Cpu :size="12" class="text-emerald-400" />
+            <span>{{ liveFps }} FPS · {{ frameTimeMs }} ms</span>
+            <span class="hidden xl:inline text-emerald-400/75">· {{ gpuRendererName.slice(0, 28) }}</span>
+          </span>
+        </div>
         <h1 class="text-2xl font-bold text-gray-900">Simulador de cultivos</h1>
-        <p class="text-sm text-gray-500 mt-1">Explora el cultivo, analiza su vigor y ejecuta misiones con drones.</p>
+        <p class="text-sm text-gray-500 mt-1">Explora el cultivo con aceleración GPU dedicada, analiza su vigor y ejecuta misiones con drones.</p>
       </div>
       
       <div class="simulation-header-actions">
+        <select
+          :value="graphicsQuality"
+          class="simulation-field-select"
+          aria-label="Calidad gráfica y aceleración de hardware"
+          title="Nivel de optimización y calidad gráfica GPU"
+          @change="onGraphicsQualityChange(($event.target as HTMLSelectElement).value as GraphicsQualityPreset)"
+        >
+          <option value="ultra">Gráficos: Ultra PC (4K · 16x)</option>
+          <option value="balanced">Gráficos: Equilibrado (2K)</option>
+          <option value="performance">Gráficos: Máx. FPS</option>
+        </select>
         <select
           v-model="selectedFieldId"
           class="simulation-field-select"
@@ -1767,21 +1899,6 @@ onBeforeUnmount(() => {
         </button>
       </div>
 
-
-      <div class="simulation-side-stack">
-      <!-- Menú de Dron / Análisis -->
-      <div class="simulation-panel simulation-controls absolute top-6 right-6 bg-black/80 backdrop-blur-md border border-white/10 rounded-xl p-4 text-white shadow-2xl z-10 w-64 transition-all">
-        <div class="simulation-panel-heading">
-          <span class="simulation-panel-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-              <path d="m5 10 7-4 7 4v4l-7 4-7-4v-4Zm2 1 5 3 5-3M12 6v8m-7-1-3 2m17-2 3 2" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6" />
-            </svg>
-          </span>
-          <span class="simulation-panel-title"><strong>Centro de misión</strong><small>Operaciones autónomas</small></span>
-          <span class="simulation-status" :class="droneState === 'IDLE' ? 'status-ready' : 'status-active'">
-            <span></span>
-            {{ droneState === 'IDLE' ? 'Disponible' : (droneState === 'SCANNING' ? 'Escaneando' : (droneState === 'CENTINELAS' ? 'Centinelas' : 'En misión')) }}
-          </span>
 
       <!-- Columna Izquierda Fija: Estado + Leyenda + Inspector Fijo de Planta -->
       <div class="simulation-hud-left">
@@ -1920,9 +2037,7 @@ onBeforeUnmount(() => {
           </template>
         </div>
 
-        </div>
       </div>
-    </div>
 
         <!-- Leyenda de Sectores -->
         <div v-if="droneState !== 'IDLE' || sectorMarkers.length > 0" class="simulation-panel simulation-severity p-3.5 text-white shadow-2xl w-64 transition-all">
@@ -1938,8 +2053,6 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </div>
-      </div>
-
       <!-- Columna Derecha Fija: Centro de Misión + Estado del Cultivo (sin superposición) -->
       <div class="simulation-hud-right">
         <!-- Menú de Dron / Análisis -->
@@ -1960,19 +2073,29 @@ onBeforeUnmount(() => {
           <p class="simulation-control-hint">
             {{ simulationPaused ? 'Simulación pausada.' : 'Selecciona una operación para el dron.' }}
           </p>
+
           <div class="space-y-1.5">
             <button @click="handleAction('ANALYZE')" :disabled="droneState !== 'IDLE' || simulationPaused || savingSnapshot" class="simulation-action simulation-action-primary w-full disabled:cursor-not-allowed p-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2">
+
+          <div class="simulation-actions">
+            <button @click="handleAction('ANALYZE')" :disabled="droneState !== 'IDLE' || simulationPaused" class="simulation-action simulation-action-wide simulation-action-primary w-full disabled:cursor-not-allowed p-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2">
+
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
               Analizar cultivo
             </button>
             
-            <button @click="handleAction('CENTINELAS')" :disabled="simulationPaused || (droneState !== 'IDLE' && droneState !== 'CENTINELAS')" class="simulation-action simulation-action-sentinel w-full disabled:cursor-not-allowed p-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2">
+            <button @click="handleAction('CENTINELAS')" :disabled="simulationPaused || (droneState !== 'IDLE' && droneState !== 'CENTINELAS')" class="simulation-action simulation-action-wide simulation-action-sentinel w-full disabled:cursor-not-allowed p-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
               {{ droneState === 'CENTINELAS' ? 'Detener Centinelas' : 'Activar Centinelas' }}
             </button>
             
+
             <div class="grid grid-cols-2 gap-2">
               <button @click="handleAction('WATER')" :disabled="droneState !== 'IDLE' || simulationPaused || savingSnapshot" class="simulation-action simulation-action-water disabled:cursor-not-allowed p-2 rounded-lg text-sm font-medium flex items-center justify-center gap-1.5">
+
+            <div class="simulation-action-row">
+              <button @click="handleAction('WATER')" :disabled="droneState !== 'IDLE' || simulationPaused" class="simulation-action simulation-action-water disabled:cursor-not-allowed p-2 rounded-lg text-sm font-medium flex items-center justify-center gap-1.5">
+
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1M4.22 4.22l.71.71m14.14 14.14l.71.71M1 12h1m20 0h1M4.22 19.78l.71-.71M18.07 5.93l.71-.71M12 6a6 6 0 100 12 6 6 0 000-12z"/></svg>
                 Regar
               </button>
@@ -2330,39 +2453,6 @@ onBeforeUnmount(() => {
 
       .simulation-stage > canvas:active { cursor: grabbing; }
 
-      .simulation-side-stack {
-        position: absolute;
-        z-index: 10;
-        top: 1.5rem;
-        right: 1.5rem;
-        bottom: 1.5rem;
-        display: flex;
-        flex-direction: column;
-        gap: 0.75rem;
-        width: min(300px, calc(100% - 3rem));
-        pointer-events: none;
-      }
-
-      .simulation-side-stack > .simulation-panel {
-        position: relative;
-        inset: auto;
-        width: 100%;
-        margin: 0;
-        pointer-events: auto;
-      }
-
-      .simulation-side-stack > .simulation-controls {
-        flex: 0 0 auto;
-        max-height: 58%;
-        overflow: auto;
-      }
-
-      .simulation-side-stack > .simulation-telemetry {
-        min-height: 0;
-        flex: 1 1 auto;
-        overflow: auto;
-      }
-
       .simulation-hud-left {
         position: absolute;
         z-index: 10;
@@ -2400,6 +2490,9 @@ onBeforeUnmount(() => {
 
       .simulation-hud-left > *,
       .simulation-hud-right > * {
+        box-sizing: border-box;
+        width: 100%;
+        max-width: 100%;
         pointer-events: auto;
         flex-shrink: 0;
 
@@ -2571,11 +2664,6 @@ onBeforeUnmount(() => {
         border-radius: 0;
       }
 
-      .simulation-stage:fullscreen > .simulation-side-stack {
-        inset: 1rem 1rem 1rem auto;
-        width: min(340px, calc(100vw - 2rem));
-      }
-
       .simulation-stage:fullscreen > .simulation-legend {
         position: absolute;
         inset: 1rem auto auto 1rem;
@@ -2633,6 +2721,7 @@ onBeforeUnmount(() => {
       .simulation-panel-heading {
         display: flex;
         align-items: center;
+        flex-wrap: wrap;
         gap: 10px;
         margin-bottom: 12px;
         padding-bottom: 12px;
@@ -2652,7 +2741,7 @@ onBeforeUnmount(() => {
       }
 
       .simulation-panel-icon svg { width: 19px; height: 19px; }
-      .simulation-panel-title { min-width: 0; }
+      .simulation-panel-title { min-width: 0; flex: 1 1 5rem; }
       .simulation-panel-title strong,
       .simulation-panel-title small { display: block; }
       .simulation-panel-title strong { color: #f1f2eb; font-size: 0.86rem; }
@@ -2694,6 +2783,12 @@ onBeforeUnmount(() => {
       }
 
       .simulation-controls button:disabled { opacity: 0.48; }
+      .simulation-controls { box-sizing: border-box; min-width: 0; }
+      .simulation-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.55rem; }
+      .simulation-action-wide { grid-column: 1 / -1; }
+      .simulation-action-row { display: grid; grid-column: 1 / -1; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.55rem; }
+      .simulation-actions .simulation-action { width: 100%; min-width: 0; padding-inline: 0.45rem; line-height: 1.25; white-space: normal; }
+      .simulation-actions .simulation-action svg { flex: 0 0 auto; }
 
       .simulation-action {
         color: #f2f2e9;
@@ -3027,16 +3122,6 @@ onBeforeUnmount(() => {
         .desktop-camera-hint { display: none; }
         .mobile-camera-hint { display: inline; }
 
-        .simulation-side-stack {
-          position: relative;
-          inset: auto;
-          z-index: 1;
-          width: 100%;
-          margin: 0;
-          order: 1;
-          pointer-events: auto;
-        }
-
         .simulation-hud-left,
         .simulation-hud-right {
           display: contents;
@@ -3167,7 +3252,7 @@ onBeforeUnmount(() => {
         .simulation-demo-badge { max-width: calc(100% - 8.5rem); font-size: 0.47rem; }
         .simulation-camera-tools { gap: 2px; }
         .simulation-camera-tools button { min-width: 40px; min-height: 42px; padding-inline: 7px; }
-        .simulation-controls .grid.grid-cols-2 { gap: 0.55rem; }
+        .simulation-action-row { gap: 0.55rem; }
       }
 
       @media (prefers-reduced-motion: reduce) {

@@ -124,6 +124,7 @@ export interface ProcessFrameOptions {
   sensitivity: number
   isolatePlantBackground: boolean
   showContours: boolean
+  showBoxOverlay?: boolean
   showHotspots: boolean
   ambientTempC: number
   pointerNorm: { x: number; y: number } | null
@@ -770,29 +771,84 @@ export function processMultispectralFrame(
     }
   }
 
-  // Compute bounding box & center of mass of the whole plant area
+  // Compute bounding box & center of mass around the dominant connected plant component (avoids window glare noise)
   let minX = w
   let minY = h
   let maxX = 0
   let maxY = 0
   let sumX = 0
   let sumY = 0
+  let boxPixelCount = 0
 
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      if (mask[y * w + x] === 1) {
-        if (x < minX) minX = x
-        if (x > maxX) maxX = x
-        if (y < minY) minY = y
-        if (y > maxY) maxY = y
-        sumX += x
-        sumY += y
+  if (plantPixelCount > 0) {
+    const total = w * h
+    if (componentVisited.length < total) {
+      componentVisited = new Uint8Array(total)
+      componentQueue = new Int32Array(total)
+    } else {
+      componentVisited.fill(0, 0, total)
+    }
+
+    let bestArea = 0
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const startIdx = y * w + x
+        if (mask[startIdx] !== 1 || componentVisited[startIdx] === 1) continue
+
+        let head = 0
+        let tail = 0
+        componentQueue[tail++] = startIdx
+        componentVisited[startIdx] = 1
+
+        let cMinX = x
+        let cMaxX = x
+        let cMinY = y
+        let cMaxY = y
+        let cSumX = 0
+        let cSumY = 0
+
+        while (head < tail) {
+          const cur = componentQueue[head++]
+          const cy = Math.floor(cur / w)
+          const cx = cur - cy * w
+          if (cx < cMinX) cMinX = cx
+          if (cx > cMaxX) cMaxX = cx
+          if (cy < cMinY) cMinY = cy
+          if (cy > cMaxY) cMaxY = cy
+          cSumX += cx
+          cSumY += cy
+
+          for (let dy = -1; dy <= 1; dy++) {
+            const ny = cy + dy
+            if (ny < 0 || ny >= h) continue
+            for (let dx = -1; dx <= 1; dx++) {
+              const nx = cx + dx
+              if (nx < 0 || nx >= w) continue
+              const nIdx = ny * w + nx
+              if (mask[nIdx] === 1 && componentVisited[nIdx] === 0) {
+                componentVisited[nIdx] = 1
+                componentQueue[tail++] = nIdx
+              }
+            }
+          }
+        }
+
+        if (tail > bestArea) {
+          bestArea = tail
+          minX = cMinX
+          maxX = cMaxX
+          minY = cMinY
+          maxY = cMaxY
+          sumX = cSumX
+          sumY = cSumY
+          boxPixelCount = tail
+        }
       }
     }
   }
 
   // Second pass: fill internal necrotic/pest holes inside the plant canopy bounding box
-  if (plantPixelCount > 30) {
+  if (boxPixelCount > 30) {
     for (let y = Math.max(2, minY + 1); y < Math.min(h - 2, maxY); y++) {
       for (let x = Math.max(2, minX + 1); x < Math.min(w - 2, maxX); x++) {
         const idx = y * w + x
@@ -816,7 +872,7 @@ export function processMultispectralFrame(
     }
   }
 
-  const plantDetected = plantPixelCount >= Math.floor(w * h * 0.008)
+  const plantDetected = boxPixelCount >= Math.floor(w * h * 0.008)
   const plantCoveragePercent = Number(((plantPixelCount / (w * h)) * 100).toFixed(1))
 
   const outWidth = targetCanvas.width || 640
@@ -824,13 +880,13 @@ export function processMultispectralFrame(
 
   let boundingBox: PlantBoundingBox | null = null
   const polygonContour: Array<{ x: number; y: number }> = []
-  let polygonContours: Array<Array<{ x: number; y: number }>> = []
+  const polygonContours: Array<Array<{ x: number; y: number }>> = []
 
-  if (plantDetected) {
+  if (plantDetected && boxPixelCount > 0) {
     const bw = Math.max(4, maxX - minX + 1)
     const bh = Math.max(4, maxY - minY + 1)
-    const cx = sumX / plantPixelCount
-    const cy = sumY / plantPixelCount
+    const cx = sumX / boxPixelCount
+    const cy = sumY / boxPixelCount
 
     boundingBox = {
       x: minX / w,
@@ -844,9 +900,6 @@ export function processMultispectralFrame(
       pWidth: Math.round((bw / w) * outWidth),
       pHeight: Math.round((bh / h) * outHeight)
     }
-
-    polygonContours = tracePlantContours(mask, w, h)
-    polygonContour.push(...(polygonContours[0] ?? []))
   }
 
   // Generate deterministic pest/stress focal clusters anchored to the plant bounding box
@@ -1462,41 +1515,21 @@ function drawSubOverlay(
   title: string,
   color: string,
   box: PlantBoundingBox | null,
-  contours: Array<Array<{ x: number; y: number }>>,
+  _contours: Array<Array<{ x: number; y: number }>>,
   hotspots: PlantLesionCluster[],
   options: ProcessFrameOptions
 ) {
   ctx.save()
 
-  // Whole-plant contour
-  if (options.showContours && contours.length > 0) {
-    ctx.strokeStyle = color
-    ctx.lineWidth = 1.6
-    for (const outline of contours) {
-      if (outline.length < 3) continue
-      ctx.beginPath()
-      outline.forEach((pt, idx) => {
-        const px = ox + pt.x * w
-        const py = oy + pt.y * h
-        if (idx === 0) ctx.moveTo(px, py)
-        else ctx.lineTo(px, py)
-      })
-      ctx.closePath()
-      ctx.stroke()
-    }
-  }
-
-  // Bounding box
-  if (box) {
+  // Bounding box only (edge contour tracing removed per clean bounding box UX)
+  if (options.showBoxOverlay !== false && options.showContours && box) {
     const bx = ox + box.x * w
     const by = oy + box.y * h
     const bw = box.width * w
     const bh = box.height * h
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)'
-    ctx.setLineDash([4, 4])
-    ctx.lineWidth = 1
+    ctx.strokeStyle = 'rgba(250, 204, 21, 0.85)'
+    ctx.lineWidth = 1.6
     ctx.strokeRect(bx, by, bw, bh)
-    ctx.setLineDash([])
   }
 
   // Hotspots
@@ -1529,7 +1562,7 @@ function drawPrimaryHudOverlay(
   w: number,
   h: number,
   box: PlantBoundingBox | null,
-  contours: Array<Array<{ x: number; y: number }>>,
+  _contours: Array<Array<{ x: number; y: number }>>,
   hotspots: PlantLesionCluster[],
   hottestPoint: { x: number; y: number } | null,
   coolestPoint: { x: number; y: number } | null,
@@ -1539,94 +1572,41 @@ function drawPrimaryHudOverlay(
 ) {
   ctx.save()
 
-  // 1) Whole-plant polygon contour
-  if (options.showContours && contours.length > 0) {
-    ctx.strokeStyle =
-      options.spectrumMode === 'rgb'
-        ? 'rgba(52, 211, 153, 0.9)'
-        : options.spectrumMode === 'ndvi'
-          ? 'rgba(255, 255, 255, 0.85)'
-          : 'rgba(56, 189, 248, 0.85)'
-    ctx.lineWidth = 2.2
-    ctx.fillStyle =
-      options.spectrumMode === 'rgb'
-        ? 'rgba(16, 185, 129, 0.08)'
-        : 'rgba(255, 255, 255, 0.03)'
-
-    for (const contour of contours) {
-      if (contour.length < 3) continue
-      ctx.beginPath()
-      for (let i = 0; i < contour.length; i++) {
-        const curr = contour[i]
-        const next = contour[(i + 1) % contour.length]
-        const cx = curr.x * w
-        const cy = curr.y * h
-        const nx = next.x * w
-        const ny = next.y * h
-        const midX = (cx + nx) * 0.5
-        const midY = (cy + ny) * 0.5
-        if (i === 0) {
-          ctx.moveTo(midX, midY)
-        } else {
-          ctx.quadraticCurveTo(cx, cy, midX, midY)
-        }
-      }
-      ctx.closePath()
-      ctx.fill()
-      ctx.stroke()
-    }
-  }
-
-  // 2) Whole-plant corner-bracket bounding box
-  if (box) {
+  // Clean plant bounding box only (no pixel-edge contour outlines)
+  if (options.showBoxOverlay !== false && options.showContours && box) {
     const bx = box.x * w
     const by = box.y * h
     const bw = box.width * w
     const bh = box.height * h
-    const corner = Math.min(22, bw * 0.18, bh * 0.18)
+    const corner = Math.min(22, bw * 0.2, bh * 0.2)
 
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)'
-    ctx.setLineDash([5, 5])
-    ctx.lineWidth = 1
+    ctx.strokeStyle = '#FACC15'
+    ctx.lineWidth = 2.6
     ctx.strokeRect(bx, by, bw, bh)
-    ctx.setLineDash([])
 
-    // Bold corner brackets
-    ctx.strokeStyle = '#34d399'
-    ctx.lineWidth = 2.8
+    // Bold white corner accents
+    ctx.strokeStyle = '#FFFFFF'
+    ctx.lineWidth = 3.5
     ctx.beginPath()
-    // Top-left
     ctx.moveTo(bx, by + corner)
     ctx.lineTo(bx, by)
     ctx.lineTo(bx + corner, by)
-    // Top-right
     ctx.moveTo(bx + bw - corner, by)
     ctx.lineTo(bx + bw, by)
     ctx.lineTo(bx + bw, by + corner)
-    // Bottom-left
-    ctx.moveTo(bx, by + bh - corner)
-    ctx.lineTo(bx, by + bh)
-    ctx.lineTo(bx + corner, by + bh)
-    // Bottom-right
-    ctx.moveTo(bx + bw - corner, by + bh)
-    ctx.lineTo(bx + bw, by + bh)
-    ctx.lineTo(bx + bw, by + bh - corner)
     ctx.stroke()
 
-    // Top bounding box header tag
+    // Bounding box label positioned cleanly below top HUD bar
     const tagText = options.plantLabelHud
-      ? `${options.plantLabelHud.toUpperCase()} · ${(box.width * box.height * 100).toFixed(0)}% DOSEL`
-      : `ÁREA TOTAL PLANTA · ${(box.width * box.height * 100).toFixed(0)}% DOSEL`
+      ? options.plantLabelHud.toUpperCase()
+      : 'PLANTA DETECTADA'
     ctx.font = 'bold 11px Inter, sans-serif'
     const textWidth = ctx.measureText(tagText).width
-    const tagY = Math.max(6, by - 24)
-    ctx.fillStyle = 'rgba(12, 20, 15, 0.85)'
-    ctx.fillRect(bx, tagY, textWidth + 16, 20)
-    ctx.strokeStyle = 'rgba(52, 211, 153, 0.5)'
-    ctx.lineWidth = 1
-    ctx.strokeRect(bx, tagY, textWidth + 16, 20)
-    ctx.fillStyle = '#6ee7b7'
-    ctx.fillText(tagText, bx + 8, tagY + 14)
+    const tagY = Math.max(44, by - 24)
+    ctx.fillStyle = '#FACC15'
+    ctx.fillRect(bx, tagY, textWidth + 14, 20)
+    ctx.fillStyle = '#141d16'
+    ctx.fillText(tagText, bx + 7, tagY + 14)
   }
 
   // 3) Hotspot / Lesion rings

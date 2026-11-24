@@ -1,17 +1,21 @@
-FROM python:3.10-slim
+FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PLANT_MODEL_PATH=/models/model_float16_quant.tflite \
-    PLANT_CLASS_MAP_PATH=/app/class_indices.json
+    AGROVISION_MODELS_DIR=/app/models
 
 WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1 \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app.py class_indices.json download_model.py THIRD_PARTY_NOTICES.md ./
-RUN python download_model.py
+COPY app.py agrovision_engine.py ./
+COPY models ./models
 
 EXPOSE 8000
 

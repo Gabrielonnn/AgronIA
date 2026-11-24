@@ -331,6 +331,10 @@ const translateError = (msg: string): string => {
           </transition>
         </div>
 
+        <RouterLink to="/recuperar-acceso" class="recovery-link reveal-item reveal-delay-2">
+          ¿Olvidaste tu contraseña o usuario?
+        </RouterLink>
+
         <transition name="fade">
           <div v-if="loading" class="progress-bar">
             <div class="progress-fill" :style="{ width: progress + '%' }"></div>
@@ -872,6 +876,25 @@ const translateError = (msg: string): string => {
 .footer-link:hover {
   color: #34D399;
   text-decoration: underline;
+}
+
+.recovery-link {
+  align-self: flex-end;
+  margin-top: -6px;
+  color: #e5c355;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: color 0.2s ease, transform 0.2s ease;
+}
+.recovery-link:hover {
+  color: #ffdc72;
+  transform: translateX(2px);
+}
+.recovery-link:focus-visible {
+  outline: 2px solid var(--palette-gold);
+  outline-offset: 4px;
+  border-radius: 2px;
 }
 
 .bottom-credit {
