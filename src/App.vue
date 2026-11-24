@@ -187,7 +187,7 @@ onUnmounted(() => {
       </div>
       <RouterView v-slot="{ Component }">
         <component v-if="route.meta.public" :is="Component" :key="route.path" />
-        <Transition v-else name="page" mode="out-in">
+        <Transition v-else name="workspace-route" mode="out-in">
           <component :is="Component" :key="route.path" />
         </Transition>
       </RouterView>

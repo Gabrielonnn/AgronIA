@@ -121,8 +121,9 @@ const sidebarDrones = [
       <div class="topo-brand-content flex items-center">
         <img class="topo-brand-logo" :src="agroniaLogo" alt="AgronIA" />
         <div class="topo-brand-copy" aria-hidden="true">
-          <span>AGRICULTURA</span>
-          <strong>DE PRECISIÓN</strong>
+          <span>PLATAFORMA</span>
+          <strong>AGRÍCOLA</strong>
+          <span>CAMPO · DATOS</span>
         </div>
       </div>
       <span class="topo-brand-version"><i aria-hidden="true"></i> {{ isDesktopApp ? 'DESKTOP' : 'FIELD' }}</span>

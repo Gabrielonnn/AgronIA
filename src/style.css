@@ -48,31 +48,36 @@
   }
 }
 
-/* Transiciones de navegación entre rutas */
-.route-page-enter-active,
-.route-page-leave-active {
+/* Navegación entre vistas principales */
+.workspace-route-enter-active,
+.workspace-route-leave-active {
+  transform-origin: 50% 12%;
+  backface-visibility: hidden;
+  will-change: opacity, transform, filter, clip-path;
   transition:
-    opacity 0.28s cubic-bezier(0.22, 1, 0.36, 1),
-    transform 0.38s cubic-bezier(0.22, 1, 0.36, 1);
-  transform-origin: center top;
-  will-change: opacity, transform;
+    opacity 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.48s cubic-bezier(0.16, 1, 0.3, 1),
+    filter 0.38s ease,
+    clip-path 0.48s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.app-main > .route-page-leave-active {
-  position: absolute;
-  inset: 0;
-  width: 100%;
+.workspace-route-leave-active {
   pointer-events: none;
+  transition-duration: 0.24s, 0.32s, 0.22s, 0.32s;
 }
 
-.route-page-enter-from {
+.workspace-route-enter-from {
   opacity: 0;
-  transform: translate3d(0, 14px, 0) scale(0.992);
+  transform: translate3d(22px, 16px, 0) scale(0.985);
+  filter: blur(7px);
+  clip-path: inset(0 0 7% 0 round 18px);
 }
 
-.route-page-leave-to {
+.workspace-route-leave-to {
   opacity: 0;
-  transform: translate3d(0, -8px, 0) scale(0.996);
+  transform: translate3d(-14px, -8px, 0) scale(0.992);
+  filter: blur(3px);
+  clip-path: inset(0 0 4% 0 round 14px);
 }
 
 /* Transiciones de contenido dentro de una misma vista */
@@ -219,9 +224,11 @@
   line-height: 1;
 }
 .topo-brand-copy > span:last-child {
-  margin-top: 4px;
-  color: #9da18b;
-  font-size: 0.58rem;
+  margin-top: 3px;
+  color: #a9bd91;
+  font-size: 0.46rem;
+  font-weight: 750;
+  letter-spacing: 0.05em;
 }
 
 .topo-brand-mark {
@@ -1001,10 +1008,12 @@
     transition-duration: 0.01ms !important;
   }
 
-  .route-page-enter-active,
-  .route-page-leave-active {
+  .workspace-route-enter-active,
+  .workspace-route-leave-active {
     transition-duration: 0.01ms !important;
     transform: none !important;
+    filter: none !important;
+    clip-path: none !important;
   }
 
   .app-workspace .app-card,

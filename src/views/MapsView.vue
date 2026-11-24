@@ -610,21 +610,21 @@ const exportGeoJson = () => {
 
     <div class="maps-layout">
       <section class="map-column">
-        <div class="mb-3 flex flex-wrap items-center gap-3">
-          <label for="map-field" class="text-sm font-medium text-gray-300">Relacionar con parcela</label>
+        <div class="maps-field-picker">
+          <label for="map-field">Relacionar con parcela</label>
           <select
             id="map-field"
             v-model="selectedFieldId"
-            class="rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100"
+            class="maps-field-select"
           >
             <option value="">Sin parcela asociada</option>
             <option v-for="field in savedFields" :key="field.id" :value="field.id">{{ field.name }}</option>
           </select>
         </div>
-        <div v-if="errorMessage" class="mb-3 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700" role="alert">
+        <div v-if="errorMessage" class="map-feedback is-error" role="alert">
           {{ errorMessage }}
         </div>
-        <div v-if="saveStatus" class="mb-3 rounded-lg border border-green-300 bg-green-50 p-3 text-sm text-green-700" role="status">
+        <div v-if="saveStatus" class="map-feedback is-success" role="status">
           {{ saveStatus }}
         </div>
         <div class="map-card">
@@ -778,15 +778,22 @@ const exportGeoJson = () => {
   --maps-text: #f5f1df;
   --maps-muted: #98a18c;
   min-width: 0;
-  animation: maps-enter 0.48s cubic-bezier(0.16, 1, 0.3, 1) both;
+  color: #e8eddf;
 }
 
 .maps-heading {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
   gap: 1.25rem;
-  margin-bottom: 1.25rem;
+  margin-bottom: 1rem;
+  padding: 20px 22px;
+  border: 1px solid rgba(196, 218, 147, 0.14);
+  border-radius: 20px;
+  background:
+    radial-gradient(ellipse at 2% 0%, rgba(120, 150, 76, 0.15), transparent 54%),
+    linear-gradient(125deg, rgba(27, 35, 25, 0.96), rgba(17, 23, 18, 0.92));
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.14), inset 0 1px rgba(255, 255, 255, 0.035);
 }
 
 .maps-heading-copy { min-width: 0; }
@@ -957,7 +964,7 @@ const exportGeoJson = () => {
 .maps-overview {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  margin-bottom: 1.2rem;
+  margin-bottom: 1rem;
   border: 1px solid rgba(196, 218, 147, 0.12);
   border-radius: 18px;
   background: linear-gradient(180deg, rgba(24, 29, 23, 0.96), rgba(18, 22, 18, 0.88));
@@ -989,11 +996,62 @@ const exportGeoJson = () => {
 
 .maps-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(270px, 332px);
-  gap: 18px;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 330px);
+  gap: 16px;
   align-items: start;
 }
 .map-column, .map-card, .map-sidebar { min-width: 0; }
+.maps-field-picker {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 11px;
+  padding: 6px 8px 6px 14px;
+  border: 1px solid rgba(196, 218, 147, 0.12);
+  border-radius: 13px;
+  background: rgba(22, 29, 22, 0.82);
+}
+.maps-field-picker label {
+  color: #b6c0aa;
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.maps-field-select {
+  width: min(100%, 300px);
+  min-height: 36px !important;
+  margin-left: auto;
+  padding: 0 34px 0 11px !important;
+  border: 1px solid rgba(196, 218, 147, 0.18) !important;
+  border-radius: 9px !important;
+  color: #e9eedf !important;
+  background-color: rgba(9, 15, 11, 0.72) !important;
+  font-size: 0.72rem;
+}
+.maps-field-select:focus-visible {
+  outline: 2px solid rgba(211, 189, 103, 0.5);
+  outline-offset: 2px;
+}
+.map-feedback {
+  margin-bottom: 11px;
+  padding: 11px 13px;
+  border: 1px solid rgba(196, 218, 147, 0.15);
+  border-radius: 11px;
+  color: #dce5d4;
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 0.75rem;
+}
+.map-feedback.is-error {
+  border-color: rgba(248, 113, 113, 0.25);
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.2);
+}
+.map-feedback.is-success {
+  border-color: rgba(114, 213, 159, 0.22);
+  color: #a8e0ba;
+  background: rgba(16, 105, 69, 0.16);
+}
 .map-card {
   overflow: hidden;
   border: 1px solid rgba(196, 218, 147, 0.14);
@@ -1131,8 +1189,8 @@ const exportGeoJson = () => {
 }
 
 @media (max-width: 767px) {
-  .maps-heading { align-items: flex-start; flex-direction: column; }
-  .maps-heading-actions { width: 100%; justify-content: space-between; }
+  .maps-heading { align-items: flex-start; flex-direction: column; padding: 17px; }
+  .maps-heading-actions { width: 100%; flex-wrap: wrap; justify-content: flex-start; }
   .monitor-heading { align-items: flex-start; flex-direction: column; }
   .monitor-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .monitor-details { grid-template-columns: minmax(0, 1fr); }
@@ -1142,6 +1200,8 @@ const exportGeoJson = () => {
   .overview-item:nth-child(4) { border-top: 1px solid rgba(196, 218, 147, 0.1); }
   .maps-layout { grid-template-columns: minmax(0, 1fr); }
   .map-sidebar { grid-template-columns: 1fr; }
+  .maps-field-picker { align-items: stretch; flex-direction: column; gap: 7px; padding: 11px; }
+  .maps-field-select { width: 100%; margin-left: 0; }
   .map-canvas { height: clamp(320px, 52vh, 500px); height: clamp(320px, 52dvh, 500px); min-height: 0; }
   .map-sidebar { grid-template-columns: minmax(0, 1fr); }
 }
@@ -1150,6 +1210,7 @@ const exportGeoJson = () => {
   .maps-heading-actions { align-items: stretch; flex-direction: column; }
   .maps-heading-actions > :deep(button) { width: 100%; }
   .maps-heading-actions > .open-simulation-link { width: 100%; }
+  .maps-live-pill { justify-content: center; }
   .map-card-header { align-items: flex-start; flex-direction: column; }
   .map-source { align-self: flex-start; }
   .map-card-footer { align-items: flex-start; flex-direction: column; }
@@ -1157,6 +1218,6 @@ const exportGeoJson = () => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .maps-page, .map-card, .map-sidebar :deep(.app-card), .empty-map-icon, .feature-row { animation: none; }
+  .map-card, .map-sidebar :deep(.app-card), .empty-map-icon, .feature-row { animation: none; }
 }
 </style>

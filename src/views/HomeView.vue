@@ -28,9 +28,14 @@ use([CanvasRenderer, LineChart, BarChart, GaugeChart, TitleComponent, TooltipCom
 const store = useMainStore()
 const agroniaMark = `${import.meta.env.BASE_URL}agronia-mark.png`
 const userName = computed(() => {
-  const name = store.user?.profile?.full_name ?? store.user?.user_metadata?.full_name
+  const profile = store.user?.profile
+  const metadata = store.user?.user_metadata
+  const name = profile?.full_name
+    || profile?.name
+    || metadata?.full_name
+    || metadata?.name
   const firstName = typeof name === 'string' ? name.trim().split(/\s+/)[0] : ''
-  return firstName || 'productor'
+  return firstName || store.user?.email?.split('@')[0] || 'productor'
 })
 
 const fields = shallowRef<FieldRecord[]>([])
@@ -414,7 +419,6 @@ const stats = computed(() => [
 <style scoped>
 .home-page {
   min-width: 0;
-  animation: home-enter 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .home-heading,

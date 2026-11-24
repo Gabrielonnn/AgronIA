@@ -9,7 +9,7 @@ import VChart from 'vue-echarts'
 import Card from '../components/ui/Card.vue'
 import { ref, computed, onMounted, onBeforeUnmount, shallowRef, watch } from 'vue'
 import { RouterLink } from 'vue-router'
-import { ArrowRight, Droplets, Bug, Thermometer, TrendingUp, AlertTriangle, CheckCircle, Info } from 'lucide-vue-next'
+import { ArrowRight, Droplets, Bug, Thermometer, TrendingUp, AlertTriangle, CheckCircle, Info, RefreshCw } from 'lucide-vue-next'
 import { listFieldMetrics, listFields, type FieldMetricRecord, type FieldRecord } from '../services/agronomyData'
 
 use([CanvasRenderer, LineChart, GaugeChart, TitleComponent, TooltipComponent, LegendComponent, GridComponent])
@@ -19,16 +19,29 @@ use([CanvasRenderer, LineChart, GaugeChart, TitleComponent, TooltipComponent, Le
 // ============================================================
 const fields = shallowRef<FieldRecord[]>([])
 const selectedFieldId = ref('')
+const selectedPeriod = ref<'7' | '30' | '90' | 'all'>('30')
 const metrics = shallowRef<FieldMetricRecord[]>([])
 const dataError = ref('')
-const hasSimulationMetrics = computed(() => metrics.value.some(metric =>
+const isLoadingFields = ref(true)
+const isLoadingMetrics = ref(false)
+const lastUpdated = ref<Date | null>(null)
+let metricsRequestId = 0
+const periodMetrics = computed(() => {
+  if (selectedPeriod.value === 'all') return metrics.value
+  const cutoff = Date.now() - Number(selectedPeriod.value) * 24 * 60 * 60 * 1000
+  return metrics.value.filter(metric => {
+    const recordTime = Date.parse(metric.record_date)
+    return Number.isFinite(recordTime) && recordTime >= cutoff
+  })
+})
+const hasSimulationMetrics = computed(() => periodMetrics.value.some(metric =>
   metric.raw_data !== null
   && typeof metric.raw_data === 'object'
   && !Array.isArray(metric.raw_data)
   && metric.raw_data.source === 'simulation',
 ))
 const latestMetricWith = (value: (metric: FieldMetricRecord) => number | null) =>
-  metrics.value.find(metric => value(metric) !== null)
+  periodMetrics.value.find(metric => value(metric) !== null)
 const rawMetricValue = (metric: FieldMetricRecord | undefined, key: string) => {
   const rawData = metric?.raw_data
   if (!rawData || typeof rawData !== 'object' || Array.isArray(rawData)) return null
@@ -53,34 +66,80 @@ const simNDVI = computed(() => rawMetricValue(
 const simSustainability = computed(() =>
   latestMetricWith(metric => metric.sustainability_index)?.sustainability_index ?? null,
 )
+const hasClimateData = computed(() => periodMetrics.value.some(metric =>
+  metric.soil_humidity !== null || metric.temperature !== null,
+))
+const hasSustainabilityData = computed(() => periodMetrics.value.some(metric =>
+  metric.sustainability_index !== null,
+))
+const hasPestData = computed(() => periodMetrics.value.some(metric =>
+  rawMetricValue(metric, 'pest_index') !== null,
+))
 const loadMetrics = async () => {
-  metrics.value = selectedFieldId.value ? await listFieldMetrics(selectedFieldId.value) : []
-  dataError.value = ''
+  const fieldId = selectedFieldId.value
+  const requestId = ++metricsRequestId
+  if (!fieldId) {
+    metrics.value = []
+    isLoadingMetrics.value = false
+    lastUpdated.value = null
+    return
+  }
+
+  isLoadingMetrics.value = true
+  try {
+    const loadedMetrics = await listFieldMetrics(fieldId)
+    if (requestId !== metricsRequestId) return
+    metrics.value = loadedMetrics
+    dataError.value = ''
+    lastUpdated.value = new Date()
+  } catch (error) {
+    if (requestId === metricsRequestId) {
+      dataError.value = error instanceof Error ? error.message : 'No se pudieron cargar las mediciones.'
+    }
+  } finally {
+    if (requestId === metricsRequestId) isLoadingMetrics.value = false
+  }
+}
+
+const loadFields = async () => {
+  isLoadingFields.value = true
+  try {
+    const availableFields = await listFields()
+    fields.value = availableFields
+    if (!availableFields.some(field => field.id === selectedFieldId.value)) {
+      selectedFieldId.value = availableFields[0]?.id ?? ''
+    }
+    dataError.value = ''
+  } catch (error) {
+    dataError.value = error instanceof Error ? error.message : 'No se pudieron cargar los datos del campo.'
+  } finally {
+    isLoadingFields.value = false
+  }
+}
+
+const refreshDashboard = async () => {
+  if (fields.value.length === 0) {
+    await loadFields()
+    return
+  }
+  await loadMetrics()
 }
 
 watch(selectedFieldId, () => {
-  void loadMetrics().catch(error => {
-    dataError.value = error instanceof Error ? error.message : 'No se pudieron cargar las mediciones.'
-  })
+  metrics.value = []
+  lastUpdated.value = null
+  void loadMetrics()
 })
 
 let telemetryInterval: ReturnType<typeof setInterval> | undefined
 onMounted(async () => {
-  try {
-    fields.value = await listFields()
-    selectedFieldId.value = fields.value[0]?.id ?? ''
-  } catch (error) {
-    dataError.value = error instanceof Error ? error.message : 'No se pudieron cargar los datos del campo.'
-  }
-  telemetryInterval = setInterval(() => {
-    void loadMetrics().catch(error => {
-      dataError.value = error instanceof Error ? error.message : 'No se pudieron actualizar las mediciones.'
-    })
-  }, 10_000)
+  await loadFields()
+  telemetryInterval = setInterval(() => void loadMetrics(), 10_000)
 })
 
 onBeforeUnmount(() => {
   if (telemetryInterval) clearInterval(telemetryInterval)
+  metricsRequestId++
 })
 
 const pestStatus = computed(() => {
@@ -97,7 +156,7 @@ const humidityStatus = computed(() => {
   return { label: 'Óptimo', color: 'text-agron-green' }
 })
 
-const chartRecords = computed(() => [...metrics.value].slice(0, 100).reverse())
+const chartRecords = computed(() => [...periodMetrics.value].slice(0, 100).reverse())
 const chartDates = computed(() => chartRecords.value.map(metric =>
   new Date(metric.record_date).toLocaleString('es-MX', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
 ))
@@ -311,21 +370,47 @@ const pestGaugeOptions = computed(() => ({
       </div>
       <div class="dashboard-heading-actions">
         <label class="sr-only" for="dashboard-field-select">Campo para consultar</label>
-        <select id="dashboard-field-select" v-model="selectedFieldId" class="rounded-lg border border-white/10 bg-[#182019] px-3 py-2 text-sm text-white" :disabled="fields.length === 0">
+        <select id="dashboard-field-select" v-model="selectedFieldId" class="dashboard-select" :disabled="fields.length === 0">
           <option value="" disabled>Selecciona un campo</option>
           <option v-for="field in fields" :key="field.id" :value="field.id">{{ field.name }}</option>
         </select>
-        <span class="dashboard-live"><span></span> Actualización cada 10 s</span>
+        <label class="sr-only" for="dashboard-period-select">Periodo de análisis</label>
+        <select id="dashboard-period-select" v-model="selectedPeriod" class="dashboard-select">
+          <option value="7">Últimos 7 días</option>
+          <option value="30">Últimos 30 días</option>
+          <option value="90">Últimos 90 días</option>
+          <option value="all">Todos los disponibles (máx. 100)</option>
+        </select>
+        <button
+          type="button"
+          class="dashboard-refresh-button"
+          :disabled="isLoadingFields || isLoadingMetrics"
+          aria-label="Actualizar mediciones"
+          title="Actualizar mediciones"
+          @click="refreshDashboard"
+        >
+          <RefreshCw :size="16" :class="{ 'is-spinning': isLoadingMetrics || isLoadingFields }" />
+          <span>{{ isLoadingFields ? 'Cargando campos' : isLoadingMetrics ? 'Actualizando' : 'Actualizar' }}</span>
+        </button>
+        <span class="dashboard-live" :class="{ 'is-loading': isLoadingMetrics }">
+          <span></span>
+          {{ isLoadingMetrics ? 'Consultando campo…' : lastUpdated ? `Actualizado ${lastUpdated.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}` : 'Sin actualización' }}
+        </span>
         <RouterLink to="/simulacion" class="dashboard-simulation-link">
           Abrir simulador <ArrowRight :size="16" />
         </RouterLink>
       </div>
     </header>
-    <p v-if="dataError" role="alert" class="text-sm text-red-400">{{ dataError }}</p>
-    <p v-else-if="!fields.length" class="text-sm text-gray-400">
+    <p v-if="dataError" role="alert" class="dashboard-notice is-error">{{ dataError }}</p>
+    <p v-else-if="isLoadingFields" class="dashboard-notice">Cargando campos y mediciones…</p>
+    <p v-else-if="!fields.length" class="dashboard-notice">
       No hay campos registrados. <RouterLink to="/mapas" class="text-agron-green underline">Crea o guarda un campo desde el mapa.</RouterLink>
     </p>
-    <p v-else-if="!metrics.length" class="text-sm text-gray-400">
+    <p v-else-if="isLoadingMetrics && !metrics.length" class="dashboard-notice">Cargando mediciones del campo…</p>
+    <p v-else-if="metrics.length && !periodMetrics.length" class="dashboard-notice">
+        No hay mediciones en este periodo. Prueba con un rango más amplio.
+    </p>
+    <p v-else-if="!metrics.length" class="dashboard-notice">
       Este campo aún no tiene mediciones. Los valores aparecerán cuando guardes datos o conectes telemetría.
     </p>
 
@@ -440,7 +525,8 @@ const pestGaugeOptions = computed(() => ({
           </div>
         </template>
         <div class="h-80 w-full">
-          <v-chart class="chart" :option="climateChartOptions" autoresize />
+          <v-chart v-if="hasClimateData" class="chart" :option="climateChartOptions" autoresize />
+          <p v-else class="dashboard-chart-empty">Sin datos de humedad o temperatura para este periodo.</p>
         </div>
       </Card>
 
@@ -452,7 +538,8 @@ const pestGaugeOptions = computed(() => ({
           </div>
         </template>
         <div class="h-80 w-full">
-          <v-chart class="chart" :option="sustainabilityChartOptions" autoresize />
+          <v-chart v-if="hasSustainabilityData" class="chart" :option="sustainabilityChartOptions" autoresize />
+          <p v-else class="dashboard-chart-empty">Sin registros de sustentabilidad para este periodo.</p>
         </div>
       </Card>
 
@@ -463,7 +550,8 @@ const pestGaugeOptions = computed(() => ({
           </div>
         </template>
         <div class="h-80 w-full">
-          <v-chart class="chart" :option="comparisonChartOptions" autoresize />
+          <v-chart v-if="hasPestData" class="chart" :option="comparisonChartOptions" autoresize />
+          <p v-else class="dashboard-chart-empty">Sin registros del índice de plagas para este periodo.</p>
         </div>
       </Card>
     </div>
@@ -474,15 +562,20 @@ const pestGaugeOptions = computed(() => ({
 .dashboard-page {
   min-width: 0;
   color: #e8eddf;
-  animation: dashboard-arrive 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .dashboard-heading {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
   gap: 1.5rem;
-  padding: 0.2rem 0 0.25rem;
+  padding: 19px 21px;
+  border: 1px solid rgba(196, 218, 147, 0.14);
+  border-radius: 18px;
+  background:
+    radial-gradient(ellipse at 2% 0%, rgba(120, 150, 76, 0.14), transparent 54%),
+    linear-gradient(125deg, rgba(27, 35, 25, 0.96), rgba(17, 23, 18, 0.92));
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.14), inset 0 1px rgba(255, 255, 255, 0.035);
 }
 
 .dashboard-eyebrow,
@@ -509,16 +602,58 @@ const pestGaugeOptions = computed(() => ({
 
 .dashboard-heading-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 0.75rem;
 }
+
+.dashboard-select {
+  min-width: 150px;
+  min-height: 40px;
+  padding: 0 2rem 0 0.75rem;
+  border: 1px solid rgba(196, 218, 147, 0.18);
+  border-radius: 10px;
+  color: #e8eddf;
+  background: rgba(8, 14, 10, 0.72);
+  font-size: 0.72rem;
+}
+.dashboard-select:focus-visible,
+.dashboard-refresh-button:focus-visible {
+  outline: 2px solid rgba(211, 189, 103, 0.65);
+  outline-offset: 2px;
+}
+.dashboard-select option { color: #e8eddf; background: #182019; }
+
+.dashboard-refresh-button {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0 0.8rem;
+  border: 1px solid rgba(114, 213, 159, 0.2);
+  border-radius: 10px;
+  color: #bce7c8;
+  background: rgba(33, 99, 61, 0.2);
+  font-size: 0.71rem;
+  font-weight: 700;
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+}
+.dashboard-refresh-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(114, 213, 159, 0.4);
+  background: rgba(33, 99, 61, 0.34);
+}
+.dashboard-refresh-button:disabled { cursor: not-allowed; opacity: 0.55; }
+.dashboard-refresh-button .is-spinning { animation: dashboard-spin 0.9s linear infinite; }
 
 .dashboard-live {
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
   color: #bdc5b1;
-  font-size: 0.68rem;
+  font-size: 0.64rem;
   white-space: nowrap;
 }
 
@@ -526,9 +661,37 @@ const pestGaugeOptions = computed(() => ({
   width: 7px;
   height: 7px;
   border-radius: 50%;
+  background: #72d59f;
+  box-shadow: 0 0 12px rgba(114, 213, 159, 0.38);
+}
+.dashboard-live.is-loading > span {
   background: #d5b75f;
   box-shadow: 0 0 12px rgba(213, 183, 95, 0.5);
-  animation: dashboard-pulse 2s ease-in-out infinite;
+  animation: dashboard-pulse 1.2s ease-in-out infinite;
+}
+
+.dashboard-notice {
+  padding: 0.85rem 1rem;
+  border: 1px solid rgba(196, 218, 147, 0.14);
+  border-radius: 12px;
+  color: #b5c0aa;
+  background: rgba(23, 31, 23, 0.76);
+  font-size: 0.75rem;
+  line-height: 1.55;
+}
+.dashboard-notice.is-error {
+  border-color: rgba(248, 113, 113, 0.25);
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.18);
+}
+.dashboard-chart-empty {
+  display: grid;
+  height: 100%;
+  place-items: center;
+  padding: 1rem;
+  color: #89947f;
+  font-size: 0.75rem;
+  text-align: center;
 }
 
 .dashboard-simulation-link {
@@ -719,14 +882,16 @@ const pestGaugeOptions = computed(() => ({
 @keyframes dashboard-pulse {
   50% { opacity: 0.48; box-shadow: 0 0 4px rgba(213, 183, 95, 0.2); }
 }
+@keyframes dashboard-spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 760px) {
-  .dashboard-heading { align-items: flex-start; flex-direction: column; gap: 1rem; }
-  .dashboard-heading-actions { width: 100%; justify-content: space-between; }
+  .dashboard-heading { align-items: flex-start; flex-direction: column; gap: 1rem; padding: 17px; }
+  .dashboard-heading-actions { width: 100%; justify-content: flex-start; }
 }
 
 @media (max-width: 480px) {
   .dashboard-heading-actions { align-items: flex-start; flex-direction: column; }
+  .dashboard-select, .dashboard-refresh-button, .dashboard-simulation-link { width: 100%; }
   .dashboard-metric { padding: 0.9rem; }
   .dashboard-metric-heading { gap: 0.48rem; }
   .dashboard-metric-icon { width: 30px; height: 30px; flex-basis: 30px; }
@@ -737,7 +902,7 @@ const pestGaugeOptions = computed(() => ({
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .dashboard-page, .dashboard-metric, .dashboard-live > span { animation: none; }
-  .dashboard-metric, .dashboard-simulation-link, :deep(.dashboard-chart-card.app-card) { transition: none; }
+  .dashboard-page, .dashboard-metric, .dashboard-live > span, .dashboard-refresh-button .is-spinning { animation: none; }
+  .dashboard-metric, .dashboard-simulation-link, .dashboard-refresh-button, :deep(.dashboard-chart-card.app-card) { transition: none; }
 }
 </style>
