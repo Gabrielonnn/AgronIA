@@ -422,13 +422,13 @@ const exportGeoJson = () => {
           <div v-if="features.length === 0" class="empty-map-state">
             <span class="empty-map-icon"><MapPinned :size="23" /></span>
             <strong>Aún no hay elementos</strong>
-            <p>Selecciona una herramienta en el mapa para marcar una parcela, un punto o un límite.</p>
-            <div class="empty-map-hint"><CircleHelp :size="14" /> Los cambios se reflejan aquí al instante</div>
+            <p>Selecciona una herramienta del mapa para marcar una parcela, un punto o un límite.</p>
+            <div class="empty-map-hint"><CircleHelp :size="14" /> Los cambios se reflejan en tiempo real</div>
           </div>
 
           <div v-else class="feature-list">
             <div class="feature-list-heading">
-              <span>CAPAS DIBUJADAS</span>
+              <span>Capas activas</span>
               <span class="feature-count">{{ features.length }}</span>
             </div>
 
@@ -445,32 +445,33 @@ const exportGeoJson = () => {
               <Check :size="15" class="feature-check" />
             </div>
 
-            <Button
-              variant="outline"
-              size="sm"
-              class="export-side-button"
-              :disabled="features.length === 0"
-              @click="exportGeoJson"
-            >
-              <Upload class="mr-2 h-4 w-4" />
-              Descargar datos
-            </Button>
-
-            <form class="map-save-form" @submit.prevent="saveMap">
-              <label for="map-field-name">Nombre del campo</label>
-              <input
-                id="map-field-name"
-                v-model="fieldName"
-                maxlength="120"
-                required
-                placeholder="Ej. Parcela norte"
+            <div class="map-quick-actions">
+              <Button
+                variant="outline"
+                size="sm"
+                class="export-side-button"
+                :disabled="features.length === 0"
+                @click="exportGeoJson"
               >
-              <Button variant="primary" size="sm" :disabled="isSaving || !fieldName.trim()">
-                <Save class="mr-2 h-4 w-4" />
-                {{ isSaving ? 'Guardando…' : 'Guardar mapa y elementos' }}
+                <Upload class="mr-2 h-4 w-4" />
+                Descargar datos
               </Button>
-            </form>
 
+              <form class="map-save-form" @submit.prevent="saveMap">
+                <label for="map-field-name">Nombre del campo</label>
+                <input
+                  id="map-field-name"
+                  v-model="fieldName"
+                  maxlength="120"
+                  required
+                  placeholder="Ej. Parcela norte"
+                >
+                <Button variant="primary" size="sm" :disabled="isSaving || !fieldName.trim()">
+                  <Save class="mr-2 h-4 w-4" />
+                  {{ isSaving ? 'Guardando…' : 'Guardar mapa' }}
+                </Button>
+              </form>
+            </div>
           </div>
         </Card>
         <p v-if="exportStatus" class="export-status" role="status"><Check :size="14" /> {{ exportStatus }}</p>
@@ -482,17 +483,18 @@ const exportGeoJson = () => {
               <span class="panel-icon"><MapPinned :size="17" /></span>
               <div>
                 <h2>Campos guardados</h2>
-                <p>{{ savedFields.length }} campo(s) en tu cuenta</p>
+                <p>{{ savedFields.length }} registro(s) en tu cuenta</p>
               </div>
             </div>
           </template>
           <div class="feature-list">
-            <div v-for="field in savedFields.slice(0, 5)" :key="field.id" class="feature-row">
+            <div v-for="field in savedFields.slice(0, 4)" :key="field.id" class="feature-row">
               <span class="feature-symbol"><MapPinned :size="15" /></span>
               <span class="feature-row-copy">
                 <strong>{{ field.name }}</strong>
                 <small>{{ new Date(field.created_at).toLocaleDateString('es-MX') }}</small>
               </span>
+              <Check :size="15" class="feature-check" />
             </div>
           </div>
         </Card>
@@ -503,7 +505,7 @@ const exportGeoJson = () => {
               <span class="panel-icon panel-icon-gold"><Sparkles :size="17" /></span>
               <div>
                 <h2>Herramientas de campo</h2>
-                <p>Guía rápida de dibujo</p>
+                <p>Guía rápida</p>
               </div>
             </div>
           </template>
@@ -576,10 +578,15 @@ const exportGeoJson = () => {
   white-space: nowrap;
 }
 
+.map-quick-actions {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
 .map-save-form {
   display: grid;
   gap: 8px;
-  margin-top: 14px;
   padding-top: 14px;
   border-top: 1px solid rgba(196, 218, 147, 0.13);
 }
@@ -592,15 +599,19 @@ const exportGeoJson = () => {
   color: #f5f1df;
   background: rgba(255, 255, 255, 0.04);
 }
+.map-save-form input:focus {
+  outline: 2px solid rgba(142, 180, 91, 0.35);
+  border-color: rgba(142, 180, 91, 0.45);
+}
 
 .maps-overview {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   margin-bottom: 1.2rem;
   border: 1px solid rgba(196, 218, 147, 0.12);
-  border-radius: 16px;
-  background: linear-gradient(145deg, rgba(31, 38, 24, 0.9), rgba(21, 25, 18, 0.83));
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.12);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(24, 29, 23, 0.96), rgba(18, 22, 18, 0.88));
+  box-shadow: 0 16px 26px rgba(0, 0, 0, 0.12), inset 0 1px rgba(255,255,255,0.03);
 }
 .overview-item {
   display: flex;
@@ -628,17 +639,17 @@ const exportGeoJson = () => {
 
 .maps-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(270px, 320px);
+  grid-template-columns: minmax(0, 1fr) minmax(270px, 332px);
   gap: 18px;
   align-items: start;
 }
 .map-column, .map-card, .map-sidebar { min-width: 0; }
 .map-card {
   overflow: hidden;
-  border: 1px solid rgba(196, 218, 147, 0.15);
-  border-radius: 17px;
-  background: linear-gradient(145deg, rgba(31, 38, 24, 0.92), rgba(21, 25, 18, 0.88));
-  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.19), inset 0 1px rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(196, 218, 147, 0.14);
+  border-radius: 22px;
+  background: linear-gradient(180deg, rgba(20, 27, 20, 0.96), rgba(14, 18, 15, 0.9));
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.22), inset 0 1px rgba(255, 255, 255, 0.04);
   animation: maps-enter 0.55s 0.06s both;
 }
 .map-card-header {
@@ -646,8 +657,9 @@ const exportGeoJson = () => {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  padding: 16px 18px;
+  padding: 16px 18px 15px;
   border-bottom: 1px solid rgba(196, 218, 147, 0.1);
+  background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0));
 }
 .map-card-header h2 {
   display: flex;
@@ -667,12 +679,13 @@ const exportGeoJson = () => {
   flex: 0 0 auto;
   padding: 7px 9px;
   border: 1px solid rgba(196, 218, 147, 0.12);
-  border-radius: 9px;
-  color: #b6c0a9;
-  background: rgba(255, 255, 255, 0.035);
+  border-radius: 10px;
+  color: #dce7c7;
+  background: rgba(255, 255, 255, 0.04);
   font-size: 0.61rem;
   font-weight: 800;
   letter-spacing: 0.07em;
+  box-shadow: inset 0 1px rgba(255,255,255,0.04);
 }
 .map-source > span { width: 6px; height: 6px; }
 .map-canvas { height: clamp(460px, 67vh, 760px); min-height: 420px; }
@@ -693,7 +706,9 @@ const exportGeoJson = () => {
 .map-sidebar { display: grid; gap: 16px; min-width: 0; }
 .map-sidebar :deep(.app-card) {
   border-color: rgba(196, 218, 147, 0.14);
-  border-radius: 16px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(25, 31, 24, 0.98), rgba(15, 20, 16, 0.92));
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.16);
   animation: maps-enter 0.55s 0.12s both;
 }
 .map-sidebar :deep(.app-card > div:first-child) { padding: 15px 16px; }

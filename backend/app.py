@@ -1,7 +1,5 @@
-import json
 import logging
 import os
-import threading
 from contextlib import asynccontextmanager
 from io import BytesIO
 from pathlib import Path
@@ -13,19 +11,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel
 
-try:
-    import tensorflow as tf
-except ImportError:  # pragma: no cover
-    tf = None
+from agrovision_engine import AgroVisionBackendEngine
 
 logger = logging.getLogger("agronia.diagnosis")
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_IMAGE_PIXELS = 40_000_000
-UNKNOWN_THRESHOLD = 0.60
-MODEL_PATH = Path(os.getenv("PLANT_MODEL_PATH", "models/model_float16_quant.tflite"))
-CLASS_MAP_PATH = Path(os.getenv("PLANT_CLASS_MAP_PATH", "class_indices.json"))
-interpreter_lock = threading.Lock()
+MODELS_DIR = Path(os.getenv("AGROVISION_MODELS_DIR", "models"))
 
 PresetType = Literal[
     "live_raw",
@@ -71,7 +63,32 @@ class MultispectralResponse(BaseModel):
     chlorosis_percent: float
     necrosis_percent: float
     foliar_moisture_percent: float
-    engine_mode: Literal["tflite+multispectral", "spectral-heuristic"]
+    engine_mode: str
+
+
+class AgroVisionResponse(BaseModel):
+    detection_mode: Literal["IN_DATASET", "OUT_OF_DATASET", "NO_PLANT"]
+    in_trained_dataset: bool
+    disease: str
+    confidence: float
+    health_status: str
+    crop: str
+    disease_es: str
+    cause: str
+    recommendation: str
+    severity: str
+    top_k: list[dict[str, Any]]
+    detected_plants: list[dict[str, Any]]
+    selected_plant_id: int
+    lens: dict[str, Any] | None = None
+    inference_time_ms: float
+    fps_equivalent: float
+    engine_mode: str
+    # Campos multiespectrales integrados
+    ndvi_mean: float
+    temp_mean_c: float
+    cwsi: float
+    plant_coverage_percent: float
 
 
 PRESET_METADATA: dict[str, dict[str, str]] = {
@@ -100,45 +117,17 @@ PRESET_METADATA: dict[str, dict[str, str]] = {
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.interpreter = None
-    app.state.input_details = None
-    app.state.output_details = None
-    app.state.class_names = []
-    app.state.model_error = None
+    app.state.agrovision = None
 
     try:
-        if CLASS_MAP_PATH.is_file():
-            with CLASS_MAP_PATH.open(encoding="utf-8") as class_file:
-                class_map: dict[str, str] = json.load(class_file)
-            class_names = [class_map[str(index)] for index in range(len(class_map))]
-            if len(class_names) == 38:
-                app.state.class_names = class_names
-
-        if tf is not None and MODEL_PATH.is_file() and len(app.state.class_names) == 38:
-            interpreter = tf.lite.Interpreter(model_path=str(MODEL_PATH))
-            interpreter.allocate_tensors()
-            input_details = interpreter.get_input_details()
-            output_details = interpreter.get_output_details()
-            if len(input_details) != 1 or tuple(input_details[0]["shape"]) != (1, 384, 384, 3):
-                raise ValueError("Model input must have shape (1, 384, 384, 3).")
-            if not any(tuple(output["shape"]) == (1, len(app.state.class_names)) for output in output_details):
-                raise ValueError("Model does not expose a 38-class disease output.")
-
-            app.state.interpreter = interpreter
-            app.state.input_details = input_details
-            app.state.output_details = output_details
-            logger.info("Plant disease model loaded from %s", MODEL_PATH)
-        else:
-            app.state.model_error = "TFLite weights not found; spectral-heuristic fallback active."
-            logger.warning("TFLite model not loaded (%s); using spectral analysis fallback.", MODEL_PATH)
+        app.state.agrovision = AgroVisionBackendEngine(models_dir=MODELS_DIR)
     except Exception as exc:
-        app.state.model_error = "Model could not be loaded."
-        logger.exception("Could not load plant disease model: %s", exc)
+        logger.exception("Could not initialize AgroVision engine: %s", exc)
 
     yield
 
 
-app = FastAPI(title="AgronIA Plant Diagnosis & Multispectral API", lifespan=lifespan)
+app = FastAPI(title="AgronIA AgroVision + PlantLens & Multispectral API", lifespan=lifespan)
 
 allowed_origins = [
     origin.strip()
@@ -196,13 +185,11 @@ def _compute_multispectral_metrics(
     vari = (g - r) / (g + r - b + 1e-4)
     lum = 0.299 * r + 0.587 * g + 0.114 * b
 
-    # Segment whole plant area
     mask = ((exg > 0.04) | ((vari > 0.015) & (g > b * 1.12))) & (lum > 0.05) & (lum < 0.96)
     plant_pixels = int(np.count_nonzero(mask))
     total_pixels = mask.size
 
     if plant_pixels < total_pixels * 0.01:
-        # Fallback to central region if low green contrast
         yy, xx = np.ogrid[:180, :240]
         central = ((xx - 120) / 75.0) ** 2 + ((yy - 90) / 60.0) ** 2 <= 1.0
         mask = central
@@ -282,79 +269,37 @@ def _compute_multispectral_metrics(
     }
 
 
-def _run_tflite_inference(app: FastAPI, rgb_image: Image.Image) -> tuple[str, float] | None:
-    interpreter: Any = app.state.interpreter
-    if interpreter is None:
-        return None
-
-    resized = rgb_image.resize((384, 384))
-    image_array = np.expand_dims(np.asarray(resized, dtype=np.float32), axis=0)
-    input_detail = app.state.input_details[0]
-    with interpreter_lock:
-        interpreter.set_tensor(input_detail["index"], image_array)
-        interpreter.invoke()
-        disease_output = next(
-            output
-            for output in app.state.output_details
-            if tuple(output["shape"]) == (1, len(app.state.class_names))
-        )
-        predictions = interpreter.get_tensor(disease_output["index"])[0].astype(np.float32)
-
-    if (
-        predictions.ndim != 1
-        or len(predictions) != len(app.state.class_names)
-        or not np.isfinite(predictions).all()
-    ):
-        return None
-
-    predicted_index = int(np.argmax(predictions))
-    confidence = float(np.clip(predictions[predicted_index], 0.0, 1.0))
-    return app.state.class_names[predicted_index], confidence
-
-
 @app.get("/health")
-def health() -> dict[str, str]:
-    if app.state.interpreter is None:
-        return {"status": "ready_spectral_fallback"}
-    return {"status": "ready"}
+def health() -> dict[str, Any]:
+    engine: AgroVisionBackendEngine | None = app.state.agrovision
+    if engine is not None and engine.ort_session is not None:
+        return {
+            "status": "ready_agrovision_onnx",
+            "onnx_ready": True,
+            "yolo_ready": engine.detector_ready,
+            "clip_ready": engine.clip_ready,
+            "classes": len(engine.class_names),
+        }
+    return {"status": "unavailable", "onnx_ready": False}
 
 
 @app.post("/predict", response_model=DiagnosisResponse)
 def predict(file: UploadFile = File(...)) -> DiagnosisResponse:
     rgb_image = _read_and_validate_image(file)
-    tflite_result = _run_tflite_inference(app, rgb_image)
+    engine: AgroVisionBackendEngine | None = app.state.agrovision
 
-    if tflite_result is not None:
-        disease, confidence = tflite_result
-        recommendation = (
-            "La confianza es baja. Toma otra foto y confirma el resultado con un especialista agrónomo."
-            if confidence < UNKNOWN_THRESHOLD
-            else "Resultado orientativo. Confirma el diagnóstico y cualquier tratamiento con un especialista agrónomo."
-        )
+    if engine is not None and engine.ort_session is not None:
+        res = engine.analyze_image(rgb_image, detect_plants=False)
         return DiagnosisResponse(
-            disease=disease,
-            confidence=confidence,
-            cause="Clasificación obtenida mediante red neuronal convolucional EfficientNetV2S (PlantVillage).",
-            recommendation=recommendation,
+            disease=res["disease"],
+            confidence=res["confidence"],
+            cause=res["cause"],
+            recommendation=res["recommendation"],
         )
 
-    # Spectral fallback when TFLite file is not present locally
-    metrics = _compute_multispectral_metrics(rgb_image, preset="live_raw")
-    if metrics["necrosis_percent"] > 14:
-        meta = PRESET_METADATA["con_plagas"]
-        conf = 0.84
-    elif metrics["ndvi_mean"] < 0.45:
-        meta = PRESET_METADATA["estres_hidrico"]
-        conf = 0.82
-    else:
-        meta = PRESET_METADATA["sin_plagas"]
-        conf = 0.89
-
-    return DiagnosisResponse(
-        disease=meta["disease"],
-        confidence=conf,
-        cause=meta["cause"],
-        recommendation=meta["recommendation"],
+    raise HTTPException(
+        status_code=503,
+        detail="El motor AgroVision ONNX no está inicializado en el servidor.",
     )
 
 
@@ -372,7 +317,7 @@ def analyze_multispectral(
         intensity=intensity,
         ambient_temp_c=ambient_temp_c,
     )
-    tflite_result = _run_tflite_inference(app, rgb_image)
+    engine: AgroVisionBackendEngine | None = app.state.agrovision
 
     if preset in PRESET_METADATA:
         meta = PRESET_METADATA[preset]
@@ -380,28 +325,19 @@ def analyze_multispectral(
         cause = meta["cause"]
         recommendation = meta["recommendation"]
         confidence = round(float(np.clip(0.84 + intensity * 0.13, 0.75, 0.98)), 2)
-        if tflite_result is not None:
-            base_disease, _ = tflite_result
-            cause = f"{cause} (Base óptica detectada: {base_disease.replace('___', ' · ').replace('_', ' ')})."
-    elif tflite_result is not None:
-        disease, confidence = tflite_result
-        cause = "Inferencia combinada de modelo EfficientNetV2S y segmentación multiespectral de planta completa."
-        recommendation = (
-            "La confianza es baja. Toma otra foto y confirma el resultado con un especialista agrónomo."
-            if confidence < UNKNOWN_THRESHOLD
-            else "Resultado orientativo. Confirma el diagnóstico y cualquier tratamiento con un especialista agrónomo."
-        )
+        engine_mode = "agrovision-onnx+multispectral" if (engine and engine.ort_session) else "multispectral-preset"
+    elif engine is not None and engine.ort_session is not None:
+        res = engine.analyze_image(rgb_image, detect_plants=True)
+        disease = res["disease"]
+        confidence = res["confidence"]
+        cause = res["cause"]
+        recommendation = res["recommendation"]
+        engine_mode = res["engine_mode"]
     else:
-        if metrics["necrosis_percent"] > 14:
-            meta = PRESET_METADATA["con_plagas"]
-        elif metrics["ndvi_mean"] < 0.45:
-            meta = PRESET_METADATA["estres_hidrico"]
-        else:
-            meta = PRESET_METADATA["sin_plagas"]
-        disease = meta["disease"]
-        cause = meta["cause"]
-        recommendation = meta["recommendation"]
-        confidence = 0.87
+        raise HTTPException(
+            status_code=503,
+            detail="El motor AgroVision ONNX no está inicializado en el servidor.",
+        )
 
     return MultispectralResponse(
         disease=disease,
@@ -409,6 +345,64 @@ def analyze_multispectral(
         cause=cause,
         recommendation=recommendation,
         preset_applied=preset,
-        engine_mode="tflite+multispectral" if tflite_result is not None else "spectral-heuristic",
+        engine_mode=engine_mode,
         **metrics,
+    )
+
+
+@app.post("/analyze-agrovision", response_model=AgroVisionResponse)
+def analyze_agrovision(
+    file: UploadFile = File(...),
+    selected_plant_id: int | None = Form(None),
+    crop_x: float | None = Form(None),
+    crop_y: float | None = Form(None),
+    crop_w: float | None = Form(None),
+    crop_h: float | None = Form(None),
+    detect_plants: bool = Form(True),
+    force_lens: bool = Form(False),
+    preset: PresetType = Form("live_raw"),
+    intensity: float = Form(0.85),
+    ambient_temp_c: float = Form(25.0),
+) -> AgroVisionResponse:
+    """
+    Endpoint principal de AgroVision AI + PlantLens para el apartado de Diagnóstico de AgronIA.
+    Devuelve:
+    - Diagnóstico fitosanitario del modelo EfficientNet-B2 ONNX (99.61% acc)
+    - Áreas detectadas de múltiples plantas en la escena (YOLO-World)
+    - Identificación botánica + salud visual + cuidados (Luz, Riego, Sustrato) para plantas fuera del dataset
+    - Métricas multiespectrales (NDVI, Temperatura, CWSI, Cobertura)
+    """
+    rgb_image = _read_and_validate_image(file)
+    metrics = _compute_multispectral_metrics(
+        rgb_image,
+        preset=preset,
+        intensity=intensity,
+        ambient_temp_c=ambient_temp_c,
+    )
+
+    engine: AgroVisionBackendEngine | None = app.state.agrovision
+    if engine is None or engine.ort_session is None:
+        raise HTTPException(
+            status_code=503,
+            detail="El motor AgroVision ONNX no está inicializado en el servidor.",
+        )
+
+    crop_box_norm = None
+    if crop_x is not None and crop_y is not None and crop_w is not None and crop_h is not None:
+        crop_box_norm = (crop_x, crop_y, crop_w, crop_h)
+
+    res = engine.analyze_image(
+        rgb_image,
+        selected_plant_id=selected_plant_id,
+        crop_box_norm=crop_box_norm,
+        detect_plants=detect_plants,
+        force_lens=force_lens,
+    )
+
+    return AgroVisionResponse(
+        **res,
+        ndvi_mean=metrics["ndvi_mean"],
+        temp_mean_c=metrics["temp_mean_c"],
+        cwsi=metrics["cwsi"],
+        plant_coverage_percent=metrics["plant_coverage_percent"],
     )

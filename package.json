@@ -1,23 +1,29 @@
 {
   "name": "paginaagronia",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
+    "build:desktop": "vue-tsc -b && vite build --mode desktop",
+    "desktop": "npm run build:desktop && electron .",
+    "package:desktop": "npm run build:desktop && node tools/package-desktop.mjs",
     "test:unit": "node --experimental-strip-types --test tests/unit/*.test.ts",
     "preview": "vite preview",
     "bridge:mavlink": "node tools/mavlink-udp-bridge.mjs"
   },
   "dependencies": {
     "@geoman-io/leaflet-geoman-free": "^2.20.1",
+    "@huggingface/transformers": "^4.3.2",
     "@supabase/supabase-js": "^2.116.0",
     "@vue-leaflet/vue-leaflet": "^0.10.1",
     "@vueuse/motion": "^3.0.3",
     "echarts": "^6.1.0",
     "leaflet": "^1.9.4",
     "lucide-vue-next": "^1.0.0",
+    "onnxruntime-web": "^1.31.1",
     "papaparse": "^5.7.0",
     "pinia": "^4.0.3",
     "three": "^0.186.0",
@@ -27,6 +33,7 @@
     "ws": "^8.22.0"
   },
   "devDependencies": {
+    "@electron/packager": "^20.3.0",
     "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4.3.3",
     "@tailwindcss/vite": "^4.3.3",
@@ -39,6 +46,7 @@
     "@vueuse/core": "^15.0.0",
     "@vueuse/motion": "^3.0.3",
     "autoprefixer": "^10.5.6",
+    "electron": "^45.4.1",
     "postcss": "^8.5.28",
     "tailwindcss": "^4.3.3",
     "typescript": "~6.0.2",

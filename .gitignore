@@ -10,10 +10,14 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+release-desktop
+.env
 *.local
 __pycache__/
 backend/models/*.h5
 backend/models/*.tflite
+backend/models/*.pt
+backend/weights/
 
 # Editor directories and files
 .vscode/*

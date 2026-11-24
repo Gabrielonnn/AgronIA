@@ -20,7 +20,7 @@ El registro solicita un código de seis dígitos mediante Supabase Auth y no con
 1. En **Authentication → Providers → Email**, habilita el registro por correo y la confirmación de email.
 2. En **Authentication → Email Templates → Confirm signup**, usa la plantilla de código OTP de Supabase con `{{ .Token }}` (no únicamente el enlace `{{ .ConfirmationURL }}`).
 3. Configura un proveedor SMTP propio en **Project Settings → Authentication → SMTP Settings** y verifica el dominio/remitente. El SMTP de prueba de Supabase tiene restricciones de destinatarios y límites de envío; no es adecuado para usuarios reales en producción.
-4. En **Authentication → URL Configuration**, registra las URL locales y públicas autorizadas para el proyecto.
+4. En **Authentication → URL Configuration**, registra las URL locales y públicas autorizadas para el proyecto. El flujo de recuperación redirige a `/recuperar-acceso?mode=reset`; permite esa URL en **Redirect URLs** para que el enlace de restablecimiento pueda volver a la aplicación.
 
 La aplicación nunca recibe ni almacena credenciales SMTP. Sin confirmación de email y un proveedor de correo configurados en Supabase, el envío a direcciones reales no se puede garantizar; la pantalla de registro avisa si el proyecto permite crear sesiones sin verificar el correo.
 
@@ -51,43 +51,25 @@ La sección **Parcelas y Clientes** guarda las parcelas en `fields`, carga el ca
 
 La interfaz respeta las políticas RLS de Supabase: si una operación no está permitida, muestra el error recibido y no evita la política. `profiles` y `user_logs` se consultan en modo lectura; la administración de perfiles sigue en **Usuarios** y la bitácora la genera la aplicación. Las tablas deben existir previamente en Supabase y tener sus políticas/permisos configurados.
 
-## Diagnóstico de enfermedades en plantas
+## Diagnóstico de enfermedades en plantas (AgroVision AI + PlantLens)
 
-En **Diagnóstico**, los usuarios autenticados pueden seleccionar una imagen JPG, PNG o WebP de hasta 10 MB, o tomar una foto con la cámara del dispositivo. La cámara requiere HTTPS o `localhost` y permiso explícito del navegador. La imagen se envía únicamente al endpoint configurado; AgronIA no la almacena ni genera predicciones simuladas.
+En **Diagnóstico**, los usuarios autenticados pueden subir una imagen JPG, PNG o WebP de hasta 10 MB, usar la **Planta Demo** interactiva o activar la cámara del dispositivo (con modo de **Captura / Congelar** y botón opcional de **Tiempo Real**). La vista multiespectral simulada conserva los 4 espectros (`RGB`, `NDVI`, `Térmico` y `4 Espectros`) junto con la comparativa de **Presets** agronómicos (`Sin Plagas`, `Estrés Hídrico`, `Sobre-hidratación` y `Plagas / Necrosis`).
 
-### Ejecutar el modelo con licencia MIT declarada
+### Motor AgroVision EfficientNet-B2 ONNX + PlantLens AI
 
-El backend usa el modelo EfficientNetV2S de [Animesh Kumar](https://huggingface.co/animeshakr/plant-disease-efficientnetv2s), cuya tarjeta declara licencia MIT, fijado a una revisión concreta. No es el modelo sin licencia del repositorio original. Para iniciar el detector en desarrollo:
+AgronIA ejecuta directamente en el navegador (`onnxruntime-web` + `@huggingface/transformers`) —y opcionalmente en el backend FastAPI (`backend/agrovision_engine.py`)— el motor **AgroVision AI**:
 
-1. Con Docker instalado y conexión a Internet, desde la raíz de AgronIA ejecuta `docker build -t agronia-diagnosis ./backend`. El build descarga el modelo TFLite de 42 MB desde la revisión fijada y comprueba su SHA-256; no almacena los pesos en Git.
-2. Inicia el servicio con `docker run --rm -p 8000:8000 agronia-diagnosis`.
-3. Copia `.env.example` a `.env.local` (conserva tus credenciales Supabase, si ya las configuraste) y establece `VITE_PLANT_DIAGNOSIS_API_URL=http://localhost:8000/predict`. Reinicia Vite (`npm run dev`) si ya estaba iniciado.
-4. Comprueba que `http://localhost:8000/health` responda `{"status":"ready"}`. La API y Vite deben ejecutarse a la vez.
+1. **Detección Multi-Planta (`Xenova/yolos-tiny` / YOLO-World):** detecta múltiples plantas en escena y permite seleccionar una con clic o arrastrando un recuadro ROI sobre el lienzo.
+2. **Clasificación Fitosanitaria (`public/models/plant_health_model.onnx`):** red neuronal **EfficientNet-B2** entrenada sobre 15 clases de pimiento morrón, papa y tomate (99.61% de exactitud en evaluación), optimizada en formato ONNX (`~32 MB`) para inferencia rápida.
+3. **PlantLens AI fuera de dataset (`Xenova/clip-vit-base-patch32` + Wikipedia ES):** cuando una planta no pertenece a las 15 clases del dataset entrenado (por ejemplo cactus, suculentas u ornamentales), el sistema informa que hace falta información de esa especie en el dataset base e identifica la especie, su salud visual y recomendaciones de luz, riego y sustrato mediante PlantLens AI.
 
-### Publicar el diagnóstico en la web
+### Backend opcional (FastAPI + ONNX Runtime)
 
-GitHub Pages sirve la interfaz, pero no puede ejecutar el modelo Python. El archivo `render.yaml` configura el backend Docker en Render y permite que la web publicada (`https://jarednn.github.io`) se comunique con él.
+Si deseas ejecutar la API Python localmente además del motor web integrado:
 
-1. En Render, crea un **Blueprint** conectado a este repositorio y acepta el servicio `agronia-plant-diagnosis` definido en `render.yaml`. El primer despliegue descarga y verifica el modelo.
-2. Espera a que el despliegue esté listo y confirma que `https://<tu-servicio>.onrender.com/health` responda `{"status":"ready"}`.
-3. En GitHub, abre **Settings → Secrets and variables → Actions**, crea el secreto `VITE_PLANT_DIAGNOSIS_API_URL` con el valor `https://<tu-servicio>.onrender.com/predict` y vuelve a ejecutar el workflow **Deploy static content to Pages**. El servicio Render autoriza el origen de GitHub Pages mediante `PLANT_DIAGNOSIS_ALLOWED_ORIGINS`.
-4. Cuando termine la publicación, recarga la página de AgronIA y prueba **Diagnóstico**. En el plan gratuito de Render, el servicio puede suspenderse por inactividad; la primera solicitud después de una suspensión puede tardar mientras arranca.
-
-El API recibe `multipart/form-data` con un campo `file` y responde el nombre de la clase y la confianza:
-
-```json
-{
-  "disease": "Apple___healthy",
-  "confidence": 0.97,
-  "recommendation": "Resultado orientativo. Confirma el diagnóstico y cualquier tratamiento con un especialista agrónomo."
-}
-```
-
-El modelo clasifica 38 condiciones en manzana, arándano, cereza, maíz, uva, naranja, durazno, pimiento, papa, frambuesa, soya, calabaza, fresa y tomate. Acepta imágenes RGB de 384×384; el preprocesamiento y el mapa de clases siguen la tarjeta del modelo. La API añade una recomendación de cautela si la confianza es menor de 60%. `/health` verifica que el modelo se haya cargado.
-
-La licencia MIT está declarada en la tarjeta de Hugging Face; la revisión exacta y la suma de verificación están registradas en [download_model.py](./backend/download_model.py) y la atribución en [THIRD_PARTY_NOTICES.md](./backend/THIRD_PARTY_NOTICES.md). Esa licencia del modelo no sustituye los términos del dataset ni de la arquitectura base. La tarjeta del modelo identifica PlantVillage como datos de entrenamiento, reporta fotos controladas de laboratorio y advierte que no se ha validado la generalización a fotos de campo ni debe usarse para decisiones comerciales de manejo de cultivos. No uses el resultado como diagnóstico agronómico definitivo. Revisa los términos del dataset y obtén asesoría legal antes de cualquier uso comercial.
-
-La API del modelo no envía alertas de Telegram; eso requeriría añadir credenciales de bot solo en el backend. En producción, despliega el backend en un servicio accesible por HTTPS, configura `VITE_PLANT_DIAGNOSIS_API_URL` con la URL pública `/predict` al compilar el frontend y define `PLANT_DIAGNOSIS_ALLOWED_ORIGINS` con el origen exacto del sitio AgronIA. No publiques un endpoint HTTP ni credenciales en variables `VITE_*`.
+1. Desde `./backend`, instala dependencias locales (`pip install -r requirements-local.txt`) o construye el contenedor (`docker build -t agronia-diagnosis ./backend`).
+2. Inicia el servidor con `uvicorn app:app --host 0.0.0.0 --port 8000` (o `docker run --rm -p 8000:8000 agronia-diagnosis`).
+3. Comprueba que `http://localhost:8000/health` responda `"status": "ready_agrovision_onnx"`. Endpoints disponibles: `POST /analyze-agrovision`, `POST /analyze-multispectral` y `POST /predict`.
 
 ## Telemetría de dron MAVLink
 
@@ -143,7 +125,7 @@ En **Análisis IA** puedes seleccionar una imagen, capturarla con una cámara pe
 
 2. Despliega las funciones con `supabase functions deploy analyze-crop` y `supabase functions deploy admin-create-user`. La última utiliza `SUPABASE_SERVICE_ROLE_KEY` solo en Edge Functions; nunca la configures con prefijo `VITE_`.
 3. La URL debe ser el endpoint HTTPS de chat completions del proveedor y el modelo debe aceptar imágenes. La función valida sesión y perfil activo, limita el tamaño de la imagen a 3 MB, valida el formato estructurado de salida y no almacena la imagen. Se necesita configurar Supabase en la aplicación y ejecutar las migraciones del repositorio.
-4. La cámara del dron no es un protocolo universal. Para mostrar sus imágenes, conecta un puente compatible con el SDK del fabricante en **Análisis IA → Conectar cámara del dron por puente**. El puente debe aceptar WebSocket desde el navegador y enviar tramas binarias individuales JPEG, PNG o WebP (máximo 3 MB); usa `wss://` si AgronIA está bajo HTTPS. La telemetría MAVLink ya existente no transporta imágenes. La cámara del navegador solo ve cámaras que el sistema operativo exponga como dispositivos de video.
+4. La cámara del dron no es un protocolo universal. En **Simulación → Conexión con dron → Cámara del dron**, conecta el puente compatible con el SDK del fabricante (por defecto `ws://127.0.0.1:8767`) para mostrar sus imágenes en vivo. El puente debe aceptar WebSocket desde el navegador y enviar tramas binarias individuales JPEG, PNG o WebP (máximo 3 MB); usa `wss://` si AgronIA está bajo HTTPS. La cámara usa una conexión aparte: la telemetría MAVLink no transporta imágenes. El flujo de cámara también está disponible en **Análisis IA → Conectar cámara del dron por puente**. La cámara del navegador solo ve cámaras que el sistema operativo exponga como dispositivos de video.
 
 El proveedor de IA procesa la imagen cuando se solicita el análisis; revisa sus condiciones de privacidad y retención antes de usar imágenes sensibles. Los resultados son observaciones asistidas por visión, no diagnósticos agronómicos confirmados ni recomendaciones de dosis/tratamientos. Confirma los hallazgos en campo con personal especialista. No hay un modelo entrenado ni una integración DJI universal incluidos en el repositorio.
 

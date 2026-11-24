@@ -7,7 +7,18 @@ import {
 } from 'echarts/components'
 import VChart from 'vue-echarts'
 import { computed, ref, onMounted, onBeforeUnmount, shallowRef, watch } from 'vue'
-import { Satellite, Droplets, Bug, Wind, ArrowRight, TrendingUp } from 'lucide-vue-next'
+import {
+  Satellite,
+  Droplets,
+  Bug,
+  Wind,
+  ArrowRight,
+  TrendingUp,
+  MapPinned,
+  ScanSearch,
+  Database,
+  MonitorPlay
+} from 'lucide-vue-next'
 import { RouterLink } from 'vue-router'
 import { useMainStore } from '../stores'
 import { listFieldMetrics, listFields, type FieldMetricRecord, type FieldRecord } from '../services/agronomyData'
@@ -146,31 +157,45 @@ const pestChartOptions = computed(() => ({
   }]
 }))
 
-const services = [
+const capabilities = [
   {
-    title: 'Análisis Multiespectral',
-    description: 'Registra imágenes satelitales y consulta valores NDVI asociados a tus campos.',
-    img: 'https://images.unsplash.com/photo-1500382017468-9049fed747ef?w=800&auto=format&fit=crop',
-    badge: 'Registro disponible'
+    title: 'Mapas y parcelas',
+    description: 'Dibuja límites, marca puntos de interés y guarda tus campos.',
+    to: '/mapas',
+    icon: MapPinned,
+    accent: 'green',
+    label: 'Organiza tus campos'
   },
   {
-    title: 'Drones Autónomos',
-    description: 'Conecta telemetría de solo lectura para visualizar la posición, rumbo y altitud relativa del dron.',
-    img: 'https://images.unsplash.com/photo-1473968512647-3e447244af8f?w=800&auto=format&fit=crop',
-    badge: 'Seguimiento GPS'
+    title: 'Análisis de cultivos',
+    description: 'Analiza imágenes para revisar señales visibles y sugerencias de verificación.',
+    to: '/analisis',
+    icon: ScanSearch,
+    accent: 'violet',
+    label: 'Evalúa información'
   },
   {
-    title: 'Sensores IoT en Suelo',
-    description: 'Importa registros CSV o guarda mediciones de campo para consultar su evolución.',
-    img: 'https://images.unsplash.com/photo-1530836369250-ef71a3f5e43d?w=800&auto=format&fit=crop',
-    badge: 'Datos del campo'
+    title: 'Datos y registros',
+    description: 'Reúne mediciones de campo y revisa cómo cambian con el tiempo.',
+    to: '/datos',
+    icon: Database,
+    accent: 'blue',
+    label: 'Da seguimiento'
   },
   {
-    title: 'Dashboards Analíticos',
-    description: 'Explora indicadores y tendencias calculados a partir de las mediciones guardadas para cada campo.',
-    img: 'https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=800&auto=format&fit=crop',
-    badge: 'Supabase'
-  }
+    title: 'Simulación',
+    description: 'Explora escenarios con los datos disponibles para apoyar tu planeación.',
+    to: '/simulacion',
+    icon: MonitorPlay,
+    accent: 'gold',
+    label: 'Planea con contexto'
+  },
+]
+
+const workflow = [
+  { number: '01', title: 'Organiza', description: 'Registra tus parcelas y delimita cada campo.' },
+  { number: '02', title: 'Consulta', description: 'Agrega mediciones y revisa análisis e indicadores.' },
+  { number: '03', title: 'Decide', description: 'Usa la información para planear tus siguientes acciones.' },
 ]
 
 const stats = computed(() => [
@@ -221,30 +246,67 @@ const stats = computed(() => [
       </div>
     </section>
 
-    <!-- Servicios ofrecidos (Movido arriba) -->
-    <div>
+    <section class="home-about">
+      <div class="home-about-mark"><MapPinned :size="22" /></div>
+      <div class="home-about-copy">
+        <span class="home-eyebrow">¿QUÉ ES AGRONIA?</span>
+        <h2 class="home-section-title">Una forma más clara de conocer tu campo.</h2>
+        <p>
+          AgronIA reúne mapas, registros y herramientas de análisis para ayudarte a organizar
+          la información agrícola, detectar cambios y planear con mayor contexto.
+        </p>
+      </div>
+      <div class="home-about-note">
+        <span>Tu información, en un solo lugar</span>
+        <small>Mapas · mediciones · análisis</small>
+      </div>
+    </section>
+
+    <section>
       <div class="home-section-heading">
         <div>
-          <span class="home-eyebrow">HERRAMIENTAS</span>
-          <h2 class="home-section-title">Todo tu campo, en un solo lugar</h2>
+          <span class="home-eyebrow">EXPLORA AGRONIA</span>
+          <h2 class="home-section-title">¿En qué te puede ayudar?</h2>
         </div>
-        <span class="home-section-caption">Explora las capacidades de AgronIA</span>
+        <span class="home-section-caption">Elige una herramienta para comenzar</span>
       </div>
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div v-for="service in services" :key="service.title"
-        class="home-service-card group relative rounded-xl overflow-hidden shadow-sm border hover:shadow-md transition-shadow cursor-default">
-          <div class="relative h-48 overflow-hidden">
-            <img :src="service.img" :alt="service.title" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
-            <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
-            <span class="home-service-badge absolute top-3 right-3 text-xs font-bold px-2.5 py-1 rounded-full">{{ service.badge }}</span>
+      <div class="home-capabilities">
+        <RouterLink
+          v-for="capability in capabilities"
+          :key="capability.title"
+          :to="capability.to"
+          class="home-capability-card"
+        >
+          <div class="home-capability-top">
+            <span class="home-capability-icon" :class="`home-capability-icon-${capability.accent}`">
+              <component :is="capability.icon" :size="19" />
+            </span>
+            <ArrowRight :size="17" class="home-capability-arrow" />
           </div>
-          <div class="home-service-copy p-5 bg-white">
-            <h3 class="font-bold text-gray-900 text-lg mb-2">{{ service.title }}</h3>
-            <p class="text-gray-500 text-sm leading-relaxed">{{ service.description }}</p>
-          </div>
+          <span class="home-capability-label">{{ capability.label }}</span>
+          <h3>{{ capability.title }}</h3>
+          <p>{{ capability.description }}</p>
+        </RouterLink>
+      </div>
+    </section>
+
+    <section class="home-workflow">
+      <div class="home-section-heading">
+        <div>
+          <span class="home-eyebrow">EMPIEZA EN TRES PASOS</span>
+          <h2 class="home-section-title">De la información a la acción.</h2>
         </div>
       </div>
-    </div>
+      <div class="home-workflow-grid">
+        <article v-for="step in workflow" :key="step.number" class="home-workflow-step">
+          <span>{{ step.number }}</span>
+          <div>
+            <h3>{{ step.title }}</h3>
+            <p>{{ step.description }}</p>
+          </div>
+        </article>
+      </div>
+    </section>
 
     <!-- Telemetría en tiempo real (Movido abajo) -->
     <div>
@@ -438,6 +500,168 @@ const stats = computed(() => [
   font-size: 0.72rem;
 }
 
+.home-about {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 1.15rem;
+  padding: clamp(1.1rem, 2.5vw, 1.65rem);
+  border: 1px solid rgba(196, 218, 147, 0.14);
+  border-radius: 18px;
+  background:
+    radial-gradient(ellipse at 0% 50%, rgba(52, 127, 77, 0.16), transparent 48%),
+    linear-gradient(145deg, rgba(28, 36, 25, 0.96), rgba(17, 24, 19, 0.96));
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.16);
+}
+
+.home-about-mark,
+.home-capability-icon {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid rgba(196, 218, 147, 0.13);
+  border-radius: 12px;
+}
+
+.home-about-mark {
+  width: 48px;
+  height: 48px;
+  color: #9ccea0;
+  background: rgba(55, 151, 93, 0.14);
+}
+
+.home-about-copy .home-section-title { margin-bottom: 0.35rem; }
+.home-about-copy p {
+  max-width: 65ch;
+  color: #a5ad9b;
+  font-size: 0.82rem;
+  line-height: 1.6;
+}
+
+.home-about-note {
+  display: grid;
+  gap: 0.25rem;
+  padding-left: 1.2rem;
+  border-left: 1px solid rgba(196, 218, 147, 0.15);
+  color: #dce5ce;
+  font-size: 0.75rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.home-about-note small {
+  color: #89947f;
+  font-size: 0.65rem;
+  font-weight: 450;
+}
+
+.home-capabilities {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.9rem;
+}
+
+.home-capability-card {
+  display: flex;
+  min-width: 0;
+  min-height: 192px;
+  flex-direction: column;
+  padding: 1.1rem;
+  border: 1px solid rgba(196, 218, 147, 0.13);
+  border-radius: 16px;
+  background: linear-gradient(145deg, rgba(28, 36, 25, 0.96), rgba(18, 24, 19, 0.96));
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.14);
+  text-decoration: none;
+  transition: transform 0.24s ease, border-color 0.24s ease, box-shadow 0.24s ease;
+}
+
+.home-capability-card:hover {
+  transform: translateY(-3px);
+  border-color: rgba(211, 189, 103, 0.3);
+  box-shadow: 0 18px 34px rgba(0, 0, 0, 0.2);
+}
+
+.home-capability-card:focus-visible {
+  outline: 2px solid rgba(228, 193, 82, 0.75);
+  outline-offset: 3px;
+}
+
+.home-capability-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.05rem;
+}
+
+.home-capability-icon {
+  width: 38px;
+  height: 38px;
+}
+
+.home-capability-icon-green { color: #9ccea0; background: rgba(55, 151, 93, 0.14); }
+.home-capability-icon-violet { color: #c3a2eb; background: rgba(139, 92, 246, 0.13); }
+.home-capability-icon-blue { color: #8ab7e9; background: rgba(59, 130, 246, 0.13); }
+.home-capability-icon-gold { color: #e5c052; background: rgba(255, 196, 0, 0.1); }
+.home-capability-arrow { color: #829078; transition: transform 0.2s ease, color 0.2s ease; }
+.home-capability-card:hover .home-capability-arrow { transform: translateX(3px); color: #e1c25f; }
+
+.home-capability-label {
+  margin-bottom: 0.3rem;
+  color: #c0a95d;
+  font-size: 0.56rem;
+  font-weight: 750;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.home-capability-card h3 {
+  color: #edf0e5;
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.home-capability-card p {
+  margin-top: 0.4rem;
+  color: #a5ad9b;
+  font-size: 0.72rem;
+  line-height: 1.55;
+}
+
+.home-workflow {
+  padding: 1.2rem;
+  border: 1px solid rgba(196, 218, 147, 0.12);
+  border-radius: 18px;
+  background: rgba(19, 26, 20, 0.72);
+}
+
+.home-workflow .home-section-heading { margin-bottom: 0.8rem; }
+
+.home-workflow-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.home-workflow-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.85rem;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.home-workflow-step > span {
+  color: #d9bd68;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+}
+
+.home-workflow-step h3 { color: #e9eddf; font-size: 0.78rem; font-weight: 700; }
+.home-workflow-step p { margin-top: 0.25rem; color: #929b88; font-size: 0.68rem; line-height: 1.5; }
+
 .home-hero {
   min-height: clamp(330px, 37vw, 460px);
   isolation: isolate;
@@ -520,38 +744,6 @@ const stats = computed(() => [
 
 .home-action-primary:hover { box-shadow: 0 14px 30px rgba(8, 151, 99, 0.42); }
 .home-action-secondary { background: rgba(255, 255, 255, 0.13); }
-
-.home-service-card {
-  min-width: 0;
-  border-color: rgba(196, 218, 147, 0.14);
-  background: linear-gradient(145deg, rgba(28, 36, 25, 0.96), rgba(19, 25, 19, 0.96));
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.18);
-  transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.28s ease, border-color 0.28s ease;
-}
-
-.home-service-card:hover {
-  transform: translateY(-5px);
-  border-color: rgba(255, 196, 0, 0.24);
-  box-shadow: 0 22px 42px rgba(0, 0, 0, 0.24);
-}
-
-.home-service-card > div:first-child { isolation: isolate; }
-.home-service-card img { transition: transform 0.65s cubic-bezier(0.16, 1, 0.3, 1), filter 0.4s ease; }
-.home-service-card:hover img { transform: scale(1.045); filter: saturate(1.08); }
-
-.home-service-copy { background: transparent; }
-.home-service-copy h3 {
-  color: #edf0e5;
-  letter-spacing: -0.025em;
-}
-.home-service-copy p { color: #a5ad9b; }
-
-.home-service-badge {
-  border: 1px solid rgba(187, 230, 164, 0.25);
-  color: #d8efc4;
-  background: rgba(16, 45, 32, 0.78);
-  backdrop-filter: blur(12px);
-}
 
 .home-live-label {
   display: inline-flex;
@@ -681,6 +873,9 @@ const stats = computed(() => [
 @media (max-width: 760px) {
   .home-section-caption { display: none; }
   .home-live-label { max-width: 45%; white-space: normal; text-align: right; }
+  .home-about { grid-template-columns: auto minmax(0, 1fr); }
+  .home-about-note { grid-column: 2; padding: 0.7rem 0 0; border-top: 1px solid rgba(196, 218, 147, 0.12); border-left: 0; }
+  .home-capabilities { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 640px) {
@@ -697,6 +892,12 @@ const stats = computed(() => [
   .home-actions { display: grid; grid-template-columns: 1fr; }
   .home-actions a { width: 100%; }
   .home-live-label { max-width: 42%; font-size: 0.61rem; }
+  .home-about { align-items: flex-start; gap: 0.85rem; }
+  .home-about-mark { width: 40px; height: 40px; }
+  .home-about-note { font-size: 0.7rem; }
+  .home-capability-card { min-height: 184px; padding: 0.9rem; }
+  .home-workflow-grid { grid-template-columns: 1fr; }
+  .home-workflow { padding: 1rem; }
   .home-metric-card { padding: 1rem; }
   .home-metric-label { font-size: 0.68rem; }
   .home-impact { padding: 1.5rem; }
@@ -709,6 +910,6 @@ const stats = computed(() => [
 
 @media (prefers-reduced-motion: reduce) {
   .home-page, .home-heading-tag > span, .home-live-label > span, .home-hero-image, .home-status, .home-title, .home-description, .home-actions, .home-metric-card { animation: none; }
-  .home-service-card, .home-service-card img, .home-metric-card, .home-action-primary, .home-action-secondary { transition: none; }
+  .home-capability-card, .home-capability-arrow, .home-metric-card, .home-action-primary, .home-action-secondary { transition: none; }
 }
 </style>

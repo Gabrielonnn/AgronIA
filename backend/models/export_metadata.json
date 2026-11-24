@@ -1,0 +1,57 @@
+{
+  "source_checkpoint": "C:\\Users\\Jared\\Desktop\\CLASES\\TOPICOSIA\\IAplanta\\outputs\\checkpoints\\best_model.pth",
+  "onnx_model_path": "C:\\Users\\Jared\\Desktop\\CLASES\\TOPICOSIA\\IAplanta\\outputs\\exported\\plant_health_model.onnx",
+  "torchscript_model_path": "C:\\Users\\Jared\\Desktop\\CLASES\\TOPICOSIA\\IAplanta\\outputs\\exported\\plant_health_model.pt",
+  "image_size": 224,
+  "num_classes": 15,
+  "class_names": [
+    "Pepper__bell___Bacterial_spot",
+    "Pepper__bell___healthy",
+    "Potato___Early_blight",
+    "Potato___Late_blight",
+    "Potato___healthy",
+    "Tomato_Bacterial_spot",
+    "Tomato_Early_blight",
+    "Tomato_Late_blight",
+    "Tomato_Leaf_Mold",
+    "Tomato_Septoria_leaf_spot",
+    "Tomato_Spider_mites_Two_spotted_spider_mite",
+    "Tomato__Target_Spot",
+    "Tomato__Tomato_YellowLeaf__Curl_Virus",
+    "Tomato__Tomato_mosaic_virus",
+    "Tomato_healthy"
+  ],
+  "normalization": {
+    "mean": [
+      0.485,
+      0.456,
+      0.406
+    ],
+    "std": [
+      0.229,
+      0.224,
+      0.225
+    ]
+  },
+  "benchmark": {
+    "pytorch_cpu": {
+      "latency_ms": 29.07,
+      "fps": 34.4
+    },
+    "pytorch_cuda_gpu": {
+      "latency_ms": 17.49,
+      "fps": 57.2
+    },
+    "torchscript_cpu": {
+      "latency_ms": 24.1,
+      "fps": 41.5,
+      "max_abs_diff_vs_pytorch": 0.0
+    },
+    "onnx_runtime": {
+      "active_provider": "CPUExecutionProvider",
+      "latency_ms": 7.06,
+      "fps": 141.6,
+      "max_abs_diff_vs_pytorch": 0.018804
+    }
+  }
+}

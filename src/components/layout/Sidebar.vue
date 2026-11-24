@@ -3,6 +3,7 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { Home, Map, MapPin, PieChart, Database, Settings, LogOut, MonitorPlay, ShieldCheck, Users, ScanSearch, Sprout } from 'lucide-vue-next'
 import { useMainStore } from '../../stores'
 import { supabase } from '../../services/supabase'
+import { isDesktopApp } from '../../services/desktopRuntime'
 import { computed } from 'vue'
 import agroniaLogo from '../../assets/agronia-logo.png'
 
@@ -77,6 +78,7 @@ const roleColor = computed(() => {
   return 'text-blue-600'
 })
 
+
 const sidebarDrones = [
   { id: 'gold-a', color: 'gold', top: '12%', size: '38px', duration: '19s', delay: '-2s', direction: 'right' },
   { id: 'orange-a', color: 'orange', top: '27%', size: '34px', duration: '23s', delay: '-9s', direction: 'left' },
@@ -85,10 +87,12 @@ const sidebarDrones = [
   { id: 'teal-a', color: 'teal', top: '72%', size: '40px', duration: '22s', delay: '-18s', direction: 'right' },
   { id: 'gold-b', color: 'gold', top: '88%', size: '32px', duration: '27s', delay: '-12s', direction: 'left' },
 ]
+
 </script>
 
 <template>
   <aside class="app-sidebar topo-sidebar w-64 bg-white border-r border-gray-200 h-screen flex flex-col" aria-label="Navegación principal">
+
     <div class="topo-drone-scene" aria-hidden="true">
       <svg
         v-for="drone in sidebarDrones"
@@ -112,11 +116,16 @@ const sidebarDrones = [
         <circle class="topo-drone-beacon" cx="32" cy="22" r="6" fill="currentColor" />
       </svg>
     </div>
+
     <div class="topo-brand h-16 flex items-center px-6 border-b border-gray-100">
       <div class="topo-brand-content flex items-center">
         <img class="topo-brand-logo" :src="agroniaLogo" alt="AgronIA" />
+        <div class="topo-brand-copy" aria-hidden="true">
+          <span>AGRICULTURA</span>
+          <strong>DE PRECISIÓN</strong>
+        </div>
       </div>
-      <span class="topo-brand-version">FIELD</span>
+      <span class="topo-brand-version"><i aria-hidden="true"></i> {{ isDesktopApp ? 'DESKTOP' : 'FIELD' }}</span>
     </div>
     
     <nav class="topo-navigation flex-1 overflow-y-auto py-4" aria-label="Secciones de AgronIA">

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Activity, Battery, Cable, Crosshair, MapPin, Radio, ShieldCheck, Unplug, Wifi } from 'lucide-vue-next'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { Activity, Battery, Cable, Camera, Crosshair, MapPin, Radio, ShieldCheck, Unplug, Wifi, X } from 'lucide-vue-next'
 import { MavLinkTelemetryParser, type MavLinkTelemetryMessage } from '../../services/mavlinkTelemetry'
 
 type LinkState = 'disconnected' | 'connecting' | 'connected' | 'error'
@@ -47,8 +47,12 @@ const baudRate = ref(57600)
 const connectionMode = ref<ConnectionMode>('usb')
 const mavlinkBridgeUrl = ref('ws://127.0.0.1:8765')
 const djiBridgeUrl = ref('ws://127.0.0.1:8766')
+const cameraBridgeUrl = ref('ws://127.0.0.1:8767')
 const linkState = ref<LinkState>('disconnected')
 const errorMessage = ref('')
+const cameraState = ref<LinkState>('disconnected')
+const cameraError = ref('')
+const cameraFrameUrl = ref('')
 const telemetry = ref<DroneTelemetry>({
   systemId: null,
   autopilot: null,
@@ -76,6 +80,7 @@ let port: SerialPortLike | null = null
 let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
 let readTask: Promise<void> | null = null
 let webSocket: WebSocket | null = null
+let cameraWebSocket: WebSocket | null = null
 let disconnectRequested = false
 let clockInterval: ReturnType<typeof setInterval> | undefined
 
@@ -511,6 +516,97 @@ const disconnect = async () => {
   }
 }
 
+const disconnectCamera = () => {
+  const socket = cameraWebSocket
+  cameraWebSocket = null
+  cameraState.value = 'disconnected'
+  if (socket && (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN)) {
+    socket.close(1000, 'Desconexión solicitada desde AgronIA')
+  }
+  clearCameraFrame()
+}
+
+const clearCameraFrame = () => {
+  const previousFrameUrl = cameraFrameUrl.value
+  cameraFrameUrl.value = ''
+  if (previousFrameUrl) void nextTick(() => URL.revokeObjectURL(previousFrameUrl))
+}
+
+const connectCamera = () => {
+  cameraError.value = ''
+  let url: URL
+  try {
+    url = new URL(cameraBridgeUrl.value.trim())
+  } catch {
+    cameraError.value = 'Escribe una URL WebSocket válida para el puente de cámara.'
+    return
+  }
+  if (url.protocol !== 'ws:' && url.protocol !== 'wss:') {
+    cameraError.value = 'El puente de cámara debe usar ws:// o wss://.'
+    return
+  }
+  if (window.location.protocol === 'https:' && url.protocol === 'ws:') {
+    cameraError.value = 'La página usa HTTPS. Para conectar una cámara remota, el puente debe usar wss://.'
+    return
+  }
+
+  cameraState.value = 'connecting'
+  const socket = new WebSocket(url.toString())
+  socket.binaryType = 'blob'
+  cameraWebSocket = socket
+  let processingFrame = false
+
+  socket.onopen = () => {
+    if (cameraWebSocket === socket) cameraState.value = 'connected'
+  }
+  socket.onmessage = async event => {
+    if (cameraWebSocket !== socket || processingFrame) return
+    processingFrame = true
+    const blob = event.data instanceof Blob
+      ? event.data
+      : event.data instanceof ArrayBuffer
+        ? new Blob([event.data])
+        : null
+
+    try {
+      if (!blob || !blob.size || blob.size > 3 * 1024 * 1024) {
+        throw new Error('El puente debe enviar imágenes binarias de hasta 3 MB.')
+      }
+      const bytes = new Uint8Array(await blob.slice(0, 12).arrayBuffer())
+      const isJpeg = bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
+      const isPng = bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47
+      const isWebp = String.fromCharCode(...bytes.slice(0, 4)) === 'RIFF'
+        && String.fromCharCode(...bytes.slice(8, 12)) === 'WEBP'
+      const type = isJpeg ? 'image/jpeg' : isPng ? 'image/png' : isWebp ? 'image/webp' : ''
+      if (!type) throw new Error('El puente debe enviar tramas JPEG, PNG o WebP.')
+
+      const bitmap = await createImageBitmap(blob)
+      bitmap.close()
+      if (cameraWebSocket !== socket) return
+      const previousFrameUrl = cameraFrameUrl.value
+      cameraFrameUrl.value = URL.createObjectURL(new Blob([blob], { type }))
+      await nextTick()
+      if (previousFrameUrl) URL.revokeObjectURL(previousFrameUrl)
+    } catch (error) {
+      if (cameraWebSocket !== socket) return
+      cameraError.value = error instanceof Error ? error.message : 'No se pudo procesar la imagen del puente.'
+      socket.close(1003, 'Trama de cámara inválida')
+    } finally {
+      processingFrame = false
+    }
+  }
+  socket.onerror = () => {
+    if (cameraWebSocket !== socket) return
+    cameraError.value = 'No se pudo recibir imágenes. Verifica la URL y el formato de las tramas.'
+  }
+  socket.onclose = () => {
+    if (cameraWebSocket !== socket) return
+    cameraWebSocket = null
+    cameraState.value = 'disconnected'
+    clearCameraFrame()
+  }
+}
+
 const formatValue = (value: number | null, digits = 1) =>
   value === null ? '—' : value.toFixed(digits)
 const formatCoordinate = (value: number | null) =>
@@ -533,6 +629,7 @@ onBeforeUnmount(() => {
     disconnectRequested = true
     webSocket.close(1000, 'Vista cerrada')
   }
+  disconnectCamera()
   if (reader) void disconnect()
 })
 </script>
@@ -675,6 +772,54 @@ onBeforeUnmount(() => {
         {{ telemetry.armed ? 'Armado · solo lectura' : 'Desarmado' }}
       </span>
     </footer>
+
+    <section class="drone-link-camera" aria-labelledby="drone-camera-title">
+      <header class="drone-camera-heading">
+        <div>
+          <span class="drone-camera-eyebrow">VIDEO EN TIEMPO REAL</span>
+          <h3 id="drone-camera-title">Cámara del dron</h3>
+          <p>Conecta un puente del fabricante que envíe imágenes binarias JPEG, PNG o WebP.</p>
+        </div>
+        <span class="drone-camera-status" :class="`is-${cameraState}`">
+          <span></span>{{ cameraState === 'connected' ? 'Recibiendo video' : cameraState === 'connecting' ? 'Conectando' : 'Sin conexión' }}
+        </span>
+      </header>
+      <div class="drone-camera-content">
+        <div class="drone-camera-preview">
+          <img v-if="cameraFrameUrl" :src="cameraFrameUrl" alt="Video en tiempo real de la cámara del dron" />
+          <div v-else class="drone-camera-placeholder">
+            <Camera :size="28" />
+            <span>{{ cameraState === 'connected' ? 'Esperando imagen de la cámara…' : 'El video aparecerá aquí al conectar el puente.' }}</span>
+          </div>
+        </div>
+        <div class="drone-camera-connect">
+          <label class="drone-link-url">
+            <span>URL del puente de cámara</span>
+            <input
+              v-model="cameraBridgeUrl"
+              type="url"
+              inputmode="url"
+              autocomplete="url"
+              placeholder="ws://127.0.0.1:8767"
+              :disabled="cameraState !== 'disconnected'"
+            />
+          </label>
+          <button
+            v-if="cameraState === 'disconnected'"
+            class="drone-link-button"
+            type="button"
+            @click="connectCamera"
+          >
+            <Camera :size="16" /> Conectar cámara
+          </button>
+          <button v-else class="drone-link-button drone-link-disconnect" type="button" :disabled="cameraState === 'connecting'" @click="disconnectCamera">
+            <X :size="16" /> Desconectar cámara
+          </button>
+          <p v-if="cameraError" class="drone-link-error" role="alert">{{ cameraError }}</p>
+          <p class="drone-camera-note">La cámara usa un puente aparte; la conexión MAVLink solo transporta telemetría.</p>
+        </div>
+      </div>
+    </section>
   </section>
 </template>
 
@@ -751,10 +896,23 @@ onBeforeUnmount(() => {
 .drone-link-safety svg { flex: 0 0 auto; color: #8fc99d; }
 
 .drone-link-camera { display: grid; gap: 0.8rem 1rem; padding: 1rem 1.15rem; border-top: 1px solid rgba(196, 218, 147, 0.09); }
-.drone-camera-heading { display: flex; grid-column: 1 / -1; align-items: center; justify-content: space-between; gap: 0.8rem; }
+.drone-camera-heading { display: flex; align-items: center; justify-content: space-between; gap: 0.8rem; }
 .drone-camera-eyebrow { color: #c1a95f; font-size: 0.55rem; font-weight: 800; letter-spacing: 0.14em; }
 .drone-camera-heading h3 { margin-top: 0.2rem; color: #edf0e5; font-size: 0.82rem; font-weight: 700; }
 .drone-camera-heading p { color: #929b88; font-size: 0.62rem; line-height: 1.5; }
+.drone-camera-status { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 0.4rem; color: #a7af9c; font-size: 0.63rem; font-weight: 650; }
+.drone-camera-status > span { width: 7px; height: 7px; border-radius: 50%; background: #7e8877; }
+.drone-camera-status.is-connecting > span { background: #e1c575; animation: drone-pulse 1s infinite; }
+.drone-camera-status.is-connected { color: #98d3a8; }
+.drone-camera-status.is-connected > span { background: #77ce96; box-shadow: 0 0 9px rgba(119, 206, 150, 0.45); }
+.drone-camera-content { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(220px, 1fr); align-items: start; gap: 1rem; }
+.drone-camera-preview { display: grid; min-height: 220px; overflow: hidden; place-items: center; border: 1px solid rgba(196, 218, 147, 0.12); border-radius: 12px; background: #080d09; }
+.drone-camera-preview img { display: block; width: 100%; max-height: 480px; object-fit: contain; }
+.drone-camera-placeholder { display: grid; justify-items: center; gap: 0.65rem; padding: 1.5rem; color: #89927f; font-size: 0.68rem; text-align: center; }
+.drone-camera-placeholder svg { color: #b9aa70; }
+.drone-camera-connect { display: grid; gap: 0.7rem; }
+.drone-camera-connect .drone-link-button { width: 100%; }
+.drone-camera-note { color: #89927f; font-size: 0.59rem; line-height: 1.5; }
 .drone-link-telemetry { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); align-content: center; }
 .drone-telemetry-item { min-width: 0; padding: 0.8rem 0.75rem; border-right: 1px solid rgba(196, 218, 147, 0.08); transition: background 0.2s ease; }
 .drone-telemetry-item:last-child { border-right: 0; }
@@ -781,10 +939,12 @@ onBeforeUnmount(() => {
   .drone-link-telemetry { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .drone-telemetry-item:nth-child(3) { border-right: 0; }
   .drone-telemetry-item:nth-child(n + 4) { border-top: 1px solid rgba(196, 218, 147, 0.08); }
+  .drone-camera-content { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 520px) {
   .drone-link-header { align-items: flex-start; flex-direction: column; }
+  .drone-camera-heading { align-items: flex-start; flex-direction: column; }
   .drone-link-telemetry { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .drone-telemetry-item:nth-child(3) { border-right: 1px solid rgba(196, 218, 147, 0.08); }
   .drone-telemetry-item:nth-child(even) { border-right: 0; }

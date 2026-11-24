@@ -298,27 +298,44 @@ onUnmounted(() => {
   isolation: isolate;
 }
 
+.agro-map-shell {
+  position: relative;
+  border-radius: 0;
+  isolation: isolate;
+  background: linear-gradient(180deg, rgba(15, 22, 18, 0.7), rgba(10, 14, 12, 0.74));
+}
+
+.agro-map-shell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: linear-gradient(90deg, rgba(11, 18, 15, 0.24), transparent 20%, transparent 80%, rgba(13, 18, 13, 0.22));
+}
+
 .map-floating-tools {
   position: absolute;
   z-index: 1000;
-  top: 14px;
-  right: 14px;
+  top: 18px;
+  left: 18px;
   display: flex;
-  width: min(228px, calc(100% - 72px));
+  width: min(220px, calc(100% - 36px));
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
+  pointer-events: auto;
 }
 
 .map-layer-switch {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px;
-  padding: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 12px;
-  background: rgba(17, 23, 18, 0.86);
-  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.23);
-  backdrop-filter: blur(14px);
+  gap: 5px;
+  padding: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 14px;
+  background: rgba(12, 18, 15, 0.76);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(15px);
 }
 
 .map-layer-switch button,
@@ -329,29 +346,30 @@ onUnmounted(() => {
   justify-content: center;
   gap: 8px;
   border: 1px solid transparent;
-  border-radius: 9px;
+  border-radius: 10px;
   color: #dce5d4;
   background: transparent;
   font-size: 0.72rem;
   font-weight: 700;
+  letter-spacing: 0.01em;
   transition: color 0.2s ease, background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
 }
 
 .map-layer-switch button[aria-pressed="true"] {
   border-color: rgba(214, 188, 93, 0.25);
-  color: #f5df91;
-  background: rgba(194, 158, 55, 0.16);
+  color: #f7e29a;
+  background: linear-gradient(180deg, rgba(216, 177, 67, 0.18), rgba(117, 95, 41, 0.09));
   box-shadow: inset 0 1px rgba(255, 255, 255, 0.06);
 }
 
 .map-tool-button {
-  min-height: 40px;
+  min-height: 42px;
   justify-content: flex-start;
   padding: 0 12px;
-  border-color: rgba(255, 255, 255, 0.15);
-  background: rgba(17, 23, 18, 0.86);
-  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.2);
-  backdrop-filter: blur(14px);
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(12, 18, 15, 0.7);
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(13px);
 }
 
 .map-location-button > svg { color: #83b7ff; }
@@ -446,14 +464,15 @@ onUnmounted(() => {
 .agro-map-shell :deep(.leaflet-pane) { z-index: 10; }
 .agro-map-shell :deep(.leaflet-top),
 .agro-map-shell :deep(.leaflet-bottom) { z-index: 20; }
+.agro-map-shell :deep(.leaflet-top.leaflet-left) { top: 88px; left: 18px; }
 .agro-map-shell :deep(.leaflet-control-container .leaflet-routing-container) { z-index: 30; }
 .agro-map-shell :deep(.leaflet-control-zoom),
 .agro-map-shell :deep(.leaflet-pm-toolbar) {
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.18) !important;
-  border-radius: 11px !important;
-  background: rgba(19, 25, 17, 0.88) !important;
-  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.28) !important;
+  border-radius: 13px !important;
+  background: rgba(16, 22, 18, 0.82) !important;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24) !important;
   backdrop-filter: blur(12px);
 }
 
