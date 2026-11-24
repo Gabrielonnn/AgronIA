@@ -186,14 +186,9 @@ onUnmounted(() => {
         {{ store.authError }}
       </div>
       <RouterView v-slot="{ Component }">
-
-        <Transition name="route-page" mode="out-in">
-          <component :is="Component" :key="route.fullPath" />
-
         <component v-if="route.meta.public" :is="Component" :key="route.path" />
         <Transition v-else name="page" mode="out-in">
           <component :is="Component" :key="route.path" />
-
         </Transition>
       </RouterView>
     </main>

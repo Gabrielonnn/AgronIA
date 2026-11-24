@@ -2074,9 +2074,6 @@ onBeforeUnmount(() => {
             {{ simulationPaused ? 'Simulación pausada.' : 'Selecciona una operación para el dron.' }}
           </p>
 
-          <div class="space-y-1.5">
-            <button @click="handleAction('ANALYZE')" :disabled="droneState !== 'IDLE' || simulationPaused || savingSnapshot" class="simulation-action simulation-action-primary w-full disabled:cursor-not-allowed p-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2">
-
           <div class="simulation-actions">
             <button @click="handleAction('ANALYZE')" :disabled="droneState !== 'IDLE' || simulationPaused" class="simulation-action simulation-action-wide simulation-action-primary w-full disabled:cursor-not-allowed p-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2">
 
@@ -2089,9 +2086,6 @@ onBeforeUnmount(() => {
               {{ droneState === 'CENTINELAS' ? 'Detener Centinelas' : 'Activar Centinelas' }}
             </button>
             
-
-            <div class="grid grid-cols-2 gap-2">
-              <button @click="handleAction('WATER')" :disabled="droneState !== 'IDLE' || simulationPaused || savingSnapshot" class="simulation-action simulation-action-water disabled:cursor-not-allowed p-2 rounded-lg text-sm font-medium flex items-center justify-center gap-1.5">
 
             <div class="simulation-action-row">
               <button @click="handleAction('WATER')" :disabled="droneState !== 'IDLE' || simulationPaused" class="simulation-action simulation-action-water disabled:cursor-not-allowed p-2 rounded-lg text-sm font-medium flex items-center justify-center gap-1.5">
