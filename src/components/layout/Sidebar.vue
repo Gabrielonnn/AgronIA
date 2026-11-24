@@ -77,7 +77,14 @@ const roleColor = computed(() => {
   return 'text-blue-600'
 })
 
-const sidebarDrones = ['gold', 'orange', 'green', 'lime', 'teal']
+const sidebarDrones = [
+  { id: 'gold-a', color: 'gold', top: '12%', size: '38px', duration: '19s', delay: '-2s', direction: 'right' },
+  { id: 'orange-a', color: 'orange', top: '27%', size: '34px', duration: '23s', delay: '-9s', direction: 'left' },
+  { id: 'green-a', color: 'green', top: '43%', size: '42px', duration: '21s', delay: '-14s', direction: 'right' },
+  { id: 'lime-a', color: 'lime', top: '58%', size: '36px', duration: '25s', delay: '-6s', direction: 'left' },
+  { id: 'teal-a', color: 'teal', top: '72%', size: '40px', duration: '22s', delay: '-18s', direction: 'right' },
+  { id: 'gold-b', color: 'gold', top: '88%', size: '32px', duration: '27s', delay: '-12s', direction: 'left' },
+]
 </script>
 
 <template>
@@ -85,9 +92,15 @@ const sidebarDrones = ['gold', 'orange', 'green', 'lime', 'teal']
     <div class="topo-drone-scene" aria-hidden="true">
       <svg
         v-for="drone in sidebarDrones"
-        :key="drone"
+        :key="drone.id"
         class="topo-drone"
-        :class="`topo-drone-${drone}`"
+        :class="[`topo-drone-${drone.color}`, `topo-drone-${drone.direction}`]"
+        :style="{
+          '--drone-top': drone.top,
+          '--drone-size': drone.size,
+          '--drone-duration': drone.duration,
+          '--drone-delay': drone.delay
+        }"
         viewBox="0 0 64 32"
         fill="none"
       >

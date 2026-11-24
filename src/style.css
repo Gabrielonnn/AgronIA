@@ -149,19 +149,27 @@
 .topo-drone {
   position: absolute;
   left: 0;
-  width: 42px;
-  height: 21px;
+  top: var(--drone-top);
+  width: var(--drone-size);
+  height: auto;
   color: var(--drone-color);
-  opacity: 0.64;
+  opacity: 0.72;
   filter: drop-shadow(0 0 5px color-mix(in srgb, var(--drone-color) 75%, transparent));
-  animation: sidebar-drone-flight 19s ease-in-out infinite;
+  animation: sidebar-drone-flight-right var(--drone-duration) var(--drone-delay) linear infinite;
 }
 
-.topo-drone-gold { --drone-color: #ffc400; top: 16%; animation-delay: -2s; }
-.topo-drone-orange { --drone-color: #f58a00; top: 34%; animation-delay: -9s; animation-duration: 23s; }
-.topo-drone-green { --drone-color: #78b653; top: 53%; animation-delay: -14s; animation-duration: 21s; }
-.topo-drone-lime { --drone-color: #b4d18b; top: 72%; animation-delay: -6s; animation-duration: 25s; }
-.topo-drone-teal { --drone-color: #48c7a1; top: 89%; animation-delay: -18s; animation-duration: 22s; }
+.topo-drone-left {
+  right: 0;
+  left: auto;
+  animation-name: sidebar-drone-flight-left;
+}
+.topo-drone-gold { --drone-color: #ffc400; }
+.topo-drone-orange { --drone-color: #f58a00; }
+.topo-drone-green { --drone-color: #78b653; }
+.topo-drone-lime { --drone-color: #b4d18b; }
+.topo-drone-teal { --drone-color: #48c7a1; }
+.topo-drone svg { width: 100%; height: auto; animation: sidebar-drone-hover 3.8s ease-in-out infinite; }
+.topo-drone-left svg { animation-delay: -1.4s; }
 .topo-drone-rotor { transform-box: fill-box; transform-origin: center; animation: sidebar-drone-rotor 0.24s ease-in-out infinite alternate; }
 .topo-drone-beacon { opacity: 0.32; transform-box: fill-box; transform-origin: center; animation: sidebar-drone-beacon 1.8s ease-out infinite; }
 
@@ -494,13 +502,27 @@
   50% { box-shadow: 0 0 0 5px rgba(255, 196, 0, 0); }
 }
 
-@keyframes sidebar-drone-flight {
-  0% { transform: translate3d(-65px, 5px, 0) rotate(-5deg); opacity: 0; }
-  12% { opacity: 0.64; }
-  35% { transform: translate3d(50px, -4px, 0) rotate(2deg); opacity: 0.76; }
-  64% { transform: translate3d(150px, 7px, 0) rotate(-2deg); opacity: 0.68; }
-  88% { opacity: 0.58; }
-  100% { transform: translate3d(275px, -5px, 0) rotate(4deg); opacity: 0; }
+@keyframes sidebar-drone-flight-right {
+  0% { translate: -55px 5px; opacity: 0; }
+  12% { opacity: 0.72; }
+  35% { translate: 55px -4px; opacity: 0.82; }
+  64% { translate: 145px 7px; opacity: 0.74; }
+  88% { opacity: 0.68; }
+  100% { translate: 290px -5px; opacity: 0; }
+}
+
+@keyframes sidebar-drone-flight-left {
+  0% { translate: 55px 5px; opacity: 0; transform: scaleX(-1); }
+  12% { opacity: 0.72; }
+  35% { translate: -55px -4px; opacity: 0.82; transform: scaleX(-1) rotate(2deg); }
+  64% { translate: -145px 7px; opacity: 0.74; }
+  88% { opacity: 0.68; }
+  100% { translate: -290px -5px; opacity: 0; transform: scaleX(-1) rotate(4deg); }
+}
+
+@keyframes sidebar-drone-hover {
+  0%, 100% { transform: translateY(0) rotate(0); }
+  50% { transform: translateY(-3px) rotate(1.5deg); }
 }
 
 @keyframes sidebar-drone-rotor {
