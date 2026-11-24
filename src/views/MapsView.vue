@@ -22,65 +22,55 @@ import {
   Trash2,
   Upload
 } from 'lucide-vue-next'
-import { listFields, listSimulations, saveMapWorkspace, type FieldRecord } from '../services/agronomyData'
+import {
+  listFields,
+  listSimulations,
+  saveMapWorkspace,
+  updateFieldGeometry,
+  type FieldRecord,
+} from '../services/agronomyData'
 import { buildFieldMonitorFeatures, readFieldMonitorData, type FieldMonitorData } from '../services/fieldMonitoring'
+import { mergeFieldMapFeatures, type FieldMapElement } from '../services/fieldMapWorkspace'
 
-interface MapFeature {
-  type: 'Feature'
-  geometry: GeoJSON.Geometry | null
-  properties?: Record<string, unknown> | null
-}
-
-interface MapFeatureCollection {
-  type: 'FeatureCollection'
-  features: MapFeature[]
-}
-
-interface SavedMapElement {
+interface SavedMapElement extends FieldMapElement {
   id: string
   user_id: string
   field_id: string | null
   element_type: string
-  name: string | null
-  geometry_data: GeoJSON.Geometry
-  properties: Record<string, unknown> | null
   created_at: string
-}
-
-interface FieldOption {
-  id: string
-  name: string
 }
 
 const store = useMainStore()
 const route = useRoute()
-const geojsonData = ref<MapFeatureCollection | null>(null)
+const geojsonData = ref<GeoJSON.FeatureCollection | null>(null)
 const exportStatus = ref('')
 const saveError = ref('')
 const fieldName = ref('')
 const savedFields = ref<FieldRecord[]>([])
+const fieldGeoJsonById = ref(new Map<string, unknown>())
 const isSaving = ref(false)
 const saveStatus = ref('')
 const errorMessage = ref('')
 const loadingSaved = ref(false)
 const saving = ref(false)
 const savedElements = ref<SavedMapElement[]>([])
-const fields = ref<FieldOption[]>([])
 const selectedFieldId = ref('')
+const loadedFieldId = ref('')
+const mapWorkspaceDirty = ref(false)
 const mapBasemap = ref<'satellite' | 'streets'>('satellite')
-const lastSavedFieldId = ref('')
 const monitorField = ref<FieldRecord | null>(null)
 const monitorData = ref<FieldMonitorData | null>(null)
 const monitorLoading = ref(false)
 const monitorError = ref('')
 const monitorCreatedAt = ref('')
 let monitorRequestId = 0
+let workspaceRequestId = 0
 
 const monitorFieldId = computed(() =>
   typeof route.query.fieldId === 'string' ? route.query.fieldId : '',
 )
 const isMonitoring = computed(() => monitorFieldId.value.length > 0)
-const features = computed(() => geojsonData.value?.features ?? [])
+const features = computed<GeoJSON.Feature[]>(() => geojsonData.value?.features ?? [])
 const initialFeatures = ref<GeoJSON.Feature[]>([])
 const monitorMapFeatures = ref<GeoJSON.Feature[]>([])
 const mapInitialFeatures = computed<GeoJSON.Feature[]>(() =>
@@ -109,9 +99,9 @@ const lineCount = computed(() =>
   ).length
 )
 
-const handleGeoJsonUpdate = (data: MapFeatureCollection) => {
+const handleGeoJsonUpdate = (data: GeoJSON.FeatureCollection) => {
   geojsonData.value = data
-  lastSavedFieldId.value = ''
+  mapWorkspaceDirty.value = true
   exportStatus.value = ''
   saveError.value = ''
   saveStatus.value = ''
@@ -120,7 +110,89 @@ const handleGeoJsonUpdate = (data: MapFeatureCollection) => {
 }
 
 const refreshFields = async () => {
-  savedFields.value = await listFields()
+  setSavedFields(await listFields())
+}
+
+const setSavedFields = (fields: FieldRecord[]) => {
+  savedFields.value = fields
+  const geometries = new Map<string, unknown>()
+  for (const field of fields) geometries.set(field.id, field.geojson_data)
+  fieldGeoJsonById.value = geometries
+}
+
+const loadWorkspaceElements = async (fieldId: string) => {
+  if (!supabase || !store.user?.id) {
+    errorMessage.value = 'Inicia sesión y configura Supabase para cargar los elementos del mapa.'
+    return
+  }
+
+  const requestId = ++workspaceRequestId
+  loadingSaved.value = true
+  errorMessage.value = ''
+  try {
+    const result = fieldId
+      ? await supabase
+        .from('map_elements')
+        .select('*')
+        .eq('user_id', store.user.id)
+        .eq('field_id', fieldId)
+        .order('created_at', { ascending: true })
+      : await supabase
+        .from('map_elements')
+        .select('*')
+        .eq('user_id', store.user.id)
+        .is('field_id', null)
+        .order('created_at', { ascending: true })
+    const { data, error } = result
+    if (error) throw new Error(`No se pudieron consultar los elementos de la parcela: ${error.message}`)
+    if (requestId !== workspaceRequestId) return
+
+    const elements = (data ?? []) as SavedMapElement[]
+    const validElements = elements.filter(element => isGeometry(element.geometry_data))
+    const loadedFeatures = mergeFieldMapFeatures(fieldGeoJsonById.value.get(fieldId), validElements)
+    savedElements.value = elements
+    geojsonData.value = { type: 'FeatureCollection', features: loadedFeatures }
+    initialFeatures.value = loadedFeatures
+    loadedFieldId.value = fieldId
+    mapWorkspaceDirty.value = false
+  } catch (error) {
+    if (requestId === workspaceRequestId) {
+      errorMessage.value = error instanceof Error
+        ? error.message
+        : 'No se pudieron cargar los elementos guardados de esta parcela.'
+    }
+  } finally {
+    if (requestId === workspaceRequestId) loadingSaved.value = false
+  }
+}
+
+const loadSavedWorkspace = async () => {
+  loadingSaved.value = true
+  try {
+    const fields = await listFields()
+    setSavedFields(fields)
+    const requestedFieldId = monitorFieldId.value
+      || (typeof route.query.fieldId === 'string' ? route.query.fieldId : '')
+    if (requestedFieldId && !fields.some(field => field.id === requestedFieldId)) {
+      selectedFieldId.value = ''
+      loadedFieldId.value = ''
+      geojsonData.value = { type: 'FeatureCollection', features: [] }
+      initialFeatures.value = []
+      errorMessage.value = 'No se encontró la parcela solicitada o no tienes permiso para verla.'
+      loadingSaved.value = false
+      return
+    }
+    const fieldId = fields.some(field => field.id === requestedFieldId)
+      ? requestedFieldId
+      : fields[0]?.id ?? ''
+    selectedFieldId.value = fieldId
+    await loadWorkspaceElements(fieldId)
+  } catch (error) {
+    errorMessage.value = error instanceof Error
+      ? error.message
+      : 'No se pudieron cargar las parcelas guardadas.'
+    loadingSaved.value = false
+  }
 }
 
 const loadFieldMonitoring = async () => {
@@ -141,7 +213,7 @@ const loadFieldMonitoring = async () => {
       listSimulations(fieldId),
     ])
     if (requestId !== monitorRequestId) return
-    savedFields.value = availableFields
+    setSavedFields(availableFields)
     const field = availableFields.find(item => item.id === fieldId)
     if (!field) throw new Error('No se encontró la parcela o no tienes permiso para verla.')
     monitorField.value = field
@@ -175,13 +247,16 @@ const monitorTrendPoints = (key: 'health' | 'humidity' | 'ndvi') => {
 const monitorValue = (value: number | null | undefined, suffix = '%') =>
   value === null || value === undefined ? '—' : `${value.toFixed(0)}${suffix}`
 
-onMounted(() => {
-  void refreshFields().catch(error => {
-    saveError.value = error instanceof Error ? error.message : 'No se pudieron cargar los campos guardados.'
-  })
-  watch(monitorFieldId, () => {
-    void loadFieldMonitoring()
-  }, { immediate: true })
+onMounted(() => { void loadSavedWorkspace() })
+watch(monitorFieldId, () => { void loadFieldMonitoring() }, { immediate: true })
+
+watch(selectedFieldId, (fieldId, previousFieldId) => {
+  if (fieldId === loadedFieldId.value) return
+  if (mapWorkspaceDirty.value && !window.confirm('Hay cambios sin guardar. ¿Deseas descartarlos y cargar otra parcela?')) {
+    selectedFieldId.value = previousFieldId
+    return
+  }
+  void loadWorkspaceElements(fieldId)
 })
 
 const saveMap = async () => {
@@ -193,11 +268,12 @@ const saveMap = async () => {
     const geojson = JSON.parse(JSON.stringify(geojsonData.value))
     const id = await saveMapWorkspace(fieldName.value.trim(), geojson)
     fieldName.value = ''
-    lastSavedFieldId.value = id
     selectedFieldId.value = id
+    loadedFieldId.value = id
     exportStatus.value = `Mapa guardado correctamente (campo ${id.slice(0, 8)}).`
     try {
       await refreshFields()
+      await loadWorkspaceElements(id)
     } catch (error) {
       saveError.value = error instanceof Error
         ? `El mapa se guardó, pero no se pudo actualizar la lista: ${error.message}`
@@ -214,7 +290,7 @@ const handleBasemapUpdate = (basemap: 'satellite' | 'streets') => {
   mapBasemap.value = basemap
 }
 
-const featureName = (feature: MapFeature, index: number) => {
+const featureName = (feature: GeoJSON.Feature, index: number) => {
   const name = feature.properties?.name
   return typeof name === 'string' && name.trim()
     ? name
@@ -228,155 +304,141 @@ const isGeometry = (value: unknown): value is GeoJSON.Geometry => {
     : 'coordinates' in value
 }
 
-const loadSavedElements = async () => {
+const saveMapElements = async () => {
+  if (saving.value || loadingSaved.value) return
   if (!supabase || !store.user?.id) {
     errorMessage.value = 'Inicia sesión y configura Supabase para guardar elementos del mapa.'
     return
   }
-
-  loadingSaved.value = true
-  errorMessage.value = ''
-  const [elementsResult, fieldsResult] = await Promise.all([
-    supabase
-      .from('map_elements')
-      .select('*')
-      .eq('user_id', store.user.id)
-      .order('created_at', { ascending: true }),
-    supabase
-      .from('fields')
-      .select('id, name')
-      .eq('user_id', store.user.id)
-      .order('name')
-  ])
-
-  if (elementsResult.error) {
-    errorMessage.value = `No se pudieron consultar los elementos guardados: ${elementsResult.error.message}`
-    savedElements.value = []
-    loadingSaved.value = false
+  if (!geojsonData.value) {
+    errorMessage.value = 'No hay un mapa cargado para guardar.'
     return
   }
-
-  if (fieldsResult.error) {
-    errorMessage.value = `No se pudieron consultar las parcelas: ${fieldsResult.error.message}`
-  } else {
-    fields.value = (fieldsResult.data ?? []) as FieldOption[]
-  }
-
-  savedElements.value = (elementsResult.data ?? []) as SavedMapElement[]
-  selectedFieldId.value = savedElements.value.find(element => element.field_id)?.field_id ?? ''
-  const savedFeatures = savedElements.value.flatMap(element => {
-    if (!isGeometry(element.geometry_data)) return []
-    return [{
-      type: 'Feature' as const,
-      geometry: element.geometry_data,
-      properties: {
-        ...(element.properties ?? {}),
-        name: element.name ?? 'Elemento guardado',
-        map_element_id: element.id
-      }
-    }]
-  })
-
-  geojsonData.value = { type: 'FeatureCollection', features: savedFeatures }
-  initialFeatures.value = savedFeatures
-  loadingSaved.value = false
-}
-
-onMounted(loadSavedElements)
-
-const saveMapElements = async () => {
-  if (!supabase || !store.user?.id || !geojsonData.value || saving.value || loadingSaved.value) return
 
   saving.value = true
   saveStatus.value = ''
   errorMessage.value = ''
   const currentIds = new Set<string>()
+  const invalidFeatureIndex = features.value.findIndex(feature => !feature.geometry)
+  if (invalidFeatureIndex >= 0) {
+    errorMessage.value = `No se pudo guardar ${featureName(features.value[invalidFeatureIndex], invalidFeatureIndex)} porque no tiene geometría.`
+    saving.value = false
+    return
+  }
+  let fieldGeometrySaved = false
 
-  for (const [index, feature] of features.value.entries()) {
-    if (!feature.geometry) {
-      errorMessage.value = `No se pudo guardar ${featureName(feature, index)} porque no tiene geometría.`
-      break
+  try {
+    if (selectedFieldId.value) {
+      await updateFieldGeometry(
+        selectedFieldId.value,
+        JSON.parse(JSON.stringify(geojsonData.value)),
+      )
+      fieldGeometrySaved = true
     }
 
-    const properties = { ...(feature.properties ?? {}) }
-    const elementId = properties.map_element_id
-    delete properties.map_element_id
-    const name = featureName(feature, index)
-    const record = {
-      user_id: store.user.id,
-      field_id: selectedFieldId.value || null,
-      element_type: feature.geometry.type,
-      name,
-      geometry_data: feature.geometry,
-      properties
-    }
+    for (const [index, feature] of features.value.entries()) {
+      if (errorMessage.value || !feature.geometry) break
 
-    if (typeof elementId === 'string') {
-      const { data, error } = await supabase
-        .from('map_elements')
-        .update(record)
-        .eq('id', elementId)
-        .eq('user_id', store.user.id)
-        .select('id')
-        .maybeSingle()
-
-      if (error || !data) {
-        errorMessage.value = `No se pudo actualizar ${name}: ${error?.message ?? 'No se encontró el registro o faltan permisos.'}`
-        break
+      const properties = { ...(feature.properties ?? {}) }
+      const elementId = properties.map_element_id
+      delete properties.map_element_id
+      const name = featureName(feature, index)
+      const record = {
+        user_id: store.user.id,
+        field_id: selectedFieldId.value || null,
+        element_type: feature.geometry.type,
+        name,
+        geometry_data: feature.geometry,
+        properties
       }
-      currentIds.add(elementId)
+
+      if (typeof elementId === 'string') {
+        let updateQuery = supabase
+          .from('map_elements')
+          .update(record)
+          .eq('id', elementId)
+          .eq('user_id', store.user.id)
+        updateQuery = selectedFieldId.value
+          ? updateQuery.eq('field_id', selectedFieldId.value)
+          : updateQuery.is('field_id', null)
+        const { data, error } = await updateQuery.select('id').maybeSingle()
+
+        if (error || !data) {
+          errorMessage.value = `No se pudo actualizar ${name}: ${error?.message ?? 'No se encontró el registro o faltan permisos.'}`
+          break
+        }
+        currentIds.add(elementId)
+      } else {
+        const { data, error } = await supabase
+          .from('map_elements')
+          .insert(record)
+          .select('id')
+          .single()
+
+        if (error) {
+          errorMessage.value = `No se pudo guardar ${name}: ${error.message}`
+          break
+        }
+
+        if (!data) {
+          errorMessage.value = `No se pudo guardar ${name}: Supabase no devolvió el identificador del elemento.`
+          break
+        }
+        feature.properties = { ...(feature.properties ?? {}), map_element_id: data.id }
+        currentIds.add(data.id)
+      }
+    }
+
+    if (!errorMessage.value) {
+      const removedIds = savedElements.value
+        .filter(element => element.field_id === (selectedFieldId.value || null))
+        .filter(element => isGeometry(element.geometry_data))
+        .filter(element => !currentIds.has(element.id))
+        .map(element => element.id)
+
+      if (removedIds.length > 0) {
+        let deleteQuery = supabase
+          .from('map_elements')
+          .delete()
+          .eq('user_id', store.user.id)
+          .in('id', removedIds)
+        deleteQuery = selectedFieldId.value
+          ? deleteQuery.eq('field_id', selectedFieldId.value)
+          : deleteQuery.is('field_id', null)
+        const { data, error } = await deleteQuery.select('id')
+
+        if (error) {
+          errorMessage.value = `Los elementos se actualizaron, pero no se pudieron eliminar los que quitaste del mapa: ${error.message}`
+        } else if (data?.length !== removedIds.length) {
+          errorMessage.value = 'Los elementos se actualizaron, pero no se eliminaron todos los que quitaste del mapa. Comprueba los permisos RLS.'
+        }
+      }
+    }
+
+    if (!errorMessage.value) {
+      saveStatus.value = 'Elementos del mapa guardados en Supabase.'
+      mapWorkspaceDirty.value = false
+      loadedFieldId.value = selectedFieldId.value
+      await loadWorkspaceElements(selectedFieldId.value)
     } else {
-      const { data, error } = await supabase
-        .from('map_elements')
-        .insert(record)
-        .select('id')
-        .single()
-
-      if (error) {
-        errorMessage.value = `No se pudo guardar ${name}: ${error.message}`
-        break
+      geojsonData.value = {
+        type: 'FeatureCollection',
+        features: [...features.value]
       }
-
-      if (!data) {
-        errorMessage.value = `No se pudo guardar ${name}: Supabase no devolvió el identificador del elemento.`
-        break
-      }
-      feature.properties = { ...(feature.properties ?? {}), map_element_id: data.id }
-      currentIds.add(data.id)
-    }
-  }
-
-  if (!errorMessage.value) {
-    const removedIds = savedElements.value
-      .filter(element => !currentIds.has(element.id))
-      .map(element => element.id)
-
-    if (removedIds.length > 0) {
-      const { data, error } = await supabase
-        .from('map_elements')
-        .delete()
-        .eq('user_id', store.user.id)
-        .in('id', removedIds)
-        .select('id')
-
-      if (error) {
-        errorMessage.value = `Los elementos se actualizaron, pero no se pudieron eliminar los que quitaste del mapa: ${error.message}`
-      } else if (data?.length !== removedIds.length) {
-        errorMessage.value = 'Los elementos se actualizaron, pero no se eliminaron todos los que quitaste del mapa. Comprueba los permisos RLS.'
+      if (fieldGeometrySaved) {
+        errorMessage.value = `La geometría de la parcela se guardó, pero los elementos no se guardaron: ${errorMessage.value}`
       }
     }
-  }
-
-  if (!errorMessage.value) {
-    saveStatus.value = 'Elementos del mapa guardados en Supabase.'
-    await loadSavedElements()
-  } else {
-    geojsonData.value = {
-      type: 'FeatureCollection',
-      features: [...features.value]
+  } catch (error) {
+    errorMessage.value = error instanceof Error
+      ? error.message
+      : 'No se pudieron guardar los cambios del mapa.'
+    if (fieldGeometrySaved) {
+      errorMessage.value = `La geometría de la parcela se guardó, pero los elementos no se guardaron: ${errorMessage.value}`
     }
+  } finally {
+    saving.value = false
   }
-  saving.value = false
 }
 
 const exportGeoJson = () => {
@@ -556,7 +618,7 @@ const exportGeoJson = () => {
             class="rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100"
           >
             <option value="">Sin parcela asociada</option>
-            <option v-for="field in fields" :key="field.id" :value="field.id">{{ field.name }}</option>
+            <option v-for="field in savedFields" :key="field.id" :value="field.id">{{ field.name }}</option>
           </select>
         </div>
         <div v-if="errorMessage" class="mb-3 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700" role="alert">
@@ -658,9 +720,9 @@ const exportGeoJson = () => {
         <p v-if="exportStatus" class="export-status" role="status"><Check :size="14" /> {{ exportStatus }}</p>
         <p v-if="saveError" class="export-error" role="alert">{{ saveError }}</p>
         <RouterLink
-          v-if="lastSavedFieldId"
+          v-if="selectedFieldId"
           class="open-simulation-link saved-simulation-link"
-          :to="{ name: 'simulation', query: { fieldId: lastSavedFieldId } }"
+          :to="{ name: 'simulation', query: { fieldId: selectedFieldId } }"
         >
           <MapPinned :size="15" />
           Abrir esta parcela en simulación

@@ -241,13 +241,23 @@ const handleSelectedFieldChange = () => {
 }
 
 watch(() => route.query.fieldId, fieldId => {
-  if (
-    typeof fieldId !== 'string'
-    || !fields.value.some(field => field.id === fieldId)
-    || droneState.value !== 'IDLE'
-  ) return
+  if (typeof fieldId !== 'string' || !fieldId) return
+  const field = fields.value.find(item => item.id === fieldId)
+  if (!field) {
+    selectedFieldId.value = ''
+    selectedFieldGeometry.value = null
+    setActionFeedback('No se encontró la parcela solicitada o no tienes permiso para verla.')
+    return
+  }
+  if (droneState.value !== 'IDLE') {
+    setActionFeedback('Detén la misión actual antes de cambiar de parcela.')
+    return
+  }
   selectedFieldId.value = fieldId
   handleSelectedFieldChange()
+  if (!selectedFieldGeometry.value) {
+    setActionFeedback('La parcela existe, pero no tiene una geometría válida guardada para mostrar.')
+  }
 })
 
 const disposeGroupChildren = (group: THREE.Group) => {
@@ -1864,11 +1874,19 @@ onMounted(async () => {
   try {
     fields.value = await listFields()
     const requestedFieldId = typeof route.query.fieldId === 'string' ? route.query.fieldId : ''
-    selectedFieldId.value = fields.value.some(field => field.id === requestedFieldId)
-      ? requestedFieldId
-      : fields.value[0]?.id ?? ''
+    const requestedField = fields.value.find(field => field.id === requestedFieldId)
+    if (requestedFieldId && !requestedField) {
+      selectedFieldId.value = ''
+      selectedFieldGeometry.value = null
+      setActionFeedback('No se encontró la parcela solicitada o no tienes permiso para verla.')
+    } else {
+      selectedFieldId.value = requestedFieldId || fields.value[0]?.id || ''
+    }
     const field = fields.value.find(item => item.id === selectedFieldId.value)
     selectedFieldGeometry.value = field ? projectFieldGeometry(field.geojson_data) : null
+    if (field && !selectedFieldGeometry.value) {
+      setActionFeedback('La parcela existe, pero no tiene una geometría válida guardada para mostrar.')
+    }
   } catch (error) {
     setActionFeedback(error instanceof Error
       ? `No se pudieron cargar los campos: ${error.message}`

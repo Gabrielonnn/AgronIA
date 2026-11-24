@@ -186,6 +186,17 @@ export const saveMapWorkspace = async (name: string, geojson: Json): Promise<str
   return data
 }
 
+export const updateFieldGeometry = async (fieldId: string, geojson: Json): Promise<void> => {
+  const { data, error } = await requireSupabase()
+    .from('fields')
+    .update({ geojson_data: geojson })
+    .eq('id', fieldId)
+    .select('id')
+    .maybeSingle()
+  if (error) throw new Error(`No se pudo actualizar la geometría de la parcela: ${error.message}`)
+  if (!data) throw new Error('La parcela no existe o no tienes permiso para actualizarla.')
+}
+
 export const createFieldCrop = async (fieldCrop: FieldCropInput): Promise<void> => {
   const { error } = await requireSupabase().from('field_crops').insert(fieldCrop)
   if (error) throw new Error(`No se pudo guardar el cultivo del campo: ${error.message}`)
