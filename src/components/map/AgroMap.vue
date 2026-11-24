@@ -13,6 +13,7 @@ const DEFAULT_ZOOM = 13
 const mapContainer = ref<HTMLElement | null>(null)
 const props = defineProps<{
   initialFeatures?: GeoJSON.Feature[]
+  readOnly?: boolean
 }>()
 const locationStatus = ref<'idle' | 'requesting' | 'tracking' | 'denied'>('idle')
 const userLat = ref<number | null>(null)
@@ -35,6 +36,27 @@ const streetsLayerUrl = 'https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{
 const tileOptions: L.TileLayerOptions = { maxZoom: 19, updateWhenIdle: true, keepBuffer: 2 }
 let satelliteLayer: L.TileLayer | null = null
 let streetsLayer: L.TileLayer | null = null
+
+const configureDrawingControls = () => {
+  if (!map) return
+  if (props.readOnly) {
+    map.pm.removeControls()
+    return
+  }
+  map.pm.addControls({
+    position: 'topleft',
+    drawCircle: false,
+    drawCircleMarker: false,
+    drawPolyline: false,
+    drawRectangle: true,
+    drawPolygon: true,
+    drawMarker: true,
+    editMode: true,
+    dragMode: true,
+    cutPolygon: true,
+    removalMode: true,
+  })
+}
 
 const emit = defineEmits<{
   (e: 'update:geojson', data: GeoJSON.FeatureCollection): void
@@ -167,20 +189,7 @@ onMounted(() => {
   })
   L.control.scale({ position: 'bottomleft', metric: true, imperial: false, maxWidth: 120 }).addTo(map)
 
-  // Configurar Geoman para dibujo
-  map.pm.addControls({
-    position: 'topleft',
-    drawCircle: false,
-    drawCircleMarker: false,
-    drawPolyline: false,
-    drawRectangle: true,
-    drawPolygon: true,
-    drawMarker: true,
-    editMode: true,
-    dragMode: true,
-    cutPolygon: true,
-    removalMode: true,
-  })
+  configureDrawingControls()
 
   // Escuchar eventos de dibujo para extraer GeoJSON
   map.on('pm:create', (event: { layer: L.Layer }) => {
@@ -218,18 +227,42 @@ const installInitialFeatures = (features: GeoJSON.Feature[]) => {
     type: 'FeatureCollection',
     features
   }
-  const savedLayers = L.geoJSON(savedCollection as GeoJSON.GeoJsonObject)
+  const savedLayers = L.geoJSON(savedCollection as GeoJSON.GeoJsonObject, {
+    style: feature => feature?.properties?.monitor_field_boundary === true
+      ? {
+          color: '#f2cf68',
+          weight: 3,
+          opacity: 0.95,
+          fillColor: '#8eb45b',
+          fillOpacity: 0.12,
+        }
+      : {},
+    pointToLayer: (feature, latLng) => feature.properties?.simulation_affected === true
+      ? L.circleMarker(latLng, {
+          radius: 7,
+          color: '#fff5e8',
+          weight: 2,
+          fillColor: '#e55c4a',
+          fillOpacity: 1,
+        })
+      : L.marker(latLng),
+  })
   savedLayers.eachLayer(layer => {
     drawnLayers.add(layer)
     layer.addTo(map!)
     layer.on('pm:edit', updateGeoJson)
     layer.on('pm:dragend', updateGeoJson)
   })
+  const bounds = savedLayers.getBounds()
+  if (bounds.isValid()) {
+    map.fitBounds(bounds, { padding: [30, 30], maxZoom: 17, animate: false })
+  }
 }
 
 watch(() => props.initialFeatures, features => {
   if (features) installInitialFeatures(features)
 })
+watch(() => props.readOnly, configureDrawingControls)
 
 const scheduleMapResize = () => {
   if (!map || mapResizeFrame) return

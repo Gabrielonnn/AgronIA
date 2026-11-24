@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { RouterLink, useRoute } from 'vue-router'
 import { useMainStore } from '../stores'
 import { supabase } from '../services/supabase'
 import AgroMap from '../components/map/AgroMap.vue'
@@ -21,7 +22,8 @@ import {
   Trash2,
   Upload
 } from 'lucide-vue-next'
-import { listFields, saveMapWorkspace, type FieldRecord } from '../services/agronomyData'
+import { listFields, listSimulations, saveMapWorkspace, type FieldRecord } from '../services/agronomyData'
+import { buildFieldMonitorFeatures, readFieldMonitorData, type FieldMonitorData } from '../services/fieldMonitoring'
 
 interface MapFeature {
   type: 'Feature'
@@ -51,6 +53,7 @@ interface FieldOption {
 }
 
 const store = useMainStore()
+const route = useRoute()
 const geojsonData = ref<MapFeatureCollection | null>(null)
 const exportStatus = ref('')
 const saveError = ref('')
@@ -65,9 +68,31 @@ const savedElements = ref<SavedMapElement[]>([])
 const fields = ref<FieldOption[]>([])
 const selectedFieldId = ref('')
 const mapBasemap = ref<'satellite' | 'streets'>('satellite')
+const lastSavedFieldId = ref('')
+const monitorField = ref<FieldRecord | null>(null)
+const monitorData = ref<FieldMonitorData | null>(null)
+const monitorLoading = ref(false)
+const monitorError = ref('')
+const monitorCreatedAt = ref('')
+let monitorRequestId = 0
 
+const monitorFieldId = computed(() =>
+  typeof route.query.fieldId === 'string' ? route.query.fieldId : '',
+)
+const isMonitoring = computed(() => monitorFieldId.value.length > 0)
 const features = computed(() => geojsonData.value?.features ?? [])
 const initialFeatures = ref<GeoJSON.Feature[]>([])
+const monitorMapFeatures = ref<GeoJSON.Feature[]>([])
+const mapInitialFeatures = computed<GeoJSON.Feature[]>(() =>
+  isMonitoring.value ? monitorMapFeatures.value : initialFeatures.value,
+)
+const affectedMonitorPlants = computed(() =>
+  (monitorData.value?.plants ?? [])
+    .filter(plant =>
+      plant.dead || plant.waterStress >= 0.15 || (plant.health !== null && plant.health < 0.7),
+    )
+    .sort((left, right) => Number(right.dead) - Number(left.dead) || right.waterStress - left.waterStress),
+)
 const polygonCount = computed(() =>
   features.value.filter(feature =>
     feature.geometry?.type === 'Polygon' || feature.geometry?.type === 'MultiPolygon'
@@ -86,6 +111,7 @@ const lineCount = computed(() =>
 
 const handleGeoJsonUpdate = (data: MapFeatureCollection) => {
   geojsonData.value = data
+  lastSavedFieldId.value = ''
   exportStatus.value = ''
   saveError.value = ''
   saveStatus.value = ''
@@ -97,10 +123,65 @@ const refreshFields = async () => {
   savedFields.value = await listFields()
 }
 
+const loadFieldMonitoring = async () => {
+  const requestId = ++monitorRequestId
+  const fieldId = monitorFieldId.value
+  monitorError.value = ''
+  monitorField.value = null
+  monitorData.value = null
+  monitorMapFeatures.value = []
+  monitorCreatedAt.value = ''
+  monitorLoading.value = false
+  if (!fieldId) return
+
+  monitorLoading.value = true
+  try {
+    const [availableFields, simulations] = await Promise.all([
+      listFields(),
+      listSimulations(fieldId),
+    ])
+    if (requestId !== monitorRequestId) return
+    savedFields.value = availableFields
+    const field = availableFields.find(item => item.id === fieldId)
+    if (!field) throw new Error('No se encontró la parcela o no tienes permiso para verla.')
+    monitorField.value = field
+    const latestSimulation = simulations[0]
+    if (latestSimulation) {
+      monitorData.value = readFieldMonitorData(latestSimulation.results)
+      monitorCreatedAt.value = latestSimulation.created_at
+    }
+    monitorMapFeatures.value = buildFieldMonitorFeatures(field.geojson_data, monitorData.value)
+  } catch (error) {
+    if (requestId === monitorRequestId) {
+      monitorError.value = error instanceof Error
+        ? error.message
+        : 'No se pudo cargar el monitoreo de esta parcela.'
+    }
+  } finally {
+    if (requestId === monitorRequestId) monitorLoading.value = false
+  }
+}
+
+const monitorTrendPoints = (key: 'health' | 'humidity' | 'ndvi') => {
+  const history = monitorData.value?.timeline ?? []
+  if (history.length < 2) return ''
+  return history.map((sample, index) => {
+    const x = (index / (history.length - 1)) * 300
+    const y = 90 - Math.min(100, Math.max(0, sample[key])) * 0.8
+    return `${x.toFixed(1)},${y.toFixed(1)}`
+  }).join(' ')
+}
+
+const monitorValue = (value: number | null | undefined, suffix = '%') =>
+  value === null || value === undefined ? '—' : `${value.toFixed(0)}${suffix}`
+
 onMounted(() => {
   void refreshFields().catch(error => {
     saveError.value = error instanceof Error ? error.message : 'No se pudieron cargar los campos guardados.'
   })
+  watch(monitorFieldId, () => {
+    void loadFieldMonitoring()
+  }, { immediate: true })
 })
 
 const saveMap = async () => {
@@ -112,6 +193,8 @@ const saveMap = async () => {
     const geojson = JSON.parse(JSON.stringify(geojsonData.value))
     const id = await saveMapWorkspace(fieldName.value.trim(), geojson)
     fieldName.value = ''
+    lastSavedFieldId.value = id
+    selectedFieldId.value = id
     exportStatus.value = `Mapa guardado correctamente (campo ${id.slice(0, 8)}).`
     try {
       await refreshFields()
@@ -323,7 +406,7 @@ const exportGeoJson = () => {
         <p>Explora el terreno, delimita parcelas y prepara tus datos espaciales.</p>
       </div>
 
-      <div class="maps-heading-actions">
+      <div v-if="!isMonitoring" class="maps-heading-actions">
         <div class="maps-live-pill"><Activity :size="15" /> {{ mapBasemap === 'satellite' ? 'Vista satelital' : 'Mapa de calles' }}</div>
         <Button
           variant="outline"
@@ -344,8 +427,106 @@ const exportGeoJson = () => {
           Exportar GeoJSON
         </Button>
       </div>
+      <div v-else class="maps-heading-actions">
+        <RouterLink class="open-simulation-link" :to="{ name: 'maps', query: {} }">
+          <MapPinned :size="15" />
+          Volver al mapa editable
+        </RouterLink>
+      </div>
     </header>
 
+    <section v-if="isMonitoring" class="monitor-view" aria-labelledby="monitor-title">
+      <header class="monitor-heading">
+        <div>
+          <span class="maps-eyebrow"><span></span> MONITOREO DEL CAMPO · CAPA SATELITAL</span>
+          <h2 id="monitor-title">{{ monitorField?.name ?? 'Cargando parcela…' }}</h2>
+          <p>Ubicaciones y métricas de la simulación guardada sobre el contorno geográfico real.</p>
+        </div>
+        <span v-if="monitorCreatedAt" class="monitor-updated">
+          Último análisis: {{ new Date(monitorCreatedAt).toLocaleString('es-MX') }}
+        </span>
+      </header>
+
+      <div v-if="monitorLoading" class="monitor-message" role="status">Cargando parcela y último análisis…</div>
+      <div v-if="monitorError" class="monitor-message is-error" role="alert">{{ monitorError }}</div>
+
+      <template v-if="monitorField">
+        <div class="monitor-summary">
+          <article><span>Salud promedio</span><strong>{{ monitorValue(monitorData?.avgHealth) }}</strong></article>
+          <article><span>Humedad</span><strong>{{ monitorValue(monitorData?.avgHumidity) }}</strong></article>
+          <article><span>NDVI</span><strong>{{ monitorData?.avgNDVI?.toFixed(2) ?? '—' }}</strong></article>
+          <article><span>Plantas afectadas</span><strong class="monitor-warning">{{ monitorData?.stressedPlants ?? affectedMonitorPlants.length }}</strong></article>
+        </div>
+
+        <div class="monitor-layout">
+          <div class="map-card monitor-map-card">
+            <div class="map-card-header">
+              <div>
+                <h2><MapPinned :size="17" /> Parcela y plantas afectadas</h2>
+                <p>El contorno es GeoJSON guardado; los marcadores rojos son ubicaciones simuladas.</p>
+              </div>
+              <span class="map-source"><span></span> {{ mapBasemap === 'satellite' ? 'VISTA SATELITAL' : 'MAPA DE CALLES' }}</span>
+            </div>
+            <div class="map-canvas monitor-map-canvas">
+              <AgroMap
+                :initial-features="mapInitialFeatures"
+                :read-only="true"
+                @update:basemap="handleBasemapUpdate"
+              />
+            </div>
+            <div class="monitor-map-legend">
+              <span><i class="monitor-field-key"></i> Geometría guardada</span>
+              <span><i class="monitor-plant-key"></i> Planta afectada</span>
+              <span>{{ monitorMapFeatures.length }} elementos en el mapa</span>
+            </div>
+          </div>
+
+          <aside class="monitor-details">
+            <section class="monitor-panel">
+              <header>
+                <div><h3>Tendencia del cultivo</h3><p>Datos guardados del análisis</p></div>
+                <Activity :size="17" />
+              </header>
+              <template v-if="monitorData?.timeline.length">
+                <svg class="monitor-chart" viewBox="0 0 300 100" role="img" aria-label="Tendencia de salud, humedad y NDVI">
+                  <line v-for="y in [10, 30, 50, 70, 90]" :key="y" x1="0" :y1="y" x2="300" :y2="y" />
+                  <polyline class="monitor-line-health" :points="monitorTrendPoints('health')" />
+                  <polyline class="monitor-line-humidity" :points="monitorTrendPoints('humidity')" />
+                  <polyline class="monitor-line-ndvi" :points="monitorTrendPoints('ndvi')" />
+                </svg>
+                <div class="monitor-chart-legend">
+                  <span><i class="monitor-line-health-key"></i> Salud</span>
+                  <span><i class="monitor-line-humidity-key"></i> Humedad</span>
+                  <span><i class="monitor-line-ndvi-key"></i> NDVI</span>
+                </div>
+              </template>
+              <p v-else class="monitor-empty">Aún no hay una simulación guardada para esta parcela. Ejecuta un análisis o Centinelas y guarda sus resultados.</p>
+            </section>
+
+            <section class="monitor-panel monitor-plant-panel">
+              <header>
+                <div><h3>Plantas afectadas</h3><p>Estrés hídrico, baja salud o pérdida</p></div>
+                <strong>{{ affectedMonitorPlants.length }}</strong>
+              </header>
+              <div v-if="affectedMonitorPlants.length" class="monitor-plant-list">
+                <div v-for="plant in affectedMonitorPlants.slice(0, 12)" :key="plant.id" class="monitor-plant-row">
+                  <span class="monitor-plant-dot" :class="{ 'is-dead': plant.dead }"></span>
+                  <span><strong>{{ plant.id }}</strong><small>{{ plant.status }} · estrés {{ (plant.waterStress * 100).toFixed(0) }}%</small></span>
+                  <small class="monitor-plant-gps">{{ plant.latitude.toFixed(5) }}, {{ plant.longitude.toFixed(5) }}</small>
+                </div>
+              </div>
+              <p v-else class="monitor-empty">No se registraron plantas afectadas con coordenadas en el último análisis.</p>
+              <p v-if="affectedMonitorPlants.length > 12" class="monitor-footnote">
+                El mapa muestra {{ affectedMonitorPlants.length }} marcadores; aquí se listan los 12 de mayor prioridad.
+              </p>
+              <p class="monitor-footnote">Son datos simulados, no detecciones satelitales en tiempo real. Verifica las plantas en campo.</p>
+            </section>
+          </aside>
+        </div>
+      </template>
+    </section>
+
+    <template v-else>
     <div class="maps-overview" aria-label="Resumen de elementos dibujados">
       <div class="overview-item">
         <span class="overview-icon overview-icon-green"><Shapes :size="17" /></span>
@@ -395,7 +576,7 @@ const exportGeoJson = () => {
 
           <div class="map-canvas">
             <AgroMap
-              :initial-features="initialFeatures"
+              :initial-features="mapInitialFeatures"
               @update:geojson="handleGeoJsonUpdate"
               @update:basemap="handleBasemapUpdate"
             />
@@ -476,6 +657,14 @@ const exportGeoJson = () => {
         </Card>
         <p v-if="exportStatus" class="export-status" role="status"><Check :size="14" /> {{ exportStatus }}</p>
         <p v-if="saveError" class="export-error" role="alert">{{ saveError }}</p>
+        <RouterLink
+          v-if="lastSavedFieldId"
+          class="open-simulation-link saved-simulation-link"
+          :to="{ name: 'simulation', query: { fieldId: lastSavedFieldId } }"
+        >
+          <MapPinned :size="15" />
+          Abrir esta parcela en simulación
+        </RouterLink>
 
         <Card v-if="savedFields.length" class="map-guide-card">
           <template #header>
@@ -518,6 +707,7 @@ const exportGeoJson = () => {
         </Card>
       </aside>
     </div>
+    </template>
   </div>
 </template>
 
@@ -577,6 +767,104 @@ const exportGeoJson = () => {
   font-size: 0.75rem;
   white-space: nowrap;
 }
+
+.open-simulation-link {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 12px;
+  border: 1px solid rgba(142, 180, 91, 0.32);
+  border-radius: 10px;
+  color: #dcedc1;
+  background: rgba(55, 151, 93, 0.12);
+  font-size: 0.74rem;
+  font-weight: 750;
+  text-decoration: none;
+  transition: background 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+}
+.open-simulation-link:hover {
+  transform: translateY(-1px);
+  border-color: rgba(142, 180, 91, 0.55);
+  background: rgba(55, 151, 93, 0.2);
+}
+.open-simulation-link:focus-visible { outline: 2px solid #c1e19a; outline-offset: 2px; }
+.open-simulation-link svg { color: #a9d287; }
+.saved-simulation-link { margin-top: 10px; }
+
+.monitor-view { display: grid; gap: 16px; }
+.monitor-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 18px 20px;
+  border: 1px solid rgba(196, 218, 147, 0.13);
+  border-radius: 17px;
+  background: linear-gradient(140deg, rgba(28, 35, 25, 0.95), rgba(15, 20, 16, 0.9));
+}
+.monitor-heading .maps-eyebrow { margin-bottom: 6px; }
+.monitor-heading h2 { margin: 0; color: var(--maps-text); font-size: 1.25rem; font-weight: 800; }
+.monitor-heading p { margin: 5px 0 0; color: var(--maps-muted); font-size: 0.76rem; }
+.monitor-updated { color: #aab69d; font-size: 0.68rem; white-space: nowrap; }
+.monitor-message { padding: 12px 14px; border: 1px solid rgba(196, 218, 147, 0.14); border-radius: 11px; color: #dce5d4; background: rgba(255,255,255,0.035); font-size: 0.78rem; }
+.monitor-message.is-error { border-color: rgba(239, 68, 68, 0.32); color: #fecaca; background: rgba(127, 29, 29, 0.18); }
+.monitor-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.monitor-summary article {
+  display: grid;
+  gap: 6px;
+  padding: 13px 15px;
+  border: 1px solid rgba(196, 218, 147, 0.12);
+  border-radius: 13px;
+  background: rgba(24, 30, 23, 0.88);
+}
+.monitor-summary article span { color: var(--maps-muted); font-size: 0.68rem; }
+.monitor-summary article strong { color: #e8eedf; font-size: 1.2rem; font-weight: 800; }
+.monitor-summary article strong.monitor-warning { color: #ffb79f; }
+.monitor-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(290px, 360px); gap: 16px; align-items: start; }
+.monitor-map-card { min-width: 0; }
+.monitor-map-canvas { height: clamp(450px, 65vh, 700px); }
+.monitor-map-canvas :deep(.agro-map-shell) { height: 100%; }
+.monitor-map-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; padding: 11px 15px; border-top: 1px solid rgba(196, 218, 147, 0.09); color: #a8b397; font-size: 0.66rem; }
+.monitor-map-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.monitor-field-key { width: 14px; height: 8px; border: 2px solid #f2cf68; border-radius: 2px; }
+.monitor-plant-key { width: 9px; height: 9px; border: 2px solid #fff; border-radius: 50%; background: #e55c4a; box-shadow: 0 0 0 2px rgba(229, 92, 74, 0.28); }
+.monitor-details { display: grid; gap: 14px; min-width: 0; }
+.monitor-panel {
+  min-width: 0;
+  padding: 15px;
+  border: 1px solid rgba(196, 218, 147, 0.13);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(25, 31, 24, 0.96), rgba(15, 20, 16, 0.92));
+}
+.monitor-panel > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.monitor-panel > header h3 { margin: 0; color: var(--maps-text); font-size: 0.83rem; font-weight: 800; }
+.monitor-panel > header p { margin: 3px 0 0; color: var(--maps-muted); font-size: 0.65rem; }
+.monitor-panel > header > svg { color: #d2b75c; }
+.monitor-panel > header > strong { color: #ffc2aa; font-size: 1.1rem; }
+.monitor-chart { display: block; width: 100%; height: auto; margin: 13px 0 8px; overflow: visible; }
+.monitor-chart line { stroke: rgba(196, 218, 147, 0.12); stroke-width: 0.7; }
+.monitor-chart polyline { fill: none; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+.monitor-line-health { stroke: #8ed39c; }
+.monitor-line-humidity { stroke: #76b8f4; }
+.monitor-line-ndvi { stroke: #e1bc60; }
+.monitor-chart-legend { display: flex; flex-wrap: wrap; gap: 12px; color: #abb59f; font-size: 0.63rem; }
+.monitor-chart-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.monitor-chart-legend i { width: 8px; height: 8px; border-radius: 50%; }
+.monitor-line-health-key { background: #8ed39c; }
+.monitor-line-humidity-key { background: #76b8f4; }
+.monitor-line-ndvi-key { background: #e1bc60; }
+.monitor-empty { margin: 10px 0 2px; padding: 10px; border: 1px dashed rgba(196, 218, 147, 0.16); border-radius: 10px; color: #aeb8a4; font-size: 0.7rem; line-height: 1.5; }
+.monitor-plant-list { display: grid; max-height: 310px; overflow: auto; }
+.monitor-plant-row { display: grid; grid-template-columns: 10px minmax(0, 1fr); align-items: center; gap: 9px; padding: 9px 0; border-top: 1px solid rgba(196, 218, 147, 0.08); }
+.monitor-plant-row > span:nth-child(2) { display: grid; gap: 2px; }
+.monitor-plant-row strong { color: #e7ecde; font-size: 0.68rem; }
+.monitor-plant-row small { color: #aab49f; font-size: 0.61rem; }
+.monitor-plant-row .monitor-plant-gps { grid-column: 2; color: #8f9b84; font-family: ui-monospace, monospace; }
+.monitor-plant-dot { width: 8px; height: 8px; border-radius: 50%; background: #edac52; box-shadow: 0 0 0 3px rgba(237, 172, 82, 0.15); }
+.monitor-plant-dot.is-dead { background: #e55c4a; box-shadow: 0 0 0 3px rgba(229, 92, 74, 0.17); }
+.monitor-footnote { margin: 9px 0 0; color: #87927d; font-size: 0.6rem; line-height: 1.45; }
 
 .map-quick-actions {
   display: grid;
@@ -766,6 +1054,8 @@ const exportGeoJson = () => {
 
 @media (max-width: 1023px) {
   .maps-layout { grid-template-columns: minmax(0, 1fr); }
+  .monitor-layout { grid-template-columns: minmax(0, 1fr); }
+  .monitor-details { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .map-sidebar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .maps-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .overview-item { padding-inline: 12px; }
@@ -781,6 +1071,9 @@ const exportGeoJson = () => {
 @media (max-width: 767px) {
   .maps-heading { align-items: flex-start; flex-direction: column; }
   .maps-heading-actions { width: 100%; justify-content: space-between; }
+  .monitor-heading { align-items: flex-start; flex-direction: column; }
+  .monitor-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .monitor-details { grid-template-columns: minmax(0, 1fr); }
   .maps-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .overview-item { padding: 12px; }
   .overview-item:nth-child(3) { border-left: 0; border-top: 1px solid rgba(196, 218, 147, 0.1); }
@@ -794,6 +1087,7 @@ const exportGeoJson = () => {
 @media (max-width: 420px) {
   .maps-heading-actions { align-items: stretch; flex-direction: column; }
   .maps-heading-actions > :deep(button) { width: 100%; }
+  .maps-heading-actions > .open-simulation-link { width: 100%; }
   .map-card-header { align-items: flex-start; flex-direction: column; }
   .map-source { align-self: flex-start; }
   .map-card-footer { align-items: flex-start; flex-direction: column; }

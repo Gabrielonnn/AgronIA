@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { advancePlantWaterStress, planCoverageRoute } from '../../src/services/simulationModel.ts'
+import { projectFieldGeometry } from '../../src/services/fieldGeometry.ts'
 
 test('water stress accumulates gradually, recovers with irrigation, and eventually kills an untreated plant', () => {
   const healthy = { waterStress: 0, dead: false, irrigated: false }
@@ -47,4 +48,34 @@ test('coverage planner rejects invalid dimensions', () => {
     laneSpacingMeters: 2,
     start: { x: 0, z: 0 },
   }), RangeError)
+})
+
+test('coverage planner follows parcel boundaries and excludes holes', () => {
+  const field = projectFieldGeometry({
+    type: 'Polygon',
+    coordinates: [
+      [[0, 0], [0.004, 0], [0.004, 0.004], [0, 0.004], [0, 0]],
+      [[0.0015, 0.0015], [0.0025, 0.0015], [0.0025, 0.0025], [0.0015, 0.0025], [0.0015, 0.0015]],
+    ],
+  })
+  assert.ok(field)
+
+  const route = planCoverageRoute({
+    widthMeters: field.widthMeters,
+    depthMeters: field.depthMeters,
+    laneSpacingMeters: 40,
+    start: { x: 0, z: 0 },
+    fieldGeometry: field,
+  })
+
+  assert.ok(field.contains(route.points[0]))
+  assert.ok(route.coverageSegments.length > 0)
+  for (const segment of route.coverageSegments) {
+    const midpoint = {
+      x: (segment.start.x + segment.end.x) / 2,
+      z: (segment.start.z + segment.end.z) / 2,
+    }
+    assert.ok(field.contains(midpoint))
+  }
+  assert.ok(route.estimatedEnergyWh > 0)
 })
