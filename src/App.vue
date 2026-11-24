@@ -1,18 +1,10 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterView, useRoute } from 'vue-router'
-import { Cpu, Database, Maximize2, Menu, Radio, X } from 'lucide-vue-next'
+import { Maximize2, Menu, Minimize2, X } from 'lucide-vue-next'
 import { useMainStore } from './stores'
 import Sidebar from './components/layout/Sidebar.vue'
 import agroniaLogo from './assets/agronia-logo.png'
-import { isSupabaseConfigured } from './services/supabase'
-import {
-  desktopSystemInfo,
-  graphicsQuality,
-  isDesktopApp,
-  refreshDesktopSystemInfo,
-} from './services/desktopRuntime'
-
 const route = useRoute()
 const store = useMainStore()
 const hasSeenIntro = typeof window !== 'undefined' && window.sessionStorage.getItem('agronia-intro-seen') === '1'
@@ -20,6 +12,7 @@ const showIntro = ref(!hasSeenIntro)
 let introTimer: number | undefined
 const mobileMenuOpen = ref(false)
 const appFullscreen = ref(false)
+const fullscreenError = ref('')
 
 const dismissIntro = () => {
   showIntro.value = false
@@ -28,25 +21,35 @@ const dismissIntro = () => {
   }
 }
 
+const syncFullscreenState = () => {
+  appFullscreen.value = Boolean(document.fullscreenElement)
+}
+
 const toggleAppFullscreen = async () => {
-  if (typeof window !== 'undefined' && window.agroniaDesktop?.toggleFullscreen) {
-    appFullscreen.value = await window.agroniaDesktop.toggleFullscreen()
-    return
-  }
-  if (typeof document !== 'undefined') {
-    if (!document.fullscreenElement) {
-      await document.documentElement.requestFullscreen().catch(() => {})
-      appFullscreen.value = true
-    } else {
-      await document.exitFullscreen().catch(() => {})
-      appFullscreen.value = false
+  fullscreenError.value = ''
+  try {
+    if (typeof window !== 'undefined' && window.agroniaDesktop?.toggleFullscreen) {
+      appFullscreen.value = await window.agroniaDesktop.toggleFullscreen()
+      return
     }
+    if (typeof document !== 'undefined') {
+      if (!document.fullscreenElement) {
+        await document.documentElement.requestFullscreen()
+      } else {
+        await document.exitFullscreen()
+      }
+      syncFullscreenState()
+    }
+  } catch (error) {
+    fullscreenError.value = error instanceof Error
+      ? `No se pudo cambiar a pantalla completa: ${error.message}`
+      : 'No se pudo cambiar a pantalla completa.'
   }
 }
 
 onMounted(() => {
   store.checkAuth()
-  void refreshDesktopSystemInfo()
+  document.addEventListener('fullscreenchange', syncFullscreenState)
   if (showIntro.value) {
     const duration = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 40 : 1250
     introTimer = window.setTimeout(() => {
@@ -61,6 +64,7 @@ watch(() => route.path, () => {
 
 onUnmounted(() => {
   if (introTimer !== undefined) window.clearTimeout(introTimer)
+  document.removeEventListener('fullscreenchange', syncFullscreenState)
 })
 </script>
 
@@ -141,46 +145,20 @@ onUnmounted(() => {
         { 'app-workspace': !route.meta.public }
       ]"
     >
-      <div v-if="!route.meta.public" class="desktop-engine-bar mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-400/20 bg-[#121912]/90 px-3.5 py-2 text-xs text-emerald-100 shadow-md backdrop-blur-md">
-        <div class="flex flex-wrap items-center gap-2.5">
-          <span class="inline-flex items-center gap-1.5 rounded-full border border-amber-400/30 bg-amber-500/15 px-2.5 py-0.5 font-bold tracking-wide text-amber-300">
-            <Cpu class="h-3.5 w-3.5" />
-            {{ isDesktopApp ? 'AGRONIA DESKTOP NATIVO' : 'MOTOR ACELERADO POR HARDWARE' }}
-          </span>
-          <span class="hidden sm:inline-flex items-center gap-1.5 text-emerald-200/85">
-            <strong class="text-white">{{ desktopSystemInfo.gpuModel.slice(0, 34) }}</strong>
-            <span>· {{ desktopSystemInfo.cpuCores }} núcleos · {{ desktopSystemInfo.totalMemoryGb }} GB RAM</span>
-          </span>
-        </div>
-        <div class="flex flex-wrap items-center gap-2">
-          <span
-            class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 font-semibold"
-            :class="isSupabaseConfigured ? 'border border-emerald-400/30 bg-emerald-500/15 text-emerald-300' : 'border border-red-400/30 bg-red-500/15 text-red-300'"
-          >
-            <Database class="h-3.5 w-3.5" />
-            {{ isSupabaseConfigured ? 'Supabase Cloud Activo' : 'Supabase Sin Configurar' }}
-          </span>
-          <span
-            v-if="desktopSystemInfo.mavlinkBridge.active"
-            class="hidden lg:inline-flex items-center gap-1.5 rounded-full border border-cyan-400/30 bg-cyan-500/15 px-2.5 py-0.5 font-semibold text-cyan-300"
-            title="Puente de telemetría MAVLink UDP 14550 integrado en la aplicación"
-          >
-            <Radio class="h-3.5 w-3.5" />
-            MAVLink UDP:{{ desktopSystemInfo.mavlinkBridge.udpPort }}
-          </span>
-          <span class="hidden md:inline-flex items-center rounded-full border border-white/10 bg-white/5 px-2.5 py-0.5 text-[11px] font-semibold uppercase text-emerald-200">
-            Perfil: {{ graphicsQuality === 'ultra' ? 'Ultra PC' : graphicsQuality === 'balanced' ? 'Equilibrado' : 'Máx. FPS' }}
-          </span>
-          <button
-            type="button"
-            class="inline-flex items-center gap-1 rounded-lg border border-white/15 bg-white/5 px-2 py-1 text-[11px] font-semibold text-emerald-100 transition hover:border-amber-400/40 hover:bg-white/10"
-            title="Alternar pantalla completa nativa"
-            @click="toggleAppFullscreen"
-          >
-            <Maximize2 class="h-3.5 w-3.5" />
-            <span class="hidden sm:inline">{{ appFullscreen ? 'Ventana' : 'Pantalla completa' }}</span>
-          </button>
-        </div>
+      <div v-if="!route.meta.public" class="app-fullscreen-toolbar">
+        <p v-if="fullscreenError" class="app-fullscreen-error" role="alert">{{ fullscreenError }}</p>
+        <button
+          type="button"
+          class="app-fullscreen-button"
+          :aria-pressed="appFullscreen"
+          :aria-label="appFullscreen ? 'Salir de pantalla completa' : 'Activar pantalla completa'"
+          :title="appFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa'"
+          @click="toggleAppFullscreen"
+        >
+          <Minimize2 v-if="appFullscreen" class="h-4 w-4" />
+          <Maximize2 v-else class="h-4 w-4" />
+          <span>{{ appFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa' }}</span>
+        </button>
       </div>
       <div v-if="store.authError" class="mx-4 mt-4 rounded-lg border border-amber-400/30 bg-amber-900/20 px-4 py-3 text-sm text-amber-100" role="alert">
         {{ store.authError }}
@@ -196,6 +174,58 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.app-fullscreen-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  min-height: 42px;
+  justify-content: flex-end;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+  pointer-events: none;
+}
+
+.app-fullscreen-button {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 0 14px;
+  border: 1px solid rgba(212, 190, 110, 0.28);
+  border-radius: 12px;
+  color: #f2e7bd;
+  background:
+    linear-gradient(135deg, rgba(48, 57, 34, 0.96), rgba(20, 32, 25, 0.95));
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24), inset 0 1px rgba(255, 255, 255, 0.07);
+  backdrop-filter: blur(14px);
+  font-size: 0.72rem;
+  font-weight: 700;
+  transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+  pointer-events: auto;
+}
+
+.app-fullscreen-button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(235, 211, 128, 0.55);
+  background: linear-gradient(135deg, rgba(65, 75, 43, 0.98), rgba(24, 43, 32, 0.98));
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.3), 0 0 18px rgba(212, 190, 110, 0.08);
+}
+
+.app-fullscreen-button:focus-visible {
+  outline: 2px solid #e8d486;
+  outline-offset: 3px;
+}
+
+.app-fullscreen-error {
+  align-self: center;
+  color: #fecaca;
+  font-size: 0.7rem;
+  text-align: right;
+}
+
 .app-intro {
   --palette-leaf: #78964c;
   --palette-gold: #ffc400;

@@ -30,6 +30,24 @@ interface StressCenter {
   id: string; x: number; z: number; intensity: number; radius: number; type: 'DROUGHT' | 'OVERHYDRATION' | 'PEST'
 }
 
+interface AmbientCloud {
+  group: THREE.Group
+  speed: number
+  bounds: number
+  baseY: number
+  phase: number
+}
+
+interface AmbientBird {
+  group: THREE.Group
+  leftWing: THREE.Mesh
+  rightWing: THREE.Mesh
+  speed: number
+  bounds: number
+  baseY: number
+  phase: number
+}
+
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 const containerRef = ref<HTMLDivElement | null>(null)
 const route = useRoute()
@@ -113,6 +131,12 @@ let leafWindUniform: { value: number } | null = null
 let leafWindStrengthUniform: { value: number } | null = null
 let sectorFalloffTexture: THREE.CanvasTexture | null = null
 let simulationTime = 0
+let ambientTime = 0
+let ambientMotionEnabled = true
+const ambientClouds: AmbientCloud[] = []
+const ambientBirds: AmbientBird[] = []
+const ambientGeometries: THREE.BufferGeometry[] = []
+const ambientMaterials: THREE.Material[] = []
 
 // Dron y Analisis
 let stressCenters: StressCenter[] = []
@@ -1322,6 +1346,147 @@ const exportCropData = () => {
   setActionFeedback(`Reporte exportado: ${allPlants.length} plantas y sus métricas actuales.`)
 }
 
+const createAmbientEnvironment = (fieldExtent: number) => {
+  const activeScene = scene.value
+  if (!activeScene) return
+
+  ambientMotionEnabled = !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  ambientTime = 0
+  const isCompact = window.matchMedia('(max-width: 767px)').matches || graphicsQuality.value === 'performance'
+  const visibleExtent = Math.min(fieldExtent, 180)
+  const bounds = Math.max(95, visibleExtent * 1.1)
+  const cloudCount = isCompact ? 4 : 7
+  const cloudGeometry = new THREE.SphereGeometry(1, 10, 8)
+  const cloudMaterial = new THREE.MeshBasicMaterial({
+    color: 0xf4f8ef,
+    transparent: true,
+    opacity: 0.68,
+    depthWrite: false,
+  })
+  ambientGeometries.push(cloudGeometry)
+  ambientMaterials.push(cloudMaterial)
+
+  const cloudPuffs: Array<[number, number, number, number, number, number]> = [
+    [-2.4, 0, 0, 2.4, 0.9, 1.3],
+    [-1.1, 0.55, 0, 2.8, 1.25, 1.45],
+    [0.8, 0.7, 0, 3.1, 1.4, 1.5],
+    [2.4, 0.12, 0, 2.2, 0.9, 1.25],
+    [0, -0.18, 0.1, 3.4, 0.72, 1.35],
+  ]
+
+  for (let index = 0; index < cloudCount; index++) {
+    const group = new THREE.Group()
+    for (const [x, y, z, width, height, depth] of cloudPuffs) {
+      const puff = new THREE.Mesh(cloudGeometry, cloudMaterial)
+      puff.position.set(x, y, z)
+      puff.scale.set(width, height, depth)
+      puff.renderOrder = 2
+      group.add(puff)
+    }
+
+    const spacing = cloudCount > 1 ? index / (cloudCount - 1) : 0.5
+    const baseY = 14 + (index % 3) * 1.8
+    group.position.set(
+      -bounds + bounds * 2 * spacing,
+      baseY,
+      -visibleExtent * 0.38 - (index % 2) * 18,
+    )
+    group.scale.setScalar(1.35 + (index % 2) * 0.3)
+    activeScene.add(group)
+    ambientClouds.push({
+      group,
+      speed: 0.35 + (index % 3) * 0.12,
+      bounds,
+      baseY,
+      phase: index * 1.7,
+    })
+  }
+
+  const createWingGeometry = (direction: -1 | 1) => {
+    const shape = new THREE.Shape()
+    shape.moveTo(0, 0)
+    shape.quadraticCurveTo(direction * 0.42, 0.28, direction * 1.08, 0.62)
+    shape.quadraticCurveTo(direction * 0.78, 0.11, direction * 0.2, -0.08)
+    shape.lineTo(0, 0)
+    return new THREE.ShapeGeometry(shape)
+  }
+  const leftWingGeometry = createWingGeometry(-1)
+  const rightWingGeometry = createWingGeometry(1)
+  const birdBodyGeometry = new THREE.SphereGeometry(0.14, 8, 6)
+  birdBodyGeometry.scale(1.2, 0.32, 0.24)
+  const birdMaterial = new THREE.MeshBasicMaterial({
+    color: 0x30443d,
+    transparent: true,
+    opacity: 0.82,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  })
+  ambientGeometries.push(leftWingGeometry, rightWingGeometry, birdBodyGeometry)
+  ambientMaterials.push(birdMaterial)
+
+  const birdCount = isCompact ? 3 : 5
+  for (let index = 0; index < birdCount; index++) {
+    const group = new THREE.Group()
+    const leftWing = new THREE.Mesh(leftWingGeometry, birdMaterial)
+    const rightWing = new THREE.Mesh(rightWingGeometry, birdMaterial)
+    const body = new THREE.Mesh(birdBodyGeometry, birdMaterial)
+    body.position.z = 0.025
+    group.add(leftWing, rightWing, body)
+
+    const baseY = 13 + (index % 3) * 2.8
+    group.position.set(
+      -bounds + Math.random() * bounds * 2,
+      baseY,
+      -visibleExtent * 0.22 - (index % 3) * 16,
+    )
+    group.scale.setScalar(0.75 + Math.random() * 0.45)
+    group.rotation.y = -0.12
+    group.renderOrder = 3
+    activeScene.add(group)
+    ambientBirds.push({
+      group,
+      leftWing,
+      rightWing,
+      speed: 3.4 + Math.random() * 1.8,
+      bounds,
+      baseY,
+      phase: index * 2.1,
+    })
+  }
+}
+
+const updateAmbientEnvironment = (deltaSeconds: number) => {
+  if (!ambientMotionEnabled) return
+  ambientTime += deltaSeconds
+
+  for (const cloud of ambientClouds) {
+    cloud.group.position.x += cloud.speed * deltaSeconds
+    if (cloud.group.position.x > cloud.bounds) cloud.group.position.x = -cloud.bounds
+    cloud.group.position.y = cloud.baseY + Math.sin(ambientTime * 0.12 + cloud.phase) * 0.35
+  }
+
+  for (const bird of ambientBirds) {
+    bird.group.position.x += bird.speed * deltaSeconds
+    if (bird.group.position.x > bird.bounds) bird.group.position.x = -bird.bounds
+    const wingBeat = Math.sin(ambientTime * 5.2 + bird.phase)
+    bird.group.position.y = bird.baseY + Math.sin(ambientTime * 1.4 + bird.phase) * 0.55
+    bird.leftWing.rotation.z = wingBeat * 0.2
+    bird.rightWing.rotation.z = -wingBeat * 0.2
+    bird.group.rotation.z = Math.sin(ambientTime * 0.9 + bird.phase) * 0.025
+  }
+}
+
+const disposeAmbientEnvironment = () => {
+  ambientClouds.forEach(({ group }) => scene.value?.remove(group))
+  ambientBirds.forEach(({ group }) => scene.value?.remove(group))
+  ambientGeometries.forEach(geometry => geometry.dispose())
+  ambientMaterials.forEach(material => material.dispose())
+  ambientClouds.length = 0
+  ambientBirds.length = 0
+  ambientGeometries.length = 0
+  ambientMaterials.length = 0
+}
+
 const initThree = () => {
   if (!canvasRef.value || !containerRef.value) return
   const width = canvasRef.value.clientWidth, height = canvasRef.value.clientHeight
@@ -1392,6 +1557,7 @@ const initThree = () => {
   const fieldExtent = selectedFieldGeometry.value
     ? Math.max(selectedFieldGeometry.value.widthMeters, selectedFieldGeometry.value.depthMeters)
     : 150
+  createAmbientEnvironment(fieldExtent)
   const groundSize = Math.max(150, fieldExtent * 1.5)
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(groundSize, groundSize), groundMaterial)
   ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.value.add(ground)
@@ -1597,6 +1763,7 @@ const initThree = () => {
     controls.value?.update()
     updateLiveDrone()
     updateCameraFollow()
+    updateAmbientEnvironment(frameDelta)
     if (simulationPaused.value) {
       if (renderer.value && scene.value && camera.value) renderer.value.render(scene.value, camera.value)
       return
@@ -1901,6 +2068,7 @@ onBeforeUnmount(() => {
   resizeObserver.value?.disconnect()
   if (containerRef.value) containerRef.value.removeEventListener('pointermove', onMouseMove)
   controls.value?.dispose()
+  disposeAmbientEnvironment()
   clearLiveDroneTrail()
   clearScanRouteLine()
   clearSectorMarkers()
