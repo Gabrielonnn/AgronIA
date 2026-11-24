@@ -12,9 +12,11 @@ import {
   type FieldRecord,
 } from '../services/agronomyData'
 import { projectFieldGeometry, type FieldPoint, type ProjectedField } from '../services/fieldGeometry'
+import { advancePlantWaterStress, planCoverageRoute, type CoverageRoute } from '../services/simulationModel'
 
 interface PlantData {
   id: string; x: number; z: number; health: number; ndvi: number; temp: number; status: string; stage: number
+  waterStress: number; dead: boolean; irrigated: boolean
 }
 
 interface StressCenter {
@@ -56,11 +58,16 @@ const windEnabled = ref(true)
 const cameraFollowEnabled = ref(true)
 const cameraPanMode = ref(false)
 const isFullscreen = ref(false)
+const coverageRoute = ref<CoverageRoute | null>(null)
+const trendHistory = ref<Array<{ elapsed: number; health: number; humidity: number; ndvi: number }>>([])
+const simulationElapsedSeconds = ref(0)
+const affectedPlants = ref<PlantData[]>([])
 
 // Datos de interacción (panel fijo de inspección en la columna izquierda)
 const hoveredPlant = ref<PlantData | null>(null)
 const lastInspectedPlant = ref<PlantData | null>(null)
 const inspectedPlant = computed(() => hoveredPlant.value ?? lastInspectedPlant.value)
+const inspectedPlantGps = computed(() => inspectedPlant.value ? plantGps(inspectedPlant.value) : null)
 const hoveredSector = ref<StressCenter | null>(null)
 const actionFeedback = ref('')
 
@@ -105,6 +112,7 @@ let particleSystem: THREE.Points
 let particleGeo: THREE.BufferGeometry
 let activeTargets: StressCenter[] = []
 let activeTargetIndex = 0
+let scanRouteLine: THREE.Line | null = null
 
 let dronePath: THREE.Vector3[] = []
 let currentPathIndex = 0
@@ -113,7 +121,6 @@ let feedbackTimeout: ReturnType<typeof setTimeout> | undefined
 // Enjambre de Centinelas
 let centinelaGroup: THREE.Group | null = null
 let centinelaPropellers: THREE.Mesh[] = []
-let centinelaFrameCounter = 0
 
 const DRONE_BASE = new THREE.Vector3(-15, 0.5, 15)
 const FLIGHT_HEIGHT = 8
@@ -137,7 +144,9 @@ const telemetry = ref({
   avgNDVI: 0,
   avgTemp: 0,
   plantCount: 0,
-  stressZones: 0
+  stressZones: 0,
+  stressedPlants: 0,
+  deadPlants: 0,
 })
 
 const fieldDimensionsLabel = computed(() => {
@@ -145,6 +154,65 @@ const fieldDimensionsLabel = computed(() => {
   if (!field) return ''
   return `${field.widthMeters.toFixed(1)} m × ${field.depthMeters.toFixed(1)} m · ${field.areaHectares.toFixed(2)} ha`
 })
+const scaleX = computed(() =>
+  selectedFieldGeometry.value ? selectedFieldGeometry.value.widthMeters / BASE_CROP_WIDTH : 1,
+)
+const scaleZ = computed(() =>
+  selectedFieldGeometry.value ? selectedFieldGeometry.value.depthMeters / BASE_CROP_DEPTH : 1,
+)
+const estimatedAreaHectares = computed(() => selectedFieldGeometry.value?.areaHectares ?? 1)
+const currency = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN', maximumFractionDigits: 0 })
+const affectedPlantRatio = computed(() =>
+  telemetry.value.plantCount > 0 ? telemetry.value.stressedPlants / telemetry.value.plantCount : 0,
+)
+const treatmentCostAmount = computed(() => estimatedAreaHectares.value * 1650)
+const preventionCostAmount = computed(() => estimatedAreaHectares.value * 520)
+const estimatedSavingsAmount = computed(() =>
+  estimatedAreaHectares.value * 2400 * affectedPlantRatio.value,
+)
+const projectedSavingsNetAmount = computed(() => Math.max(
+  0,
+  estimatedSavingsAmount.value - preventionCostAmount.value,
+))
+const treatmentCost = computed(() => currency.format(treatmentCostAmount.value))
+const preventionCost = computed(() => currency.format(preventionCostAmount.value))
+const estimatedSavings = computed(() => currency.format(estimatedSavingsAmount.value))
+const projectedSavingsNet = computed(() => currency.format(projectedSavingsNetAmount.value))
+
+const trendPoints = (key: 'health' | 'humidity' | 'ndvi') => {
+  const history = trendHistory.value
+  if (history.length < 2) return ''
+  return history.map((sample, index) => {
+    const x = (index / (history.length - 1)) * 300
+    const y = 90 - Math.min(100, Math.max(0, sample[key])) * 0.8
+    return `${x.toFixed(1)},${y.toFixed(1)}`
+  }).join(' ')
+}
+
+const plantGps = (plant: PlantData) => {
+  const field = selectedFieldGeometry.value
+  if (!field) return null
+  const point = { x: plant.x * scaleX.value, z: plant.z * scaleZ.value }
+  return field.contains(point) ? field.unprojectGps(point) : null
+}
+
+const handleSelectedFieldChange = () => {
+  applySelectedField()
+  if (!allPlants.length) return
+  if (!relocatePlantsToSelectedField()) {
+    setActionFeedback('No se pudo encontrar una ubicación de muestra dentro de esta parcela; se conservaron las posiciones demostrativas.')
+  }
+  allPlants.forEach(plant => {
+    plant.waterStress = 0
+    plant.dead = false
+    plant.irrigated = false
+  })
+  generateRandomStressCenters()
+  regenerateFieldHealth()
+  trendHistory.value = []
+  simulationElapsedSeconds.value = 0
+  addTrendSample()
+}
 
 const disposeGroupChildren = (group: THREE.Group) => {
   for (const child of [...group.children]) {
@@ -164,6 +232,15 @@ const clearLiveDroneTrail = () => {
   const materials = Array.isArray(liveDroneTrail.material) ? liveDroneTrail.material : [liveDroneTrail.material]
   materials.forEach(material => material.dispose())
   liveDroneTrail = null
+}
+
+const clearScanRouteLine = () => {
+  if (!scanRouteLine) return
+  scene.value?.remove(scanRouteLine)
+  scanRouteLine.geometry.dispose()
+  const materials = Array.isArray(scanRouteLine.material) ? scanRouteLine.material : [scanRouteLine.material]
+  materials.forEach(material => material.dispose())
+  scanRouteLine = null
 }
 
 const frameCameraOnField = () => {
@@ -193,6 +270,8 @@ const applySelectedField = () => {
   liveDronePath = []
   fallbackGpsOrigin = null
   clearLiveDroneTrail()
+  clearScanRouteLine()
+  coverageRoute.value = null
   if (!scene.value || !cropGroup || !parcelOutlineGroup) return
   const outlineGroup = parcelOutlineGroup
 
@@ -232,6 +311,81 @@ const applySelectedField = () => {
   }
 
   frameCameraOnField()
+}
+
+const relocatePlantsToSelectedField = () => {
+  const field = selectedFieldGeometry.value
+  if (!field || !allPlants.length) return true
+
+  const candidates: FieldPoint[] = []
+  const columns = 60
+  const rows = 60
+  for (let column = 0; column < columns; column++) {
+    const x = -field.widthMeters / 2 + ((column + 0.5) / columns) * field.widthMeters
+    for (let row = 0; row < rows; row++) {
+      const z = -field.depthMeters / 2 + ((row + 0.5) / rows) * field.depthMeters
+      const point = { x, z }
+      if (field.contains(point)) candidates.push(point)
+    }
+  }
+  if (candidates.length === 0) return false
+
+  const offsets = allPlants.map(() => ({ x: 0, z: 0 }))
+  allPlants.forEach((plant, index) => {
+    const currentPoint = { x: plant.x * scaleX.value, z: plant.z * scaleZ.value }
+    if (field.contains(currentPoint)) return
+    let nearest = candidates[0]
+    let nearestDistance = Math.hypot(currentPoint.x - nearest.x, currentPoint.z - nearest.z)
+    for (let candidateIndex = 1; candidateIndex < candidates.length; candidateIndex++) {
+      const candidate = candidates[candidateIndex]
+      const candidateDistance = Math.hypot(currentPoint.x - candidate.x, currentPoint.z - candidate.z)
+      if (candidateDistance < nearestDistance) {
+        nearest = candidate
+        nearestDistance = candidateDistance
+      }
+    }
+    const nextX = nearest.x / scaleX.value
+    const nextZ = nearest.z / scaleZ.value
+    offsets[index] = { x: nextX - plant.x, z: nextZ - plant.z }
+    plant.x = nextX
+    plant.z = nextZ
+  })
+
+  if (trunkMesh && hitboxMesh && leafMesh) {
+    const dummy = new THREE.Object3D()
+    allPlants.forEach((plant, index) => {
+      const offset = offsets[index]
+      if (offset.x === 0 && offset.z === 0) return
+      trunkMesh.getMatrixAt(index, dummy.matrix)
+      dummy.matrix.setPosition(plant.x, 0, plant.z)
+      trunkMesh.setMatrixAt(index, dummy.matrix)
+      hitboxMesh.getMatrixAt(index, dummy.matrix)
+      dummy.matrix.setPosition(plant.x, 0, plant.z)
+      hitboxMesh.setMatrixAt(index, dummy.matrix)
+    })
+    const shiftInstances = (mesh: THREE.InstancedMesh, plantIndices: number[]) => {
+      plantIndices.forEach((plantIndex, instanceIndex) => {
+        const offset = offsets[plantIndex]
+        if (offset.x === 0 && offset.z === 0) return
+        mesh.getMatrixAt(instanceIndex, dummy.matrix)
+        dummy.matrix.elements[12] += offset.x
+        dummy.matrix.elements[14] += offset.z
+        mesh.setMatrixAt(instanceIndex, dummy.matrix)
+      })
+      mesh.instanceMatrix.needsUpdate = true
+    }
+    trunkMesh.instanceMatrix.needsUpdate = true
+    hitboxMesh.instanceMatrix.needsUpdate = true
+    shiftInstances(leafMesh, leafToPlantMap)
+    shiftInstances(tasselMesh, tasselToPlantMap)
+    shiftInstances(earMesh, earToPlantMap)
+    trunkMesh.computeBoundingSphere()
+    hitboxMesh.computeBoundingSphere()
+    leafMesh.computeBoundingSphere()
+    tasselMesh.computeBoundingSphere()
+    earMesh.computeBoundingSphere()
+  }
+  return true
 }
 
 const updateLiveDrone = () => {
@@ -361,21 +515,66 @@ const handleDroneTelemetry = (snapshot: {
 const updateTelemetry = () => {
   if (!allPlants || allPlants.length === 0) return
   const count = allPlants.length
-  let sumHealth = 0, sumNDVI = 0, sumTemp = 0
+  let sumHealth = 0, sumNDVI = 0, sumTemp = 0, sumMoisture = 0
   for (const p of allPlants) {
     sumHealth += p.health
     sumNDVI += p.ndvi
     sumTemp += p.temp
+    sumMoisture += 1 - p.waterStress
   }
+  const stressedPlants = allPlants.filter(plant =>
+    plant.waterStress >= 0.15 || plant.health < 0.7 || plant.dead,
+  ).length
   telemetry.value = {
     avgHealth: parseFloat(((sumHealth / count) * 100).toFixed(1)),
-    avgHumidity: parseFloat((((sumHealth / count) * 0.8 + 0.1) * 100).toFixed(1)),
+    avgHumidity: parseFloat(((sumMoisture / count) * 100).toFixed(1)),
     avgPestIndex: parseFloat((Math.max(0, 1 - (sumNDVI / count)) * 100 * 0.5).toFixed(1)),
     avgNDVI: parseFloat((sumNDVI / count).toFixed(2)),
     avgTemp: parseFloat((sumTemp / count).toFixed(1)),
     plantCount: count,
-    stressZones: stressCenters.length
+    stressZones: stressCenters.length,
+    stressedPlants,
+    deadPlants: allPlants.filter(plant => plant.dead).length,
   }
+}
+
+const getDroughtPressure = (plant: PlantData, center: StressCenter) => {
+  const x = plant.x * scaleX.value
+  const z = plant.z * scaleZ.value
+  const distance = Math.hypot(x - center.x, z - center.z)
+  return distance < center.radius
+    ? center.intensity * (1 - distance / center.radius)
+    : 0
+}
+
+const addTrendSample = () => {
+  trendHistory.value.push({
+    elapsed: simulationElapsedSeconds.value,
+    health: telemetry.value.avgHealth,
+    humidity: telemetry.value.avgHumidity,
+    ndvi: telemetry.value.avgNDVI * 100,
+  })
+  if (trendHistory.value.length > 24) trendHistory.value.shift()
+}
+
+const advanceFieldSimulation = (elapsedSeconds: number) => {
+  for (const center of stressCenters) {
+    if (center.type === 'DROUGHT') {
+      center.intensity = Math.min(1, center.intensity + elapsedSeconds * 0.0015)
+    }
+  }
+
+  for (const plant of allPlants) {
+    const droughtPressure = stressCenters
+      .filter(center => center.type === 'DROUGHT')
+      .reduce((highest, center) => Math.max(highest, getDroughtPressure(plant, center)), 0)
+    Object.assign(
+      plant,
+      advancePlantWaterStress(plant, droughtPressure, elapsedSeconds),
+    )
+  }
+  regenerateFieldHealth()
+  simulationElapsedSeconds.value += elapsedSeconds
 }
 
 const createSoilTexture = () => {
@@ -479,7 +678,8 @@ const createTasselGeometry = () => {
 
 const lerpColor = (c1: THREE.Color, c2: THREE.Color, t: number) => new THREE.Color().lerpColors(c1, c2, t)
 
-const getStatusName = (health: number) => {
+const getStatusName = (health: number, dead = false) => {
+  if (dead) return 'Muerta'
   if (health >= 0.7) return 'Alto Vigor'
   if (health >= 0.4) return 'Moderado'
   if (health >= 0.25) return 'Bajo Vigor'
@@ -498,6 +698,7 @@ const getSectorColor = (type: string, intensity: number) => {
 }
 
 const getColorForPlant = (plant: PlantData, mode: 'rgb' | 'ndvi' | 'thermal') => {
+  if (plant.dead) return new THREE.Color(0x57534e)
   if (mode === 'rgb') return lerpColor(new THREE.Color(0x84cc16), new THREE.Color(0x15803d), plant.health)
   if (mode === 'ndvi') {
     if (plant.ndvi < 0.33) return lerpColor(new THREE.Color(0xdc2626), new THREE.Color(0xf97316), plant.ndvi / 0.33)
@@ -537,18 +738,32 @@ const updateMaterials = (mode: 'rgb' | 'ndvi' | 'thermal') => {
   if (groundMaterial) groundMaterial.color.setHex(mode === 'rgb' ? 0xffffff : (mode === 'ndvi' ? 0x1e40af : 0x450a0a))
   if (!trunkMesh || !leafMesh) return
 
-  for (let i = 0; i < allPlants.length; i++) trunkMesh.setColorAt(i, mode === 'rgb' ? new THREE.Color(0x84cc16) : getColorForPlant(allPlants[i], mode))
+  for (let i = 0; i < allPlants.length; i++) {
+    trunkMesh.setColorAt(i, mode === 'rgb' && !allPlants[i].dead
+      ? new THREE.Color(0x84cc16)
+      : getColorForPlant(allPlants[i], mode))
+  }
   trunkMesh.instanceColor!.needsUpdate = true
 
   for (let i = 0; i < leafToPlantMap.length; i++) leafMesh.setColorAt(i, getColorForPlant(allPlants[leafToPlantMap[i]], mode))
   leafMesh.instanceColor!.needsUpdate = true
 
   if (tasselMesh) {
-    for (let i = 0; i < tasselToPlantMap.length; i++) tasselMesh.setColorAt(i, mode === 'rgb' ? new THREE.Color(0xfef08a) : getColorForPlant(allPlants[tasselToPlantMap[i]], mode))
+    for (let i = 0; i < tasselToPlantMap.length; i++) {
+      const plant = allPlants[tasselToPlantMap[i]]
+      tasselMesh.setColorAt(i, mode === 'rgb' && !plant.dead
+        ? new THREE.Color(0xfef08a)
+        : getColorForPlant(plant, mode))
+    }
     tasselMesh.instanceColor!.needsUpdate = true
   }
   if (earMesh) {
-    for (let i = 0; i < earToPlantMap.length; i++) earMesh.setColorAt(i, mode === 'rgb' ? new THREE.Color(0xeab308) : getColorForPlant(allPlants[earToPlantMap[i]], mode))
+    for (let i = 0; i < earToPlantMap.length; i++) {
+      const plant = allPlants[earToPlantMap[i]]
+      earMesh.setColorAt(i, mode === 'rgb' && !plant.dead
+        ? new THREE.Color(0xeab308)
+        : getColorForPlant(plant, mode))
+    }
     earMesh.instanceColor!.needsUpdate = true
   }
 }
@@ -593,16 +808,32 @@ const generateRandomStressCenters = () => {
   stressCenters = []
   clearSectorMarkers()
 
-  const halfWidth = (selectedFieldGeometry.value?.widthMeters ?? 50) / 2
-  const halfDepth = (selectedFieldGeometry.value?.depthMeters ?? 40) / 2
+  const halfWidth = (selectedFieldGeometry.value?.widthMeters ?? BASE_CROP_WIDTH) / 2
+  const halfDepth = (selectedFieldGeometry.value?.depthMeters ?? BASE_CROP_DEPTH) / 2
   const numCenters = Math.floor(Math.random() * 3) + 2
   for (let i = 0; i < numCenters; i++) {
-    const type: StressCenter['type'] = Math.random() > 0.5 ? 'DROUGHT' : 'PEST'
+    const type: StressCenter['type'] = i === 0 || Math.random() > 0.5 ? 'DROUGHT' : 'PEST'
+    const fallbackPlant = allPlants[Math.floor(Math.random() * allPlants.length)]
+    let location = fallbackPlant
+      ? { x: fallbackPlant.x * scaleX.value, z: fallbackPlant.z * scaleZ.value }
+      : { x: 0, z: 0 }
+
+    if (!fallbackPlant) {
+      for (let attempt = 0; attempt < 30; attempt++) {
+        const candidate = {
+          x: (Math.random() * 1.6 - 0.8) * halfWidth,
+          z: (Math.random() * 1.6 - 0.8) * halfDepth,
+        }
+        if (!selectedFieldGeometry.value || selectedFieldGeometry.value.contains(candidate)) {
+          location = candidate
+          break
+        }
+      }
+    }
 
     stressCenters.push({
       id: `SEC-${i + 1}`,
-      x: (Math.random() * 1.6 - 0.8) * halfWidth,
-      z: (Math.random() * 1.6 - 0.8) * halfDepth,
+      ...location,
       intensity: 0.68 + Math.random() * 0.3,
       radius: Math.max(2, Math.min(halfWidth, halfDepth) * (0.08 + Math.random() * 0.08)),
       type,
@@ -623,10 +854,31 @@ const saveScenarioSnapshot = async (saveAlerts = false) => {
         visualization_mode: currentMode.value,
         wind_enabled: windEnabled.value,
         field_id: fieldId,
+        data_source: 'simulated',
+        route: coverageRoute.value
+          ? {
+              distance_meters: coverageRoute.value.lengthMeters,
+              lane_count: coverageRoute.value.laneCount,
+              orientation: coverageRoute.value.orientation,
+            }
+          : null,
       },
       results: {
         telemetry: { ...telemetry.value },
-        plants: allPlants.map(plant => ({ ...plant })),
+        timeline: trendHistory.value.map(sample => ({ ...sample })),
+        estimated_costs: {
+          currency: 'MXN',
+          area_hectares: estimatedAreaHectares.value,
+          treatment: treatmentCostAmount.value,
+          prevention: preventionCostAmount.value,
+          gross_savings: estimatedSavingsAmount.value,
+          net_preventive_savings: projectedSavingsNetAmount.value,
+          assumptions: 'Referencia editable: tratamiento 1650 MXN/ha, prevención 520 MXN/ha, pérdida potencial evitada 2400 MXN/ha.',
+        },
+        plants: allPlants.map(plant => ({
+          ...plant,
+          gps: plantGps(plant),
+        })),
         stress_centers: stressCenters.map(center => ({ ...center })),
       },
     })
@@ -644,6 +896,9 @@ const saveScenarioSnapshot = async (saveAlerts = false) => {
             pest_index: telemetry.value.avgPestIndex,
             plant_count: telemetry.value.plantCount,
             stress_zones: telemetry.value.stressZones,
+            stressed_plants: telemetry.value.stressedPlants,
+            dead_plants: telemetry.value.deadPlants,
+            data_source: 'simulated',
           },
         }),
       ]
@@ -678,7 +933,10 @@ const regenerateFieldHealth = () => {
   allPlants.forEach(plant => {
     let dStress = 0, pStress = 0, oStress = 0
     for (const center of stressCenters) {
-      const dist = Math.sqrt(Math.pow(plant.x - center.x, 2) + Math.pow(plant.z - center.z, 2))
+      const dist = Math.hypot(
+        plant.x * scaleX.value - center.x,
+        plant.z * scaleZ.value - center.z,
+      )
       if (dist < center.radius) {
         const effect = center.intensity * (1 - (dist / center.radius))
         if (center.type === 'DROUGHT') dStress = Math.max(dStress, effect)
@@ -686,11 +944,20 @@ const regenerateFieldHealth = () => {
         if (center.type === 'PEST') pStress = Math.max(pStress, effect)
       }
     }
-    plant.health = Math.max(0.1, 0.92 + Math.random() * 0.08 - dStress - pStress - oStress * 0.75)
-    plant.temp = 25 + (dStress * 12) + (pStress * 3) - (oStress * 5.2)
-    plant.ndvi = Math.max(0.1, 0.84 - (pStress * 0.65) - (dStress * 0.32) - (oStress * 0.38))
-    plant.status = getStatusName(plant.health)
+    if (dStress > 0 && plant.waterStress >= 0.98) plant.dead = true
+    plant.health = plant.dead
+      ? 0
+      : Math.max(0, 0.96 - (plant.waterStress * 0.75) - (dStress * 0.32) - (pStress * 0.4) - (oStress * 0.25))
+    plant.temp = 25 + (dStress * 12) + (pStress * 3) - (oStress * 5.2) + (plant.waterStress * 4)
+    plant.ndvi = plant.dead
+      ? 0
+      : Math.max(0, 0.84 - (pStress * 0.65) - (dStress * 0.32) - (oStress * 0.38) - (plant.waterStress * 0.2))
+    plant.status = getStatusName(plant.health, plant.dead)
   })
+  affectedPlants.value = allPlants
+    .filter(plant => plant.waterStress >= 0.15 || plant.health < 0.7 || plant.dead)
+    .sort((left, right) => Number(right.dead) - Number(left.dead) || right.waterStress - left.waterStress)
+    .slice(0, 8)
   if (!lastInspectedPlant.value && allPlants.length > 0) {
     lastInspectedPlant.value = allPlants[0]
   } else if (lastInspectedPlant.value) {
@@ -742,22 +1009,32 @@ const handleAction = (action: 'ANALYZE' | 'WATER' | 'FUMIGATE' | 'CENTINELAS') =
     if (droneState.value !== 'IDLE') return
     setActionFeedback('Escaneo del cultivo en curso…', false)
     droneState.value = 'SCANNING'
+    simulationElapsedSeconds.value = 0
+    trendHistory.value = []
     generateRandomStressCenters()
     regenerateFieldHealth()
-    void saveScenarioSnapshot(true)
-    
-    // Ruta de escaneo (Zigzag sobre el campo)
-    const halfWidth = (selectedFieldGeometry.value?.widthMeters ?? 50) * 0.45
-    const halfDepth = (selectedFieldGeometry.value?.depthMeters ?? 40) * 0.45
-    dronePath = [
-       new THREE.Vector3(-halfWidth, FLIGHT_HEIGHT, -halfDepth),
-       new THREE.Vector3(halfWidth, FLIGHT_HEIGHT, -halfDepth),
-       new THREE.Vector3(halfWidth, FLIGHT_HEIGHT, 0),
-       new THREE.Vector3(-halfWidth, FLIGHT_HEIGHT, 0),
-       new THREE.Vector3(-halfWidth, FLIGHT_HEIGHT, halfDepth),
-       new THREE.Vector3(halfWidth, FLIGHT_HEIGHT, halfDepth),
-       DRONE_BASE
-    ]
+    addTrendSample()
+
+    const width = selectedFieldGeometry.value?.widthMeters ?? BASE_CROP_WIDTH
+    const depth = selectedFieldGeometry.value?.depthMeters ?? BASE_CROP_DEPTH
+    coverageRoute.value = planCoverageRoute({
+      widthMeters: width,
+      depthMeters: depth,
+      laneSpacingMeters: Math.max(6, Math.min(width, depth) / 8),
+      start: { x: DRONE_BASE.x, z: DRONE_BASE.z },
+    })
+    dronePath = coverageRoute.value.points.map(point =>
+      new THREE.Vector3(point.x, FLIGHT_HEIGHT, point.z),
+    )
+    clearScanRouteLine()
+    scanRouteLine = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(
+        dronePath.map(point => new THREE.Vector3(point.x, 0.24, point.z)),
+      ),
+      new THREE.LineBasicMaterial({ color: 0x4dd0e1, transparent: true, opacity: 0.8 }),
+    )
+    scanRouteLine.renderOrder = 3
+    scene.value?.add(scanRouteLine)
     currentPathIndex = 0
     return
   }
@@ -845,8 +1122,18 @@ const createNewScenario = async () => {
   if (centinelaGroup) centinelaGroup.visible = false
   currentAction.value = 'NONE'
   particleSystem.visible = false
+  clearScanRouteLine()
+  coverageRoute.value = null
+  allPlants.forEach(plant => {
+    plant.waterStress = 0
+    plant.dead = false
+    plant.irrigated = false
+  })
+  simulationElapsedSeconds.value = 0
+  trendHistory.value = []
   generateRandomStressCenters()
   regenerateFieldHealth()
+  addTrendSample()
   setActionFeedback('Nuevo escenario generado. Analiza el cultivo para detectar las zonas de estrés.')
   void saveScenarioSnapshot()
 }
@@ -865,17 +1152,21 @@ const toggleWind = () => {
 
 const exportCropData = () => {
   const rows = [
-    ['ID de planta', 'Etapa', 'Estado', 'Salud (%)', 'NDVI', 'Temperatura (°C)', 'Coordenada X', 'Coordenada Z'],
-    ...allPlants.map(plant => [
-      plant.id,
-      plant.stage === 1 ? 'Brote' : plant.stage === 2 ? 'Desarrollo' : 'Madurez',
-      plant.status,
-      (plant.health * 100).toFixed(1),
-      plant.ndvi.toFixed(2),
-      plant.temp.toFixed(1),
-      plant.x.toFixed(2),
-      plant.z.toFixed(2),
-    ]),
+    ['ID de planta', 'Etapa', 'Estado', 'Salud (%)', 'NDVI', 'Temperatura (°C)', 'Estrés hídrico (%)', 'Latitud simulada', 'Longitud simulada'],
+    ...allPlants.map(plant => {
+      const gps = plantGps(plant)
+      return [
+        plant.id,
+        plant.stage === 1 ? 'Brote' : plant.stage === 2 ? 'Desarrollo' : 'Madurez',
+        plant.status,
+        (plant.health * 100).toFixed(1),
+        plant.ndvi.toFixed(2),
+        plant.temp.toFixed(1),
+        (plant.waterStress * 100).toFixed(1),
+        gps?.latitude.toFixed(6) ?? '',
+        gps?.longitude.toFixed(6) ?? '',
+      ]
+    }),
   ]
   const csv = rows.map(row => row.map(value => `"${String(value).replaceAll('"', '""')}"`).join(',')).join('\r\n')
   const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' })
@@ -987,16 +1278,33 @@ const initThree = () => {
 
   for (let i = -7; i < 7; i++) {
     for (let j = -10; j < 10; j++) {
+      const x = i * 3.5 + (Math.random() * 0.8 - 0.4)
+      const z = j * 2.2 + (Math.random() * 0.8 - 0.4)
+      if (selectedFieldGeometry.value && !selectedFieldGeometry.value.contains({
+        x: x * scaleX.value,
+        z: z * scaleZ.value,
+      })) continue
+
       const stage = Math.random() > 0.6 ? 3 : (Math.random() > 0.3 ? 2 : 1)
       leafCount += stage === 1 ? 5 : (stage === 2 ? 10 : 14)
       if (stage === 3) { tasselCount++; earCount += 2 } else if (stage === 2) { earCount += 1 }
 
-      const x = i * 3.5 + (Math.random() * 0.8 - 0.4), z = j * 2.2 + (Math.random() * 0.8 - 0.4)
-      
       // Usamos valores dummy iniciales, regenerateFieldHealth recalculará los reales
       const health = 1, temp = 25, ndvi = 1
 
-      allPlants.push({ id: `P-${i+7}-${j+10}`, x, z, health, ndvi, temp, status: getStatusName(health), stage })
+      allPlants.push({
+        id: `P-${i + 7}-${j + 10}`,
+        x,
+        z,
+        health,
+        ndvi,
+        temp,
+        status: getStatusName(health),
+        stage,
+        waterStress: 0,
+        dead: false,
+        irrigated: false,
+      })
     }
   }
 
@@ -1088,9 +1396,15 @@ const initThree = () => {
   raycaster.value = new THREE.Raycaster(); mouse.value = new THREE.Vector2()
 
   let actionTimer = 0
+  let stressTickElapsed = 0
+  let trendTickElapsed = 0
+  let lastAnimationFrameAt = performance.now()
 
   const animate = () => {
     animationId.value = requestAnimationFrame(animate)
+    const now = performance.now()
+    const frameDelta = Math.min(0.1, Math.max(0, (now - lastAnimationFrameAt) / 1000))
+    lastAnimationFrameAt = now
     controls.value?.update()
     updateLiveDrone()
     updateCameraFollow()
@@ -1098,9 +1412,23 @@ const initThree = () => {
       if (renderer.value && scene.value && camera.value) renderer.value.render(scene.value, camera.value)
       return
     }
-    simulationTime += 0.016
+    simulationTime += frameDelta
+    stressTickElapsed += frameDelta
+    trendTickElapsed += frameDelta
     if (leafWindUniform) leafWindUniform.value = simulationTime
     if (leafWindStrengthUniform) leafWindStrengthUniform.value = windEnabled.value ? 1 : 0
+    if (stressTickElapsed >= 2) {
+      advanceFieldSimulation(stressTickElapsed)
+      stressTickElapsed = 0
+      sectorMarkers.forEach(mesh => {
+        const center = mesh.userData as StressCenter
+        ;(mesh.material as THREE.MeshBasicMaterial).color.setHex(getSectorColor(center.type, center.intensity))
+      })
+    }
+    if (trendTickElapsed >= 10) {
+      addTrendSample()
+      trendTickElapsed = 0
+    }
 
     if (droneState.value === 'IDLE') {
       const hover = Math.sin(performance.now() * 0.0018) * 0.08
@@ -1132,23 +1460,9 @@ const initThree = () => {
 
     // Drone Animation Logic
     if (droneState.value === 'CENTINELAS') {
-      centinelaFrameCounter++
       centinelaPropellers.forEach((p, i) => p.rotation.y += (i % 2 === 0 ? 0.5 : -0.5))
       if (centinelaGroup) {
         centinelaGroup.rotation.y += 0.005 // Rotar lentamente alrededor del campo
-      }
-      
-      // Simular actualización en tiempo real frecuente
-      if (centinelaFrameCounter % 120 === 0) { // Cada ~2 segundos (a 60fps)
-        // Modificar ligeramente la intensidad de estrés para que se vea vivo
-        stressCenters.forEach(c => c.intensity = Math.max(0.2, Math.min(1.0, c.intensity + (Math.random()-0.5)*0.1)))
-        regenerateFieldHealth()
-        
-        // Actualizar los colores de los marcadores de sector en tiempo real
-        sectorMarkers.forEach(mesh => {
-           const center = mesh.userData as StressCenter
-           ;(mesh.material as THREE.MeshBasicMaterial).color.setHex(getSectorColor(center.type, center.intensity))
-        })
       }
     } else if (droneState.value !== 'IDLE') {
       propellers.forEach((p, i) => p.rotation.y += (i % 2 === 0 ? 0.5 : -0.5)) // Girar hélices
@@ -1184,6 +1498,7 @@ const initThree = () => {
               scene.value?.add(mesh)
               sectorMarkers.push(mesh)
             })
+            void saveScenarioSnapshot(true)
           }
         }
       } 
@@ -1230,6 +1545,11 @@ const initThree = () => {
             
             // "Curar" la zona tratada
             const treatedCenter = activeTargets[activeTargetIndex]
+            if (currentAction.value === 'WATER') {
+              for (const plant of allPlants) {
+                if (getDroughtPressure(plant, treatedCenter) > 0) plant.irrigated = true
+              }
+            }
             stressCenters = stressCenters.filter(c => c.id !== treatedCenter.id)
             const markerIndex = sectorMarkers.findIndex(m => m.userData.id === treatedCenter.id)
             if (markerIndex !== -1) {
@@ -1254,7 +1574,7 @@ const initThree = () => {
             const completedAction = currentAction.value
             currentAction.value = 'NONE'
             setActionFeedback(completedAction === 'WATER'
-              ? 'Misión de riego completada. Se actualizaron las métricas del cultivo.'
+              ? 'Riego aplicado. La humedad y el vigor de las plantas afectadas se recuperarán gradualmente.'
               : 'Misión de fumigación completada. Se actualizaron las métricas del cultivo.')
           }
         }
@@ -1312,6 +1632,9 @@ onBeforeUnmount(() => {
   resizeObserver.value?.disconnect()
   if (containerRef.value) containerRef.value.removeEventListener('pointermove', onMouseMove)
   controls.value?.dispose()
+  clearLiveDroneTrail()
+  clearScanRouteLine()
+  clearSectorMarkers()
   groundMaterial?.map?.dispose()
   sectorFalloffTexture?.dispose()
   renderer.value?.dispose()
@@ -1333,7 +1656,8 @@ onBeforeUnmount(() => {
           v-model="selectedFieldId"
           class="simulation-field-select"
           aria-label="Asociar simulación a un campo"
-          @change="applySelectedField"
+          :disabled="droneState !== 'IDLE'"
+          @change="handleSelectedFieldChange"
         >
           <option value="">Sin campo asociado</option>
           <option v-for="field in fields" :key="field.id" :value="field.id">{{ field.name }}</option>
@@ -1463,8 +1787,8 @@ onBeforeUnmount(() => {
       <div class="simulation-hud-left">
         <div class="simulation-demo-badge" :aria-label="selectedFieldGeometry ? 'Geometría real del campo a escala métrica; cultivo visual demostrativo' : 'Entorno demostrativo'">
           <span class="simulation-demo-dot"></span>
-          <span>{{ selectedFieldGeometry ? 'GEOMETRÍA REAL · ESCALA 1:1' : 'ENTORNO DEMOSTRATIVO · DATOS SIMULADOS' }}</span>
-          <small v-if="selectedFieldGeometry">{{ fieldDimensionsLabel }} · cultivo visual demostrativo</small>
+          <span>{{ selectedFieldGeometry ? 'PARCELA REAL · PLANTAS SIMULADAS' : 'ENTORNO DEMOSTRATIVO · DATOS SIMULADOS' }}</span>
+          <small v-if="selectedFieldGeometry">{{ fieldDimensionsLabel }} · sin lectura satelital real</small>
 
         </div>
 
@@ -1548,6 +1872,10 @@ onBeforeUnmount(() => {
               </div>
             </div>
             <div class="flex justify-between items-center">
+              <span class="text-gray-400">Estrés hídrico simulado</span>
+              <span class="font-bold text-sky-300">{{ (inspectedPlant.waterStress * 100).toFixed(0) }}%</span>
+            </div>
+            <div class="flex justify-between items-center">
               <span class="text-gray-400">Temperatura</span>
               <span
                 class="font-bold"
@@ -1560,6 +1888,10 @@ onBeforeUnmount(() => {
               <span class="text-gray-400">Estado</span>
               <span class="font-bold text-white">{{ inspectedPlant.status }}</span>
             </div>
+            <div v-if="inspectedPlantGps" class="simulation-plant-location">
+              Ubicación GPS simulada: {{ inspectedPlantGps.latitude.toFixed(5) }}, {{ inspectedPlantGps.longitude.toFixed(5) }}
+            </div>
+            <small v-else class="simulation-location-note">Sin coordenada de parcela asociada; posición demostrativa.</small>
           </div>
 
           <template v-if="hoveredSector">
@@ -1629,7 +1961,7 @@ onBeforeUnmount(() => {
             {{ simulationPaused ? 'Simulación pausada.' : 'Selecciona una operación para el dron.' }}
           </p>
           <div class="space-y-1.5">
-            <button @click="handleAction('ANALYZE')" :disabled="droneState !== 'IDLE' || simulationPaused" class="simulation-action simulation-action-primary w-full disabled:cursor-not-allowed p-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2">
+            <button @click="handleAction('ANALYZE')" :disabled="droneState !== 'IDLE' || simulationPaused || savingSnapshot" class="simulation-action simulation-action-primary w-full disabled:cursor-not-allowed p-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
               Analizar cultivo
             </button>
@@ -1640,11 +1972,11 @@ onBeforeUnmount(() => {
             </button>
             
             <div class="grid grid-cols-2 gap-2">
-              <button @click="handleAction('WATER')" :disabled="droneState !== 'IDLE' || simulationPaused" class="simulation-action simulation-action-water disabled:cursor-not-allowed p-2 rounded-lg text-sm font-medium flex items-center justify-center gap-1.5">
+              <button @click="handleAction('WATER')" :disabled="droneState !== 'IDLE' || simulationPaused || savingSnapshot" class="simulation-action simulation-action-water disabled:cursor-not-allowed p-2 rounded-lg text-sm font-medium flex items-center justify-center gap-1.5">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1M4.22 4.22l.71.71m14.14 14.14l.71.71M1 12h1m20 0h1M4.22 19.78l.71-.71M18.07 5.93l.71-.71M12 6a6 6 0 100 12 6 6 0 000-12z"/></svg>
                 Regar
               </button>
-              <button @click="handleAction('FUMIGATE')" :disabled="droneState !== 'IDLE' || simulationPaused" class="simulation-action simulation-action-fumigate disabled:cursor-not-allowed p-2 rounded-lg text-sm font-medium flex items-center justify-center gap-1.5">
+              <button @click="handleAction('FUMIGATE')" :disabled="droneState !== 'IDLE' || simulationPaused || savingSnapshot" class="simulation-action simulation-action-fumigate disabled:cursor-not-allowed p-2 rounded-lg text-sm font-medium flex items-center justify-center gap-1.5">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
                 Fumigar
               </button>
@@ -1674,7 +2006,7 @@ onBeforeUnmount(() => {
             </div>
             <div>
               <div class="flex justify-between mb-1">
-                <span class="text-gray-400">Humedad suelo</span>
+                <span class="text-gray-400">Humedad simulada</span>
                 <span class="font-bold text-blue-400">{{ telemetry.avgHumidity }}%</span>
               </div>
               <div class="w-full bg-white/10 rounded-full h-1">
@@ -1702,10 +2034,104 @@ onBeforeUnmount(() => {
               <span class="text-gray-400">Zonas de estrés</span>
               <span class="font-bold" :class="telemetry.stressZones > 0 ? 'text-yellow-400' : 'text-green-400'">{{ telemetry.stressZones }}</span>
             </div>
+            <div class="flex justify-between items-center">
+              <span class="text-gray-400">Plantas afectadas</span>
+              <span class="font-bold text-yellow-300">{{ telemetry.stressedPlants }}</span>
+            </div>
+            <div class="flex justify-between items-center">
+              <span class="text-gray-400">Plantas perdidas (sim.)</span>
+              <span class="font-bold text-red-300">{{ telemetry.deadPlants }}</span>
+            </div>
           </div>
         </div>
       </div>
     </div>
+
+    <section class="simulation-insights" aria-labelledby="simulation-insights-title">
+      <header class="simulation-insights-heading">
+        <div>
+          <span class="simulation-eyebrow">RESULTADOS DEL ESCENARIO</span>
+          <h2 id="simulation-insights-title">Seguimiento y costos estimados</h2>
+          <p>Datos simulados sobre {{ fields.find(field => field.id === selectedFieldId)?.name ?? 'un campo demostrativo' }}. No son mediciones satelitales ni una cotización.</p>
+        </div>
+        <span class="simulation-source-badge">SIMULACIÓN · {{ telemetry.stressedPlants }} plantas con afectación</span>
+      </header>
+
+      <div class="simulation-insights-grid">
+        <article class="simulation-insight-card simulation-trend-card">
+          <div class="simulation-insight-title">
+            <div><h3>Tendencia del cultivo</h3><p>Últimos {{ trendHistory.length }} registros · escala de 0 a 100</p></div>
+            <span class="simulation-trend-live"><i></i> Actualiza cada 10 s</span>
+          </div>
+          <svg class="simulation-trend-chart" viewBox="0 0 300 100" role="img" aria-label="Gráfica simulada de salud, humedad y NDVI del cultivo">
+            <line v-for="y in [10, 30, 50, 70, 90]" :key="y" x1="0" :y1="y" x2="300" :y2="y" />
+            <polyline class="trend-health" :points="trendPoints('health')" />
+            <polyline class="trend-moisture" :points="trendPoints('humidity')" />
+            <polyline class="trend-ndvi" :points="trendPoints('ndvi')" />
+          </svg>
+          <div class="simulation-chart-legend">
+            <span><i class="trend-health-key"></i> Salud {{ telemetry.avgHealth }}%</span>
+            <span><i class="trend-moisture-key"></i> Humedad {{ telemetry.avgHumidity }}%</span>
+            <span><i class="trend-ndvi-key"></i> NDVI {{ telemetry.avgNDVI }}</span>
+          </div>
+          <p class="simulation-chart-disclaimer">La evolución se acelera para demostración; el estrés sin tratar puede causar pérdida simulada de plantas.</p>
+        </article>
+
+        <article class="simulation-insight-card">
+          <div class="simulation-insight-title">
+            <div><h3>Tratamiento y prevención</h3><p>{{ selectedFieldGeometry ? `Referencia por ${estimatedAreaHectares.toFixed(2)} ha` : 'Área demostrativa de referencia: 1.00 ha' }}</p></div>
+            <span class="simulation-cost-icon">$</span>
+          </div>
+          <div class="simulation-cost-row">
+            <span><strong>Tratamiento correctivo</strong><small>Riego localizado para las zonas detectadas</small></span>
+            <b>{{ treatmentCost }}</b>
+          </div>
+          <div class="simulation-cost-row">
+            <span><strong>Prevención recomendada</strong><small>Revisar humedad y emisores por sector</small></span>
+            <b>{{ preventionCost }}</b>
+          </div>
+          <div class="simulation-savings">
+            <span><strong>Ahorro potencial estimado</strong><small>Valor bruto {{ estimatedSavings }} · neto preventivo {{ projectedSavingsNet }}</small></span>
+            <b>{{ projectedSavingsNet }}</b>
+          </div>
+          <p class="simulation-chart-disclaimer">Supuestos orientativos en MXN: tratamiento $1,650/ha, prevención $520/ha y pérdida potencial evitada hasta $2,400/ha, ajustada por plantas afectadas. Confirma precios locales y cultivo antes de decidir.</p>
+        </article>
+
+        <article class="simulation-insight-card simulation-route-card">
+          <div class="simulation-insight-title">
+            <div><h3>Ruta eficiente del dron</h3><p>Plan heurístico de cobertura por franjas</p></div>
+            <span class="simulation-route-icon">↗</span>
+          </div>
+          <template v-if="coverageRoute">
+            <div class="simulation-route-metrics">
+              <div><b>{{ coverageRoute.lengthMeters.toFixed(0) }} m</b><small>trayecto estimado</small></div>
+              <div><b>{{ Math.max(1, Math.ceil(coverageRoute.lengthMeters / 5 / 60)) }} min</b><small>a 5 m/s</small></div>
+              <div><b>{{ coverageRoute.laneCount }}</b><small>pasadas</small></div>
+            </div>
+            <p class="simulation-chart-disclaimer">Compara orientación y punto de inicio para reducir distancia y giros sobre la envolvente rectangular. Valida límites y obstáculos: es solo visual, no se envía al autopiloto ni estima combustible sin el modelo del dron.</p>
+          </template>
+          <p v-else class="simulation-empty-route">Ejecuta «Analizar cultivo» para calcular y visualizar la ruta sobre la parcela seleccionada.</p>
+        </article>
+
+        <article class="simulation-insight-card simulation-affected-card">
+          <div class="simulation-insight-title">
+            <div><h3>Plantas afectadas</h3><p>Ubicaciones generadas para este escenario</p></div>
+            <span class="simulation-affected-count">{{ telemetry.stressedPlants }}</span>
+          </div>
+          <div v-if="affectedPlants.length" class="simulation-affected-list">
+            <div v-for="plant in affectedPlants" :key="plant.id" class="simulation-affected-row">
+              <span><i :class="plant.dead ? 'is-dead' : ''"></i><strong>{{ plant.id }}</strong><small>{{ plant.status }} · estrés {{ (plant.waterStress * 100).toFixed(0) }}%</small></span>
+              <span v-if="plantGps(plant)" class="simulation-affected-location">
+                {{ plantGps(plant)?.latitude.toFixed(5) }}, {{ plantGps(plant)?.longitude.toFixed(5) }}
+              </span>
+              <small v-else>Coordenada no disponible</small>
+            </div>
+          </div>
+          <p v-else class="simulation-empty-route">No se han marcado plantas afectadas. Inicia un análisis para actualizar el escenario.</p>
+          <p class="simulation-chart-disclaimer">Puntos y coordenadas aproximados de la simulación; verifica la planta en campo antes de tratarla.</p>
+        </article>
+      </div>
+    </section>
 
     <DroneConnectionPanel @telemetry="handleDroneTelemetry" />
   </div>
@@ -2308,6 +2734,191 @@ onBeforeUnmount(() => {
       .simulation-color-key .key-healthy { background: #15803d; }
       .simulation-color-key .key-stressed { background: #84cc16; }
 
+      .simulation-insights {
+        display: grid;
+        gap: 1rem;
+        padding: 1.15rem;
+        border: 1px solid rgba(196, 218, 147, 0.13);
+        border-radius: 16px;
+        background: rgba(25, 30, 22, 0.82);
+      }
+
+      .simulation-insights-heading,
+      .simulation-insight-title {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 1rem;
+      }
+
+      .simulation-insights-heading h2 {
+        margin-top: 0.25rem;
+        color: #f0f2e9;
+        font-size: 1.25rem;
+        font-weight: 750;
+        letter-spacing: -0.035em;
+      }
+
+      .simulation-insights-heading p,
+      .simulation-insight-title p {
+        margin-top: 0.3rem;
+        color: #9aa38f;
+        font-size: 0.74rem;
+      }
+
+      .simulation-source-badge,
+      .simulation-trend-live {
+        display: inline-flex;
+        flex: 0 0 auto;
+        align-items: center;
+        gap: 0.45rem;
+        padding: 0.42rem 0.65rem;
+        border: 1px solid rgba(211, 189, 103, 0.2);
+        border-radius: 999px;
+        color: #e7d48e;
+        background: rgba(211, 189, 103, 0.07);
+        font-size: 0.62rem;
+        font-weight: 750;
+      }
+
+      .simulation-insights-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.8rem;
+      }
+
+      .simulation-insight-card {
+        min-width: 0;
+        padding: 1rem;
+        border: 1px solid rgba(196, 218, 147, 0.12);
+        border-radius: 13px;
+        background: linear-gradient(145deg, rgba(33, 39, 29, 0.92), rgba(17, 23, 18, 0.88));
+      }
+
+      .simulation-insight-title { align-items: center; margin-bottom: 0.8rem; }
+      .simulation-insight-title h3 { color: #f0f2e9; font-size: 0.88rem; font-weight: 750; }
+      .simulation-trend-live { color: #b7d89a; border-color: rgba(143, 191, 111, 0.18); background: rgba(143, 191, 111, 0.07); }
+      .simulation-trend-live i,
+      .simulation-affected-row > span > i {
+        display: block;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #a3d477;
+      }
+
+      .simulation-trend-chart {
+        display: block;
+        width: 100%;
+        height: 8rem;
+        overflow: visible;
+      }
+
+      .simulation-trend-chart line { stroke: rgba(226, 232, 220, 0.11); stroke-width: 1; }
+      .simulation-trend-chart polyline { fill: none; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+      .simulation-trend-chart .trend-health { stroke: #a3d477; }
+      .simulation-trend-chart .trend-moisture { stroke: #60a5fa; }
+      .simulation-trend-chart .trend-ndvi { stroke: #f6d977; }
+
+      .simulation-chart-legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.55rem 1rem;
+        color: #d3dacb;
+        font-size: 0.67rem;
+      }
+
+      .simulation-chart-legend span { display: inline-flex; align-items: center; gap: 0.4rem; }
+      .simulation-chart-legend i { width: 9px; height: 9px; border-radius: 3px; }
+      .trend-health-key { background: #a3d477; }
+      .trend-moisture-key { background: #60a5fa; }
+      .trend-ndvi-key { background: #f6d977; }
+      .simulation-chart-disclaimer { margin-top: 0.8rem; color: #929d86; font-size: 0.63rem; line-height: 1.55; }
+
+      .simulation-cost-icon,
+      .simulation-route-icon,
+      .simulation-affected-count {
+        display: grid;
+        flex: 0 0 auto;
+        width: 2rem;
+        height: 2rem;
+        place-items: center;
+        border: 1px solid rgba(211, 189, 103, 0.2);
+        border-radius: 10px;
+        color: #e8d286;
+        background: rgba(211, 189, 103, 0.08);
+        font-size: 1rem;
+        font-weight: 800;
+      }
+
+      .simulation-cost-row,
+      .simulation-savings {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.8rem;
+        padding: 0.7rem 0;
+        border-top: 1px solid rgba(255, 255, 255, 0.075);
+      }
+
+      .simulation-cost-row span,
+      .simulation-savings span,
+      .simulation-affected-row > span {
+        display: grid;
+        gap: 0.18rem;
+        min-width: 0;
+      }
+
+      .simulation-cost-row strong,
+      .simulation-savings strong { color: #e7eadf; font-size: 0.72rem; }
+      .simulation-cost-row small,
+      .simulation-savings small { color: #929d86; font-size: 0.62rem; }
+      .simulation-cost-row b { color: #f0f2e9; font-size: 0.88rem; white-space: nowrap; }
+      .simulation-savings { margin-top: 0.3rem; padding: 0.8rem; border: 1px solid rgba(143, 191, 111, 0.18); border-radius: 10px; background: rgba(143, 191, 111, 0.07); }
+      .simulation-savings strong,
+      .simulation-savings b { color: #bce29a; }
+      .simulation-savings b { font-size: 1rem; white-space: nowrap; }
+
+      .simulation-route-metrics {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.5rem;
+      }
+
+      .simulation-route-metrics > div {
+        display: grid;
+        gap: 0.22rem;
+        padding: 0.7rem 0.5rem;
+        border: 1px solid rgba(196, 218, 147, 0.11);
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.025);
+      }
+
+      .simulation-route-metrics b { color: #c7e9ef; font-size: 0.95rem; }
+      .simulation-route-metrics small { color: #929d86; font-size: 0.6rem; }
+      .simulation-empty-route { padding: 0.85rem; border: 1px dashed rgba(196, 218, 147, 0.16); border-radius: 10px; color: #a5ad9b; font-size: 0.72rem; line-height: 1.5; }
+
+      .simulation-affected-list { display: grid; max-height: 17rem; overflow: auto; }
+      .simulation-affected-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 0.65rem;
+        padding: 0.55rem 0;
+        border-top: 1px solid rgba(255, 255, 255, 0.075);
+      }
+
+      .simulation-affected-row > span { grid-template-columns: 8px 1fr; align-items: center; }
+      .simulation-affected-row > span > i.is-dead { background: #ef7373; }
+      .simulation-affected-row strong { color: #e7eadf; font-size: 0.68rem; }
+      .simulation-affected-row > span small { grid-column: 2; color: #929d86; font-size: 0.59rem; }
+      .simulation-affected-location,
+      .simulation-affected-row > small { color: #9bc9fb; font-size: 0.59rem; text-align: right; text-decoration: underline; text-underline-offset: 2px; }
+      .simulation-affected-location { justify-self: end; text-decoration: none; }
+      .simulation-affected-row > small { color: #929d86; text-decoration: none; }
+      .simulation-plant-location { padding-top: 0.5rem; border-top: 1px solid rgba(255, 255, 255, 0.08); color: #9bc9fb; font-size: 0.61rem; line-height: 1.5; }
+      .simulation-location-note { display: block; color: #929d86; font-size: 0.61rem; line-height: 1.5; }
+
       @keyframes simulation-enter {
         from { opacity: 0; transform: translateY(10px); }
         to { opacity: 1; transform: translateY(0); }
@@ -2536,6 +3147,14 @@ onBeforeUnmount(() => {
         .simulation-telemetry { order: 5; }
         .simulation-controls button { min-height: 46px; font-size: 0.84rem; }
         .simulation-telemetry { margin-bottom: 0.25rem !important; }
+        .simulation-insights { padding: 0.9rem; }
+        .simulation-insights-heading { align-items: flex-start; flex-direction: column; }
+        .simulation-insights-grid { grid-template-columns: minmax(0, 1fr); }
+        .simulation-insight-card { padding: 0.85rem; }
+        .simulation-source-badge { white-space: normal; }
+        .simulation-affected-row { grid-template-columns: minmax(0, 1fr); }
+        .simulation-affected-location,
+        .simulation-affected-row > small { text-align: left; padding-left: 1rem; }
       }
 
       @media (max-width: 420px) {

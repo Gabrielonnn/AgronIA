@@ -15,6 +15,8 @@ export interface ProjectedField {
   depthMeters: number
   areaHectares: number
   projectGps(latitude: number, longitude: number): FieldPoint
+  unprojectGps(point: FieldPoint): { latitude: number; longitude: number }
+  contains(point: FieldPoint): boolean
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -76,6 +78,19 @@ const ringArea = (ring: FieldPoint[]) => {
   return Math.abs(twiceArea) / 2
 }
 
+const isPointInRing = (point: FieldPoint, ring: FieldPoint[]) => {
+  let inside = false
+  for (let index = 0, previous = ring.length - 1; index < ring.length; previous = index++) {
+    const currentPoint = ring[index]
+    const previousPoint = ring[previous]
+    const crosses = (currentPoint.z > point.z) !== (previousPoint.z > point.z)
+      && point.x < (previousPoint.x - currentPoint.x) * (point.z - currentPoint.z)
+        / (previousPoint.z - currentPoint.z) + currentPoint.x
+    if (crosses) inside = !inside
+  }
+  return inside
+}
+
 export const projectFieldGeometry = (geojson: Json | null): ProjectedField | null => {
   const sourcePolygons = readPolygons(geojson)
   const coordinates = sourcePolygons.flat(2)
@@ -126,5 +141,13 @@ export const projectFieldGeometry = (geojson: Json | null): ProjectedField | nul
       const point = projectRaw(latitude, longitude)
       return { x: point.x - centerX, z: point.z - centerZ }
     },
+    unprojectGps: point => ({
+      latitude: originLatitude - (point.z + centerZ) / 110_540,
+      longitude: originLongitude + (point.x + centerX) / longitudeScale,
+    }),
+    contains: point => centeredPolygons.some(polygon => {
+      const [exterior, ...holes] = polygon.rings
+      return isPointInRing(point, exterior) && !holes.some(ring => isPointInRing(point, ring))
+    }),
   }
 }
